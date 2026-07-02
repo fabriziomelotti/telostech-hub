@@ -1972,24 +1972,25 @@ function PannelloAdmin({ setCatalog }) {
       const n = parseFloat(String(v).replace(",", "."));
       return isNaN(n) ? null : n;
     };
+    const tronca = (v, max=500) => v ? String(v).slice(0, max) : null;
 
     const cod = get("cod", "codice", "code", "sku");
     if (!cod) return null;
 
     return {
       cod: String(cod).trim(),
-      nome: get("nome", "name", "descrizione_breve") || get("descrizione", "description"),
-      descrizione: get("descrizione", "description", "desc"),
-      desc_prev: get("desc_prev", "descrizione_preventivo", "descrizione preventivo"),
-      categoria: get("categoria", "category", "cat"),
-      marchio: get("marchio", "brand", "mar"),
-      tipologia: get("tipologia", "tipo", "tip"),
+      nome: tronca(get("nome", "name", "descrizione_breve") || get("descrizione", "description"), 500),
+      descrizione: tronca(get("descrizione", "description", "desc"), 1000),
+      desc_prev: tronca(get("desc_prev", "descrizione_preventivo", "descrizione preventivo"), 500),
+      categoria: tronca(get("categoria", "category", "cat"), 100),
+      marchio: tronca(get("marchio", "brand", "mar"), 100),
+      tipologia: tronca(get("tipologia", "tipo", "tip"), 100),
       um: get("um", "unita", "unit") || "pz",
       listino: num(get("listino", "prezzo_listino", "prezzo listino", "list_price")),
       sconto: num(get("sconto", "discount", "sconto%")),
       netto: num(get("netto", "netto_telos", "net_price", "prezzo_netto")),
       tipo_prezzo: get("tipo_prezzo") || "listino",
-      note: get("note", "notes"),
+      note: tronca(get("note", "notes"), 500),
       attivo: true,
     };
   }
@@ -2015,7 +2016,7 @@ function PannelloAdmin({ setCatalog }) {
       addLog(`${prodotti.length} prodotti validi trovati. Avvio import…`);
       setProgress({ done: 0, total: prodotti.length, errori: 0 });
 
-      const BATCH = 200;
+      const BATCH = 50;
       const chunks = [];
       for (let i = 0; i < prodotti.length; i += BATCH)
         chunks.push(prodotti.slice(i, i + BATCH));
