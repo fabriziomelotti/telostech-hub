@@ -1886,6 +1886,7 @@ function CondizioniAcquisto(){
 }
 
 // ─── PANNELLO ADMIN ───────────────────────────────────────────────────────────
+<ImportClienti ruolo="admin" />
 const SB_URL = "https://trexrsxfjcysbigrjiwg.supabase.co";
 const SB_SERVICE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRyZXhyc3hmamN5c2JpZ3JqaXdnIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc4MjczNTAxMywiZXhwIjoyMDk4MzExMDEzfQ.6EaR-bfs5WGIddtN8Ske6KfswW99YI_T2D1mm9hKMpo";
 
