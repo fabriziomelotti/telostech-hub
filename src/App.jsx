@@ -1,4 +1,5 @@
 import { useState, useMemo, useEffect, useRef } from "react";
+import { ImportClienti, SelezioneCliente } from "./ClientiComponenti";
 
 // ─── SUPABASE REST (fetch diretto — nessuna libreria esterna) ────────────────
 const SUPABASE_URL = "https://trexrsxfjcysbigrjiwg.supabase.co";
