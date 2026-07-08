@@ -4,7 +4,11 @@ import { useState, useEffect, useRef } from "react";
 // Stessi valori inline usati in App.jsx. Tenuti qui per rendere il file
 // autonomo. Se preferisci una sola fonte, esportali da App.jsx e importali.
 const SUPABASE_URL = "https://trexrsxfjcysbigrjiwg.supabase.co";
-const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRyZXhyc3hmamN5c2JpZ3JqaXdnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODI3MzUwMTMsImV4cCI6MjA5ODMxMTAxM30.NnVQR4sk2NNkVbWkK-6IXYMa7MGQKOduluk1S8r5yG0";
+// Nota: usiamo la nuova "publishable key" (sb_publishable_...) al posto della
+// legacy anon key, per poter disattivare quest'ultima insieme a service_role
+// (Supabase permette di disattivarle solo insieme). Stesso ruolo, stesso
+// posto nel codice — solo il valore è cambiato.
+const SUPABASE_ANON_KEY = "sb_publishable_p5wsUvOwpGTxGd3TQ9BPTg_mZyhk6JN";
 
 const sbHeaders = {
   "apikey": SUPABASE_ANON_KEY,
