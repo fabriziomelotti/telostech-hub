@@ -220,6 +220,7 @@ export default function App(){
   const [ordini, setOrdini] = useState([]);
   const [msgs, setMsgs] = useState([]);
   const [msgInput, setMsgInput] = useState("");
+  const [aiTyping, setAiTyping] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
   const [catalog, setCatalog] = useState(CATALOG); // parte col demo, poi si aggiorna
   const [catalogLoading, setCatalogLoading] = useState(false);
@@ -247,13 +248,34 @@ export default function App(){
 
   async function login(email,password){ const ok = await authLogin(email,password); if(ok){ setArea("home"); setMsgs([]); } return ok; }
   async function logout(){ await authLogout(); setArea("home"); setMsgs([]); setCart([]); }
-  function sendMsg(text){
+
+  async function sendMsg(text){
     if(!text.trim()) return;
-    setMsgs(m=>[...m,{role:"user",text}]);
+    const cronologia = [...msgs, {role:"user",text}];
+    setMsgs(cronologia);
     setMsgInput("");
-    setTimeout(()=>setMsgs(m=>[...m,{role:"ai",text:aiReply(text,catalog)}]),500);
+
+    const accessToken = trovaAccessToken(sessione);
+    setAiTyping(true);
+    try{
+      const { risposta } = await chiamaAiAssistant(
+        { tipo:"chat", messaggi: cronologia, ruolo: role },
+        accessToken
+      );
+      setMsgs(m=>[...m,{role:"ai",text:risposta}]);
+    }catch(err){
+      // Fallback offline: se l'Edge Function non risponde (rete, chiave non
+      // configurata, sessione scaduta) l'assistente resta comunque utile
+      // invece di restituire solo un errore secco.
+      setMsgs(m=>[...m,{role:"ai",text:aiReplyFallback(text,catalog)}]);
+    }finally{
+      setAiTyping(false);
+    }
   }
-  function aiReply(q, cat){
+
+  // Risposte locali di riserva, usate solo se la chiamata all'assistente
+  // reale (Edge Function ai-assistant) fallisce.
+  function aiReplyFallback(q, cat){
     const l=q.toLowerCase();
     if(l.includes("ponte")){
       const res=(cat||CATALOG).filter(p=>p.cat==="PONTI SOLLEVATORI").slice(0,3);
@@ -262,7 +284,7 @@ export default function App(){
     if(l.includes("preventivo")) return "Apri Catalogo per selezionare gli articoli, poi genera il documento da Preventivi.";
     if(l.includes("rapporto")) return "Vai su Rapporto tecnico per la compilazione guidata con checklist.";
     if(l.includes("cliente")) return "Apri Clienti — puoi cercare per ragione sociale o numero di serie del prodotto.";
-    return `${(cat||CATALOG).length} articoli indicizzati. Chiedi per categoria, marchio o naviga dal menu.`;
+    return `Assistente non raggiungibile al momento (${(cat||CATALOG).length} articoli indicizzati). Riprova tra poco.`;
   }
 
   if(authLoading) return (
@@ -336,10 +358,10 @@ export default function App(){
 
         <div style={S.content}>
           {area==="home" && <Home r={r} role={role} setArea={setArea} isMobile={isMobile}/>}
-          {area==="ai" && <AIChat msgs={msgs} msgInput={msgInput} setMsgInput={setMsgInput} sendMsg={sendMsg}/>}
-          {area==="prodotti" && <Prodotti cart={cart} setCart={setCart} catalog={catalog} catalogLoading={catalogLoading}/>}
+          {area==="ai" && <AIChat msgs={msgs} msgInput={msgInput} setMsgInput={setMsgInput} sendMsg={sendMsg} aiTyping={aiTyping}/>}
+          {area==="prodotti" && <Prodotti cart={cart} setCart={setCart} catalog={catalog} catalogLoading={catalogLoading} sessione={sessione}/>}
           {area==="clienti" && <Clienti/>}
-          {area==="preventivi" && <Preventivi cart={cart} setCart={setCart} preventivi={preventivi} setPreventivi={setPreventivi} setOrdini={setOrdini} setArea={setArea} ruolo={role} catalog={catalog}/>}
+          {area==="preventivi" && <Preventivi cart={cart} setCart={setCart} preventivi={preventivi} setPreventivi={setPreventivi} setOrdini={setOrdini} setArea={setArea} ruolo={role} catalog={catalog} sessione={sessione}/>}
           {area==="ordini" && <Ordini ordini={ordini} setOrdini={setOrdini}/>}
           {area==="interventi" && <Interventi/>}
           {area==="rapporti" && <RapportoDemo/>}
@@ -466,7 +488,7 @@ function Home({r,role,setArea,isMobile}){
 }
 
 // ─── ASSISTENTE AI ────────────────────────────────────────────────────────────
-function AIChat({msgs,msgInput,setMsgInput,sendMsg}){
+function AIChat({msgs,msgInput,setMsgInput,sendMsg,aiTyping}){
   return (
     <div style={{display:"flex",flexDirection:"column",height:"100%",minHeight:0}}>
       <div style={{flex:1,overflowY:"auto",display:"flex",flexDirection:"column",gap:10,paddingBottom:8}}>
@@ -480,10 +502,16 @@ function AIChat({msgs,msgInput,setMsgInput,sendMsg}){
             <div style={{background:m.role==="ai"?"#fff":C.ink,color:m.role==="ai"?C.charcoal:"#fff",border:m.role==="ai"?`1px solid ${C.paperLine}`:"none",borderRadius:m.role==="ai"?"3px 10px 10px 10px":"10px 3px 10px 10px",padding:"10px 13px",fontSize:13,maxWidth:"82%",whiteSpace:"pre-line",lineHeight:1.55}}>{m.text}</div>
           </div>
         ))}
+        {aiTyping && (
+          <div style={{display:"flex",gap:9}}>
+            <div style={{width:26,height:26,borderRadius:5,background:C.ink,display:"flex",alignItems:"center",justifyContent:"center",fontSize:12,color:C.cyan,flexShrink:0}}>✦</div>
+            <div style={{background:"#fff",border:`1px solid ${C.paperLine}`,borderRadius:"3px 10px 10px 10px",padding:"10px 13px",fontSize:13,color:C.steel,fontStyle:"italic"}}>sta scrivendo…</div>
+          </div>
+        )}
       </div>
       <div style={{borderTop:`1px solid ${C.paperLine}`,paddingTop:11,display:"flex",gap:8}}>
-        <input value={msgInput} onChange={e=>setMsgInput(e.target.value)} onKeyDown={e=>{if(e.key==="Enter")sendMsg(msgInput);}} placeholder="Chiedi qualcosa…" style={S.inp}/>
-        <button onClick={()=>sendMsg(msgInput)} style={{...S.btnAccent,width:42,height:42,padding:0,fontSize:15}}>↑</button>
+        <input value={msgInput} onChange={e=>setMsgInput(e.target.value)} onKeyDown={e=>{if(e.key==="Enter"&&!aiTyping)sendMsg(msgInput);}} placeholder="Chiedi qualcosa…" style={S.inp} disabled={aiTyping}/>
+        <button onClick={()=>{if(!aiTyping)sendMsg(msgInput);}} disabled={aiTyping} style={{...S.btnAccent,width:42,height:42,padding:0,fontSize:15,opacity:aiTyping?0.5:1}}>↑</button>
       </div>
     </div>
   );
@@ -661,45 +689,53 @@ function searchToken(query, index){
   return scored.map(s=>s.entry.prodotto);
 }
 
-// Livello 2: interpretazione semantica via Anthropic per query descrittive
-// che non hanno match diretto sui token (es. "ponte da 32 quintali elettromeccanico")
-async function searchSemantica(query, catalog){
+// Chiama la Edge Function ai-assistant, che tiene la chiave Anthropic lato
+// server e verifica il token di sessione prima di ogni richiesta — stesso
+// schema di sicurezza già usato da admin-users e catalog-admin. Non chiamare
+// mai api.anthropic.com direttamente dal frontend: la chiave finirebbe nel
+// bundle JS pubblico, esattamente il problema risolto l'8 luglio con la
+// service_role key di Supabase.
+async function chiamaAiAssistant(payload, accessToken) {
+  if (!accessToken) throw new Error("Sessione non trovata: ricarica la pagina e rieffettua il login.");
+  const res = await fetch(`${SUPABASE_URL}/functions/v1/ai-assistant`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "apikey": SUPABASE_ANON_KEY,
+      "Authorization": `Bearer ${accessToken}`,
+    },
+    body: JSON.stringify(payload),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data?.error || `Edge Function ${res.status}`);
+  return data;
+}
+
+// Livello 2: interpretazione semantica via Anthropic (attraverso la Edge
+// Function ai-assistant) per query descrittive che non hanno match diretto
+// sui token (es. "ponte da 32 quintali elettromeccanico")
+async function searchSemantica(query, catalog, accessToken){
   // Passiamo solo i campi utili per tenere il prompt leggero
   const catalogoCompatto = catalog.map(p=>({
     cod:p.cod, nome:p.nome, mar:p.mar, cat:p.cat,
     desc:p.desc, desc_prev:p.desc_prev,
   }));
 
-  const resp = await fetch("https://api.anthropic.com/v1/messages", {
-    method:"POST",
-    headers:{ "Content-Type":"application/json" },
-    body: JSON.stringify({
-      model:"claude-sonnet-4-6",
-      max_tokens:300,
-      messages:[{
-        role:"user",
-        content:`Sei il motore di ricerca del catalogo prodotti di un'officina (Telos Tech). Un collaboratore ha cercato: "${query}".
-
-Catalogo (JSON, campo "cod" è l'identificativo univoco):
-${JSON.stringify(catalogoCompatto)}
-
-Restituisci SOLO un array JSON di "cod" dei prodotti pertinenti alla ricerca, ordinati dal più al meno pertinente, basandoti su nome, descrizione generica e descrizione preventivo (che contiene caratteristiche tecniche come portata, alimentazione, tipologia). Massimo 8 risultati. Se nessun prodotto è pertinente, restituisci un array vuoto. Rispondi SOLO con l'array JSON, nessun altro testo.`
-      }]
-    })
-  });
-  const data = await resp.json();
-  const text = (data.content||[]).map(b=>b.text||"").join("");
   try {
-    const cods = JSON.parse(text.replace(/```json|```/g,"").trim());
-    return cods.map(cod=>catalog.find(p=>p.cod===cod)).filter(Boolean);
+    const { cods } = await chiamaAiAssistant(
+      { tipo: "ricerca", query, catalogo: catalogoCompatto },
+      accessToken
+    );
+    return (cods || []).map(cod=>catalog.find(p=>p.cod===cod)).filter(Boolean);
   } catch {
     return [];
   }
 }
 
 // ─── CATALOGO PRODOTTI ────────────────────────────────────────────────────────
-function Prodotti({cart,setCart,catalog:catProp,catalogLoading}){
+function Prodotti({cart,setCart,catalog:catProp,catalogLoading,sessione}){
   const CATS = catProp || CATALOG;
+  const accessToken = trovaAccessToken(sessione);
   const [q,setQ]=useState(""); const [detail,setDetail]=useState(null);
   const [aiResults,setAiResults]=useState(null);
   const [aiSearching,setAiSearching]=useState(false);
@@ -735,7 +771,7 @@ function Prodotti({cart,setCart,catalog:catProp,catalogLoading}){
     if(parole.length < 2) return; // query troppo corta per valere la chiamata AI
     let cancelled = false;
     setAiSearching(true);
-    searchSemantica(q, CATS).then(res=>{
+    searchSemantica(q, CATS, accessToken).then(res=>{
       if(!cancelled){ setAiResults(res); setAiSearching(false); }
     }).catch(()=>{
       if(!cancelled){ setAiResults([]); setAiSearching(false); }
@@ -1205,8 +1241,9 @@ ${righe}
 // ─── RICERCA PRODOTTI INLINE (per aggiungere articoli a un preventivo bozza) ──
 // Riusa lo stesso motore di ricerca a token + radice + fallback AI del Catalogo,
 // montato in piccolo dentro la vista dettaglio del preventivo.
-function RicercaProdottiInline({onSeleziona, righeEsistenti, ruolo, catalog:catProp}){
+function RicercaProdottiInline({onSeleziona, righeEsistenti, ruolo, catalog:catProp, sessione}){
   const CATS = catProp || CATALOG;
+  const accessToken = trovaAccessToken(sessione);
   const [q,setQ]=useState("");
   const [aiResults,setAiResults]=useState(null);
   const [aiSearching,setAiSearching]=useState(false);
@@ -1237,7 +1274,7 @@ function RicercaProdottiInline({onSeleziona, righeEsistenti, ruolo, catalog:catP
     if(parole.length < 2) return;
     let cancelled = false;
     setAiSearching(true);
-    searchSemantica(q, CATS).then(res=>{
+    searchSemantica(q, CATS, accessToken).then(res=>{
       if(!cancelled){ setAiResults(res); setAiSearching(false); }
     }).catch(()=>{ if(!cancelled){ setAiResults([]); setAiSearching(false); } });
     return ()=>{cancelled=true;};
@@ -1463,7 +1500,7 @@ function SchedaProdottoSelezione({p, ruolo, giaPresente, onConferma, onClose}){
   );
 }
 
-function Preventivi({cart,setCart,preventivi,setPreventivi,setOrdini,setArea,ruolo,catalog}){
+function Preventivi({cart,setCart,preventivi,setPreventivi,setOrdini,setArea,ruolo,catalog,sessione}){
   const [view,setView]=useState("lista"); // lista | nuovo | dettaglio
   const [selId,setSelId]=useState(null);
   const total=cart.reduce((s,p)=>s+p.netto,0);
@@ -1645,7 +1682,7 @@ function Preventivi({cart,setCart,preventivi,setPreventivi,setOrdini,setArea,ruo
         </div>
 
         {editable && (
-          <RicercaProdottiInline onSeleziona={(riga)=>aggiungiRiga(selezionato.id, riga)} righeEsistenti={selezionato.righe} ruolo={ruolo} catalog={catalog}/>
+          <RicercaProdottiInline onSeleziona={(riga)=>aggiungiRiga(selezionato.id, riga)} righeEsistenti={selezionato.righe} ruolo={ruolo} catalog={catalog} sessione={sessione}/>
         )}
 
         {/* Azioni di stato */}
