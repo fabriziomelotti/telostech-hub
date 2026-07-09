@@ -22,6 +22,45 @@ async function sbGet(table, params = "") {
   return res.json();
 }
 
+// Come sbGet, ma con il token di sessione dell'utente loggato al posto della
+// chiave pubblica generica — necessario per tabelle (es. "preventivi",
+// "clienti") le cui policy RLS richiedono una sessione autenticata: con la
+// sola chiave pubblica la richiesta viene trattata come anonima e la RLS
+// restituisce zero risultati, senza errore.
+async function sbGetAuth(table, params = "", accessToken) {
+  if (!accessToken) throw new Error("Sessione non trovata: ricarica la pagina e rieffettua il login.");
+  const res = await fetch(`${SUPABASE_URL}/rest/v1/${table}?${params}`, {
+    headers: { ...sbHeaders, "Authorization": `Bearer ${accessToken}` },
+  });
+  if (!res.ok) throw new Error(`Supabase ${res.status}`);
+  return res.json();
+}
+
+// POST/PATCH/DELETE autenticati (token utente reale) su tabelle la cui RLS
+// richiede una sessione autenticata per scrivere — non serve una Edge
+// Function con service_role qui perché, a differenza di "prodotti", queste
+// scritture non sono riservate all'admin: qualunque utente loggato deve
+// poter creare/modificare/eliminare i propri preventivi.
+async function sbAuth(method, table, params, body, accessToken) {
+  if (!accessToken) throw new Error("Sessione non trovata: ricarica la pagina e rieffettua il login.");
+  const res = await fetch(`${SUPABASE_URL}/rest/v1/${table}${params ? `?${params}` : ""}`, {
+    method,
+    headers: {
+      "apikey": SUPABASE_ANON_KEY,
+      "Authorization": `Bearer ${accessToken}`,
+      "Content-Type": "application/json",
+      "Prefer": method === "DELETE" ? "return=minimal" : "return=representation",
+    },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  if (!res.ok) {
+    const txt = await res.text().catch(() => "");
+    throw new Error(`Supabase ${res.status} ${txt}`);
+  }
+  if (method === "DELETE") return null;
+  return res.json();
+}
+
 // Carica tutti i prodotti da Supabase via REST API (nessuna libreria esterna)
 async function caricaCatalogo(catalogoDemo) {
   try {
@@ -103,25 +142,16 @@ const DEMO_INTERVENTI = [
 const STATI_PREVENTIVO = ["Bozza","Inviato","Confermato"];
 const STATO_COLORE = { "Bozza":"steel", "Inviato":"warn", "Confermato":"ok", "Convertito in ordine":"primary" };
 
-let _prevId = 100;
-function nuovoIdPreventivo(){ _prevId += 1; return `PRV·24·0${_prevId}`; }
-
-const DEMO_PREVENTIVI = [
-  {
-    id:"PRV·24·089", cliente:"Gommista Ferrari", stato:"Inviato",
-    righe:[
-      {cod:"DEMO-SG01", mar:"SICAM", nome:"Smontagomme automatico", netto:4200, qty:1, listino:4200},
-      {cod:"DEMO-EQ01", mar:"SICAM", nome:"Equilibratrice digitale", netto:3700, qty:1, listino:3700},
-    ],
-  },
-  {
-    id:"PRV·24·088", cliente:"Officina Truck Verdi", stato:"Confermato",
-    righe:[
-      {cod:"199/RY", mar:"OMCN", nome:"Art. 199/RY — Ponte 2 colonne", netto:13550, qty:1, listino:13550},
-    ],
-  },
-];
-DEMO_PREVENTIVI.forEach(p=>{ p.val = p.righe.reduce((s,r)=>s+r.netto*(r.qty||1),0); });
+// Il codice "PRV-0001" mostrato in giro non è più generato lato client (con
+// preventivi condivisi su Supabase, un contatore locale che riparte da 100 ad
+// ogni ricarica di pagina creerebbe ID duplicati tra utenti diversi) — arriva
+// dal campo "progressivo" assegnato dal database (bigserial, sempre univoco).
+function codicePreventivo(p){
+  return p?.progressivo ? `PRV-${String(p.progressivo).padStart(4,"0")}` : (p?.id || "—");
+}
+function codiceOrdine(p){
+  return p?.progressivo ? `ORD-${String(p.progressivo).padStart(4,"0")}` : (p?.id || "—");
+}
 
 const CHECKLIST_TEMPLATES = {
   installazione:["Verifica imballo e integrità prodotto","Posizionamento secondo planimetria","Collegamento elettrico/pneumatico","Test funzionale completo","Pulizia area post-installazione"],
@@ -218,7 +248,7 @@ export default function App(){
   const [area, setArea] = useState("home");
   const [showMore, setShowMore] = useState(false);
   const [cart, setCart] = useState([]);
-  const [preventivi, setPreventivi] = useState(DEMO_PREVENTIVI);
+  const [preventivi, setPreventivi] = useState([]);
   const [ordini, setOrdini] = useState([]);
   const [msgs, setMsgs] = useState([]);
   const [msgInput, setMsgInput] = useState("");
@@ -278,6 +308,18 @@ export default function App(){
       setCatalogLoading(false);
     });
   },[]);
+
+  // Carica i preventivi reali da Supabase appena l'utente è loggato (serve
+  // il token di sessione, quindi non si può fare prima del login come per
+  // il catalogo). Restano condivisi tra tutti gli utenti autenticati.
+  useEffect(()=>{
+    if(!role) return;
+    const accessToken = trovaAccessToken(sessione);
+    if(!accessToken) return;
+    sbGetAuth("preventivi", "select=*&order=creato_il.desc&limit=500", accessToken)
+      .then(dati => setPreventivi(dati || []))
+      .catch(err => console.warn("Preventivi non raggiungibili:", err.message));
+  },[role]);
 
   // permessi/nav dal ruolo, ma nome reale dalla sessione
   const r = role ? { ...RUOLI[role], nome: sessione?.nome || RUOLI[role].nome } : null;
@@ -400,7 +442,7 @@ export default function App(){
         </div>
 
         <div style={S.content}>
-          {area==="home" && <Home r={r} role={role} setArea={setArea} isMobile={isMobile}/>}
+          {area==="home" && <Home r={r} role={role} setArea={setArea} isMobile={isMobile} preventivi={preventivi}/>}
           {area==="ai" && <AIChat msgs={msgs} msgInput={msgInput} setMsgInput={setMsgInput} sendMsg={sendMsg} aiTyping={aiTyping}/>}
           {area==="prodotti" && <Prodotti cart={cart} setCart={setCart} catalog={catalog} catalogLoading={catalogLoading} sessione={sessione} ruolo={role} setCatalog={setCatalog} setArea={setArea}/>}
           {area==="clienti" && <Clienti/>}
@@ -462,7 +504,7 @@ export default function App(){
 
 // ─── LOGIN ──────────────────────────────────────────────────────────────────────
 // ─── HOME ───────────────────────────────────────────────────────────────────────
-function Home({r,role,setArea,isMobile}){
+function Home({r,role,setArea,isMobile,preventivi}){
   const isT=role==="tecnico";
   const ora = new Date();
   const saluto = ora.getHours()<12?"Buongiorno":ora.getHours()<18?"Buon pomeriggio":"Buonasera";
@@ -493,15 +535,19 @@ function Home({r,role,setArea,isMobile}){
             <span style={{fontFamily:F_MONO,fontSize:10.5,color:"#8A929A",flexShrink:0}}>{i.data}</span>
           </div>
         </div>
-      )):DEMO_PREVENTIVI.map(p=>(
+      )):(preventivi.length>0 ? preventivi.slice(0,2).map(p=>(
         <div key={p.id} onClick={()=>setArea("preventivi")} style={{...S.card,borderLeft:`3px solid ${p.stato==="Inviato"?C.warn:C.steel}`}}>
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:10}}>
             <div style={{minWidth:0}}>
-              <div style={{fontWeight:600,fontSize:13.5}}>{p.cliente}</div>
+              <div style={{fontWeight:600,fontSize:13.5}}>{p.cliente || "Cliente non specificato"}</div>
               <div style={{fontSize:11.5,color:"#8A929A",marginTop:2}}>{p.righe.length} articol{p.righe.length===1?"o":"i"} · {p.stato}</div>
             </div>
             <span className="tnum" style={{fontFamily:F_MONO,fontSize:13,fontWeight:600,flexShrink:0}}>€{p.val.toLocaleString("it-IT")}</span>
           </div>
+        </div>
+      )) : (
+        <div onClick={()=>setArea("preventivi")} style={{...S.card,cursor:"pointer"}}>
+          <div style={{fontSize:12.5,color:"#9AA3AB"}}>Nessun preventivo in corso — tocca per crearne uno</div>
         </div>
       ))}
 
@@ -1595,7 +1641,9 @@ function SchedaProdottoSelezione({p, ruolo, giaPresente, onConferma, onClose}){
 function Preventivi({cart,setCart,preventivi,setPreventivi,setOrdini,setArea,ruolo,catalog,sessione}){
   const [view,setView]=useState("lista"); // lista | nuovo | dettaglio
   const [selId,setSelId]=useState(null);
+  const [erroreSync,setErroreSync]=useState("");
   const total=cart.reduce((s,p)=>s+p.netto,0);
+  const accessToken = trovaAccessToken(sessione);
 
   function totaleRighe(righe){
     return righe.reduce((s,r)=>s+r.netto*(r.qty||1),0);
@@ -1609,55 +1657,70 @@ function Preventivi({cart,setCart,preventivi,setPreventivi,setOrdini,setArea,ruo
     return p.stato;
   }
 
+  // Crea il preventivo su Supabase (il database assegna id e progressivo),
+  // poi lo aggiunge in cima alla lista locale con quanto restituito dal server.
+  async function creaPreventivo(righe){
+    setErroreSync("");
+    const nuovo = { cliente:"", stato:"Bozza", approvato:false, righe, val: totaleRighe(righe) };
+    try{
+      const [salvato] = await sbAuth("POST","preventivi","",nuovo,accessToken);
+      setPreventivi(prev=>[salvato,...prev]);
+      setSelId(salvato.id);
+      setView("dettagli-edit");
+    }catch(err){
+      setErroreSync("Creazione non riuscita: "+err.message);
+    }
+  }
   function creaDaCart(){
     if(cart.length===0) return;
     const righe = cart.map(p=>({cod:p.cod, mar:p.mar, nome:p.nome||p.desc, netto:p.netto, listino:p.listino, qty:1, sottoMargine:false}));
-    const nuovo = { id: nuovoIdPreventivo(), cliente:"", stato:"Bozza", approvato:false, righe, val: totaleRighe(righe) };
-    setPreventivi(prev=>[nuovo,...prev]);
+    creaPreventivo(righe);
     setCart([]);
-    setSelId(nuovo.id);
-    setView("dettagli-edit");
   }
   function creaVuoto(){
-    const nuovo = { id: nuovoIdPreventivo(), cliente:"", stato:"Bozza", approvato:false, righe:[], val:0 };
-    setPreventivi(prev=>[nuovo,...prev]);
-    setSelId(nuovo.id);
-    setView("dettagli-edit");
+    creaPreventivo([]);
   }
 
   const selezionato = preventivi.find(p=>p.id===selId);
 
-  function aggiorna(id, patch){
-    setPreventivi(prev=>prev.map(p=>{
-      if(p.id!==id) return p;
-      const righe = patch.righe || p.righe;
-      return {...p, ...patch, val: totaleRighe(righe)};
-    }));
+  // Aggiornamento ottimistico (l'interfaccia reagisce subito) + salvataggio
+  // reale su Supabase in background. Se il salvataggio fallisce, l'interfaccia
+  // resta con la modifica locale ma compare un avviso — non annulliamo per
+  // non far perdere all'utente quanto appena scritto.
+  async function aggiorna(id, patch){
+    const corrente = preventivi.find(p=>p.id===id);
+    if(!corrente) return;
+    const righe = patch.righe || corrente.righe;
+    const patchCompleto = { ...patch, val: totaleRighe(righe) };
+    setPreventivi(prev=>prev.map(p=>p.id===id ? {...p, ...patchCompleto} : p));
+    try{
+      await sbAuth("PATCH","preventivi",`id=eq.${id}`,patchCompleto,accessToken);
+      setErroreSync("");
+    }catch(err){
+      setErroreSync("Modifica non salvata sul server: "+err.message);
+    }
   }
   function eliminaRiga(id, cod){
-    setPreventivi(prev=>prev.map(p=>{
-      if(p.id!==id) return p;
-      const righe = p.righe.filter(r=>r.cod!==cod);
-      return {...p, righe, val: totaleRighe(righe)};
-    }));
+    const p = preventivi.find(x=>x.id===id);
+    if(!p) return;
+    aggiorna(id, { righe: p.righe.filter(r=>r.cod!==cod) });
   }
   // Aggiunge un articolo, oppure ne aggiorna qty/netto se è già presente
   // (così riaprire la scheda di un prodotto già in preventivo permette di
   // correggere la quantità senza creare una riga duplicata)
   function aggiungiRiga(id, riga){
-    setPreventivi(prev=>prev.map(p=>{
-      if(p.id!==id) return p;
-      const esiste = p.righe.some(r=>r.cod===riga.cod);
-      const righe = esiste
-        ? p.righe.map(r=>r.cod===riga.cod ? riga : r)
-        : [...p.righe, riga];
-      return {...p, righe, val: totaleRighe(righe), approvato:false};
-    }));
+    const p = preventivi.find(x=>x.id===id);
+    if(!p) return;
+    const esiste = p.righe.some(r=>r.cod===riga.cod);
+    const righe = esiste ? p.righe.map(r=>r.cod===riga.cod ? riga : r) : [...p.righe, riga];
+    aggiorna(id, { righe, approvato:false });
   }
   function convertiInOrdine(p){
     const nuovoOrdine = {
-      id: p.id.replace("PRV","ORD"),
+      id: p.id,
+      codice: codiceOrdine(p),
       preventivoId: p.id,
+      preventivoCodice: codicePreventivo(p),
       cliente: p.cliente,
       righe: p.righe,
       val: p.val,
@@ -1668,11 +1731,32 @@ function Preventivi({cart,setCart,preventivi,setPreventivi,setOrdini,setArea,ruo
     aggiorna(p.id, {stato:"Convertito in ordine"});
     setArea("ordini");
   }
+  // Elimina un preventivo intero (non una singola riga). Bloccato per quelli
+  // già trasformati in ordine: cancellarli lascerebbe l'ordine collegato
+  // orfano di riferimento. Aggiornamento ottimistico con rollback se la
+  // cancellazione sul server fallisce, per non far credere all'utente che
+  // sia sparito quando in realtà è ancora lì.
+  async function eliminaPreventivo(id){
+    const p = preventivi.find(x=>x.id===id);
+    if(!p || p.stato==="Convertito in ordine") return;
+    if(!window.confirm(`Eliminare il preventivo ${codicePreventivo(p)}${p.cliente?` (${p.cliente})`:""}? L'operazione non è reversibile.`)) return;
+    setErroreSync("");
+    setPreventivi(prev=>prev.filter(x=>x.id!==id));
+    setSelId(null);
+    setView("lista");
+    try{
+      await sbAuth("DELETE","preventivi",`id=eq.${id}`,null,accessToken);
+    }catch(err){
+      setPreventivi(prev=>[p,...prev]); // rollback: torna visibile in lista
+      setErroreSync("Eliminazione non riuscita: "+err.message);
+    }
+  }
 
   // ── VISTA: NUOVO PREVENTIVO DA CART (riepilogo prima di salvare) ──
   if(view==="lista" && cart.length>0){
     return (
       <div>
+        {erroreSync && <div style={{fontSize:12,color:C.danger,background:"rgba(200,75,58,0.08)",borderRadius:6,padding:"9px 11px",marginBottom:14}}>⚠ {erroreSync}</div>}
         <div style={{background:C.ink,borderRadius:10,padding:"16px 16px",marginBottom:16}}>
           <div style={{...S.eyebrow,color:C.steel}}>Selezionati dal catalogo</div>
           {cart.map(p=>(
@@ -1697,12 +1781,18 @@ function Preventivi({cart,setCart,preventivi,setPreventivi,setOrdini,setArea,ruo
 
   // ── VISTA: LISTA ──
   if(view==="lista"){
-    return <ListaPreventivi preventivi={preventivi} onApri={(id)=>{setSelId(id);setView("dettaglio");}} onNuovo={creaVuoto}/>;
+    return (<>
+      {erroreSync && <div style={{fontSize:12,color:C.danger,background:"rgba(200,75,58,0.08)",borderRadius:6,padding:"9px 11px",marginBottom:14}}>⚠ {erroreSync}</div>}
+      <ListaPreventivi preventivi={preventivi} onApri={(id)=>{setSelId(id);setView("dettaglio");}} onNuovo={creaVuoto}/>
+    </>);
   }
 
   // ── VISTA: DETTAGLIO (sola lettura con azioni di stato) o EDIT (bozza modificabile) ──
   if((view==="dettaglio"||view==="dettagli-edit") && selezionato){
-    const editable = selezionato.stato==="Bozza";
+    // Modificabile (cliente, articoli) finché non è stato trasformato in un
+    // ordine vero — non solo in Bozza. Una volta convertito, il preventivo
+    // resta storico/di sola lettura perché l'ordine lo referenzia.
+    const editable = selezionato.stato!=="Convertito in ordine";
     const statoVisibile = statoConApprovazione(selezionato);
     const inAttesaApprovazione = statoVisibile==="In attesa di approvazione";
     const puoApprovare = inAttesaApprovazione && puoModificarePrezzoLiberamente(ruolo);
@@ -1711,9 +1801,18 @@ function Preventivi({cart,setCart,preventivi,setPreventivi,setOrdini,setArea,ruo
       <div>
         <button onClick={()=>setView("lista")} style={{...S.btnS,marginBottom:14}}>← Tutti i preventivi</button>
 
+        {erroreSync && <div style={{fontSize:12,color:C.danger,background:"rgba(200,75,58,0.08)",borderRadius:6,padding:"9px 11px",marginBottom:14}}>⚠ {erroreSync}</div>}
+
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:6}}>
-          <div className="tnum" style={{fontFamily:F_MONO,fontSize:12,color:"#9AA3AB"}}>{selezionato.id}</div>
-          <Tag tone={inAttesaApprovazione?"warn":(STATO_COLORE[selezionato.stato]||"steel")}>{statoVisibile}</Tag>
+          <div className="tnum" style={{fontFamily:F_MONO,fontSize:12,color:"#9AA3AB"}}>{codicePreventivo(selezionato)}</div>
+          <div style={{display:"flex",alignItems:"center",gap:8}}>
+            <Tag tone={inAttesaApprovazione?"warn":(STATO_COLORE[selezionato.stato]||"steel")}>{statoVisibile}</Tag>
+            {editable && (
+              <button onClick={()=>eliminaPreventivo(selezionato.id)} title="Elimina preventivo" style={{background:"none",border:"none",color:C.danger,cursor:"pointer",fontSize:15,padding:0}}>
+                🗑
+              </button>
+            )}
+          </div>
         </div>
 
         {editable ? (
@@ -1867,7 +1966,7 @@ function ListaPreventivi({preventivi,onApri,onNuovo}){
       {lista.map(p=>(
         <div key={p.id} onClick={()=>onApri(p.id)} style={{...S.card,display:"flex",justifyContent:"space-between",alignItems:"center",gap:10}}>
           <div style={{minWidth:0}}>
-            <div className="tnum" style={{fontSize:10.5,color:"#9AA3AB",fontFamily:F_MONO}}>{p.id}</div>
+            <div className="tnum" style={{fontSize:10.5,color:"#9AA3AB",fontFamily:F_MONO}}>{codicePreventivo(p)}</div>
             <div style={{fontWeight:600,fontSize:13.5,marginTop:2}}>{p.cliente || "Cliente non specificato"}</div>
             <div style={{fontSize:11.5,color:"#8A929A",marginTop:1}}>{p.righe.length} articol{p.righe.length===1?"o":"i"}</div>
           </div>
@@ -1909,7 +2008,7 @@ function Ordini({ordini,setOrdini}){
   .footer{margin-top:32px;font-size:10px;color:#9AA3AB;border-top:1px solid #E3E5EA;padding-top:10px}
 </style></head><body>
 <div class="hd"><div><div class="brand">Telos Tech</div><div style="font-size:11px;color:#7C879E">Conferma d'ordine</div></div>
-<div class="meta"><div>N° ${o.id}</div><div>Rif. preventivo ${o.preventivoId}</div><div>Data: ${o.creato}</div></div></div>
+<div class="meta"><div>N° ${o.codice || o.id}</div><div>Rif. preventivo ${o.preventivoCodice || o.preventivoId}</div><div>Data: ${o.creato}</div></div></div>
 <div style="font-size:15px;font-weight:600;margin-bottom:6px">${o.cliente}</div>
 <table><thead><tr><th>Articolo</th><th>Codice</th><th style="text-align:center">Qtà</th><th style="text-align:right">Totale</th></tr></thead><tbody>${righe}</tbody></table>
 <div class="tot">Totale: €${o.val.toFixed(2)}</div>
@@ -1924,11 +2023,11 @@ function Ordini({ordini,setOrdini}){
       <div>
         <button onClick={()=>setSelId(null)} style={{...S.btnS,marginBottom:14}}>← Tutti gli ordini</button>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:6}}>
-          <div className="tnum" style={{fontFamily:F_MONO,fontSize:12,color:"#9AA3AB"}}>{selezionato.id}</div>
+          <div className="tnum" style={{fontFamily:F_MONO,fontSize:12,color:"#9AA3AB"}}>{selezionato.codice || selezionato.id}</div>
           <Tag tone={selezionato.stato==="Da evadere"?"warn":"ok"}>{selezionato.stato}</Tag>
         </div>
         <div style={{fontFamily:F_DISPLAY,fontSize:19,fontWeight:600,marginBottom:4}}>{selezionato.cliente}</div>
-        <div style={{fontSize:11.5,color:"#8A929A",marginBottom:14}}>Da preventivo {selezionato.preventivoId} · creato il {selezionato.creato}</div>
+        <div style={{fontSize:11.5,color:"#8A929A",marginBottom:14}}>Da preventivo {selezionato.preventivoCodice || selezionato.preventivoId} · creato il {selezionato.creato}</div>
         <div style={S.eyebrow}>Articoli ({selezionato.righe.length})</div>
         {selezionato.righe.map(r=>(
           <div key={r.cod} style={{...S.card,cursor:"default",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
@@ -1967,7 +2066,7 @@ function Ordini({ordini,setOrdini}){
       {ordini.map(o=>(
         <div key={o.id} onClick={()=>setSelId(o.id)} style={{...S.card,display:"flex",justifyContent:"space-between",alignItems:"center",gap:10}}>
           <div style={{minWidth:0}}>
-            <div className="tnum" style={{fontSize:10.5,color:"#9AA3AB",fontFamily:F_MONO}}>{o.id}</div>
+            <div className="tnum" style={{fontSize:10.5,color:"#9AA3AB",fontFamily:F_MONO}}>{o.codice || o.id}</div>
             <div style={{fontWeight:600,fontSize:13.5,marginTop:2}}>{o.cliente}</div>
             <div style={{fontSize:11.5,color:"#8A929A",marginTop:1}}>{o.righe.length} articol{o.righe.length===1?"o":"i"} · {o.creato}</div>
           </div>
