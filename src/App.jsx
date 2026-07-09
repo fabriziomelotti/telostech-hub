@@ -684,23 +684,30 @@ function buildSearchIndex(catalog){
     const testoPrimario = [p.nome, p.cod, p.mar, p.cat].filter(Boolean).join(" ");
     const testoSecondario = [p.desc, p.desc_prev].filter(Boolean).join(" ");
     const tokensPrimari = tokenizza(testoPrimario);
+    const tokensSecondari = tokenizza(testoSecondario);
     return {
       prodotto:p,
       tokensPrimari: new Set(tokensPrimari),
       radiciPrimarie: new Set(tokensPrimari.map(radice)),
-      tokensSecondari: new Set(tokenizza(testoSecondario)),
+      tokensSecondari: new Set(tokensSecondari),
+      radiciSecondarie: new Set(tokensSecondari.map(radice)),
       testoPrimarioNorm: normalizza(testoPrimario),
     };
   });
 }
 
 // Match per token con pesi differenziati:
-//   match esatto in campo primario   -> peso 3    (es. "199" nel codice prodotto)
-//   match per radice in campo primario -> peso 2.2 (es. "ponte" trova "ponti")
-//   match parziale in campo primario -> peso 1.5  (es. "199" dentro "199gk")
-//   match in campo secondario        -> peso 0.4  (parola persa in una descrizione lunga)
-// Una soglia minima evita che un singolo match debole nel campo secondario
-// basti a far comparire un prodotto non pertinente.
+//   match esatto in campo primario      -> peso 3    (es. "199" nel codice prodotto)
+//   match per radice in campo primario  -> peso 2.2  (es. "ponte" trova "ponti")
+//   match (esatto o radice) in campo secondario -> peso 1.6 (es. "ponte" trova
+//     un prodotto il cui nome/categoria non lo menzionano ma la cui
+//     descrizione sì — supera la soglia da solo, altrimenti prodotti come i
+//     ponti a forbice classificati sotto "SOLLEVATORI E PRESSATURA" non
+//     comparirebbero mai cercando "ponte")
+//   match parziale in campo primario    -> peso 1.5  (es. "199" dentro "199gk")
+//   match parziale nel testo primario complessivo -> peso 1
+// Una soglia minima evita che un singolo match debolissimo basti a far
+// comparire un prodotto non pertinente.
 function searchToken(query, index){
   const qTokens = tokenizza(query);
   if(qTokens.length===0) return [];
@@ -712,6 +719,7 @@ function searchToken(query, index){
     for(const qt of qTokens){
       if(entry.tokensPrimari.has(qt)){ score += 3; continue; }
       if(entry.radiciPrimarie.has(radice(qt))){ score += 2.2; continue; }
+      if(entry.tokensSecondari.has(qt) || entry.radiciSecondarie.has(radice(qt))){ score += 1.6; continue; }
       if(qt.length >= LUNGHEZZA_MIN_PARZIALE){
         let partialPrimario = false;
         for(const t of entry.tokensPrimari){
@@ -721,7 +729,6 @@ function searchToken(query, index){
         if(partialPrimario){ score += 1.5; continue; }
         if(entry.testoPrimarioNorm.replace(/\s/g,"").includes(qt.replace(/\s/g,""))){ score += 1; continue; }
       }
-      if(entry.tokensSecondari.has(qt)) score += 0.4;
     }
     return { entry, score };
   }).filter(s => s.score >= SOGLIA_MINIMA);
