@@ -701,13 +701,15 @@ function buildSearchIndex(catalog){
 //   match per radice in campo primario  -> peso 2.2  (es. "ponte" trova "ponti")
 //   match (esatto o radice) in campo secondario -> peso 1.6 (es. "ponte" trova
 //     un prodotto il cui nome/categoria non lo menzionano ma la cui
-//     descrizione sì — supera la soglia da solo, altrimenti prodotti come i
-//     ponti a forbice classificati sotto "SOLLEVATORI E PRESSATURA" non
-//     comparirebbero mai cercando "ponte")
+//     descrizione sì)
 //   match parziale in campo primario    -> peso 1.5  (es. "199" dentro "199gk")
 //   match parziale nel testo primario complessivo -> peso 1
-// Una soglia minima evita che un singolo match debolissimo basti a far
-// comparire un prodotto non pertinente.
+// IMPORTANTE: con query di più parole, OGNI parola deve trovare almeno un
+// match (di uno dei tipi sopra) perché il prodotto sia incluso — non basta
+// che una sola parola "forte" superi la soglia. Senza questo vincolo, una
+// parola corta e generica (es. "2", che compare in moltissimi codici e
+// descrizioni non correlate) farebbe comparire prodotti totalmente estranei
+// anche se le altre parole della ricerca non li riguardano affatto.
 function searchToken(query, index){
   const qTokens = tokenizza(query);
   if(qTokens.length===0) return [];
@@ -716,22 +718,26 @@ function searchToken(query, index){
 
   const scored = index.map(entry=>{
     let score = 0;
+    let parolaMancante = false;
     for(const qt of qTokens){
-      if(entry.tokensPrimari.has(qt)){ score += 3; continue; }
-      if(entry.radiciPrimarie.has(radice(qt))){ score += 2.2; continue; }
-      if(entry.tokensSecondari.has(qt) || entry.radiciSecondarie.has(radice(qt))){ score += 1.6; continue; }
-      if(qt.length >= LUNGHEZZA_MIN_PARZIALE){
+      let punti = 0;
+      if(entry.tokensPrimari.has(qt)) punti = 3;
+      else if(entry.radiciPrimarie.has(radice(qt))) punti = 2.2;
+      else if(entry.tokensSecondari.has(qt) || entry.radiciSecondarie.has(radice(qt))) punti = 1.6;
+      else if(qt.length >= LUNGHEZZA_MIN_PARZIALE){
         let partialPrimario = false;
         for(const t of entry.tokensPrimari){
           if(t.length < LUNGHEZZA_MIN_PARZIALE) continue;
           if(t.includes(qt) || qt.includes(t)){ partialPrimario = true; break; }
         }
-        if(partialPrimario){ score += 1.5; continue; }
-        if(entry.testoPrimarioNorm.replace(/\s/g,"").includes(qt.replace(/\s/g,""))){ score += 1; continue; }
+        if(partialPrimario) punti = 1.5;
+        else if(entry.testoPrimarioNorm.replace(/\s/g,"").includes(qt.replace(/\s/g,""))) punti = 1;
       }
+      if(punti === 0){ parolaMancante = true; break; } // questa parola non trova nulla: il prodotto non è pertinente
+      score += punti;
     }
-    return { entry, score };
-  }).filter(s => s.score >= SOGLIA_MINIMA);
+    return { entry, score, parolaMancante };
+  }).filter(s => !s.parolaMancante && s.score >= SOGLIA_MINIMA);
 
   scored.sort((a,b)=>b.score-a.score);
   return scored.map(s=>s.entry.prodotto);
