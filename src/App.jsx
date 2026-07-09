@@ -27,7 +27,7 @@ async function caricaCatalogo(catalogoDemo) {
   try {
     const PAGE = 1000;
     let tutti = [], offset = 0;
-    const cols = "cod,nome,descrizione,desc_prev,categoria,marchio,tipologia,um,listino,sconto,netto,tipo_prezzo,note,img,settori,schede_tecniche";
+    const cols = "cod,nome,descrizione,desc_prev,categoria,marchio,tipologia,um,listino,sconto,netto,tipo_prezzo,note,img,settori,schede_tecniche,video_url";
     while (true) {
       const dati = await sbGet("prodotti",
         `select=${cols}&attivo=eq.true&order=categoria&limit=${PAGE}&offset=${offset}`);
@@ -44,6 +44,7 @@ async function caricaCatalogo(catalogoDemo) {
       tipo_prezzo: p.tipo_prezzo || "listino",
       note: p.note, img: p.img, settori: p.settori || "",
       schede: p.schede_tecniche || [],
+      video: p.video_url || "",
     }));
   } catch (err) {
     console.warn("Supabase non raggiungibile, uso catalogo demo:", err.message);
@@ -1165,6 +1166,16 @@ function SchedaProdotto({p, isIn, onToggleCart, onClose, ruolo, onModifica}){
             <div style={{fontSize:12,color:C.steel,marginBottom:22}}>
               Nessuna scheda tecnica caricata{ruolo==="admin" ? " — usa Modifica per aggiungerne una." : "."}
             </div>
+          )}
+
+          {p.video && (
+            <a href={p.video} target="_blank" rel="noopener noreferrer" style={{display:"flex",alignItems:"center",gap:9,width:"100%",background:C.paper,border:`1px solid ${C.paperLine}`,borderRadius:8,padding:"11px 13px",cursor:"pointer",textAlign:"left",marginBottom:22,textDecoration:"none"}}>
+              <span style={{fontSize:17,color:C.ink}}>▶</span>
+              <div style={{flex:1}}>
+                <div style={{fontSize:13,fontWeight:600,color:C.charcoal}}>Guarda il video del prodotto</div>
+                <div style={{fontSize:11,color:"#9AA3AB",marginTop:1}}>Apre in una nuova scheda</div>
+              </div>
+            </a>
           )}
 
           {/* Azioni */}

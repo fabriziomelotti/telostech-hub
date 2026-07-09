@@ -393,7 +393,7 @@ export function CreaProdotto({ ruolo, onCreato, categorieEsistenti, sessione }){
   const vuoto = {
     cod:"", nome:"", categoria:"", tipologia:"", marchio:"",
     descrizione:"", desc_prev:"", um:"pz",
-    listino:"", sconto:"", netto:"", tipo_prezzo:"listino", note:"", img:"",
+    listino:"", sconto:"", netto:"", tipo_prezzo:"listino", note:"", img:"", video:"",
   };
   const [f, setF] = useState(vuoto);
   const [settori, setSettori] = useState([]); // array di stringhe
@@ -474,6 +474,7 @@ export function CreaProdotto({ ruolo, onCreato, categorieEsistenti, sessione }){
       tipo_prezzo: f.tipo_prezzo,
       note: f.note.trim() || null,
       img: f.img.trim() || null,
+      video_url: f.video.trim() || null,
       attivo: true,
     };
 
@@ -593,6 +594,7 @@ export function CreaProdotto({ ruolo, onCreato, categorieEsistenti, sessione }){
           </div>
         )}
       </>)}
+      {campo("Video prodotto (URL, opzionale)", <input value={f.video} onChange={e=>set("video",e.target.value)} placeholder="https://www.youtube.com/... oppure sito del produttore" style={S.inp}/>)}
       {campo("Note", <input value={f.note} onChange={e=>set("note",e.target.value)} placeholder="Note interne" style={S.inp}/>)}
 
       <button onClick={salva} disabled={stato==="salvo"} style={{...S.btnP,width:"100%",padding:"12px",marginTop:4,opacity:stato==="salvo"?0.6:1}}>
@@ -624,7 +626,7 @@ export function EditaProdotto({ ruolo, p, categorieEsistenti, onSalvato, onClose
     nome: p.nome||"", categoria: p.cat||"", tipologia: p.tip||"", marchio: p.mar||"",
     descrizione: p.desc||"", desc_prev: p.desc_prev||"", um: p.um||"pz",
     listino: p.listino ?? "", sconto: p.sconto ?? "", netto: p.netto ?? "",
-    tipo_prezzo: p.tipo_prezzo||"listino", note: p.note||"", img: p.img||"",
+    tipo_prezzo: p.tipo_prezzo||"listino", note: p.note||"", img: p.img||"", video: p.video||"",
   });
   const [settori, setSettori] = useState(settoriIniziali);
   const [stato, setStato] = useState("idle"); // idle | salvo | fatto | errore
@@ -731,6 +733,7 @@ export function EditaProdotto({ ruolo, p, categorieEsistenti, onSalvato, onClose
       tipo_prezzo: f.tipo_prezzo,
       note: f.note.trim() || null,
       img: f.img.trim() || null,
+      video_url: f.video.trim() || null,
       schede_tecniche: schede,
       attivo: true,
     };
@@ -879,6 +882,7 @@ export function EditaProdotto({ ruolo, p, categorieEsistenti, onSalvato, onClose
             </div>
           </>)}
 
+          {campo("Video prodotto (URL, opzionale)", <input value={f.video} onChange={e=>set("video",e.target.value)} placeholder="https://www.youtube.com/... oppure sito del produttore" style={S.inp}/>)}
           {campo("Note", <input value={f.note} onChange={e=>set("note",e.target.value)} style={S.inp}/>)}
 
           <button onClick={salva} disabled={stato==="salvo"} style={{...S.btnP,width:"100%",padding:"12px",marginTop:4,opacity:stato==="salvo"?0.6:1}}>
