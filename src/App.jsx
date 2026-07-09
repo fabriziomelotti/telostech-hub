@@ -402,7 +402,7 @@ export default function App(){
         <div style={S.content}>
           {area==="home" && <Home r={r} role={role} setArea={setArea} isMobile={isMobile}/>}
           {area==="ai" && <AIChat msgs={msgs} msgInput={msgInput} setMsgInput={setMsgInput} sendMsg={sendMsg} aiTyping={aiTyping}/>}
-          {area==="prodotti" && <Prodotti cart={cart} setCart={setCart} catalog={catalog} catalogLoading={catalogLoading} sessione={sessione} ruolo={role} setCatalog={setCatalog}/>}
+          {area==="prodotti" && <Prodotti cart={cart} setCart={setCart} catalog={catalog} catalogLoading={catalogLoading} sessione={sessione} ruolo={role} setCatalog={setCatalog} setArea={setArea}/>}
           {area==="clienti" && <Clienti/>}
           {area==="preventivi" && <Preventivi cart={cart} setCart={setCart} preventivi={preventivi} setPreventivi={setPreventivi} setOrdini={setOrdini} setArea={setArea} ruolo={role} catalog={catalog} sessione={sessione}/>}
           {area==="ordini" && <Ordini ordini={ordini} setOrdini={setOrdini}/>}
@@ -803,12 +803,14 @@ async function searchSemantica(query, catalog, accessToken){
 }
 
 // ─── CATALOGO PRODOTTI ────────────────────────────────────────────────────────
-function Prodotti({cart,setCart,catalog:catProp,catalogLoading,sessione,ruolo,setCatalog}){
+function Prodotti({cart,setCart,catalog:catProp,catalogLoading,sessione,ruolo,setCatalog,setArea}){
   const CATS = catProp || CATALOG;
   const accessToken = trovaAccessToken(sessione);
   const [q,setQ]=useState(""); const [detail,setDetail]=useState(null);
   const [editando,setEditando]=useState(null); // prodotto attualmente in modifica (solo admin)
   const categorieCatalogo = useMemo(()=>[...new Set(CATS.map(p=>p.cat).filter(Boolean))].sort(),[CATS]);
+  const tipologieCatalogo = useMemo(()=>[...new Set(CATS.map(p=>p.tip).filter(Boolean))].sort(),[CATS]);
+  const marchiCatalogo = useMemo(()=>[...new Set(CATS.map(p=>p.mar).filter(Boolean))].sort(),[CATS]);
   const [aiResults,setAiResults]=useState(null);
   const [aiSearching,setAiSearching]=useState(false);
 
@@ -855,7 +857,18 @@ function Prodotti({cart,setCart,catalog:catProp,catalogLoading,sessione,ruolo,se
   const usingAi = tokenResults.length===0 && aiResults && aiResults.length>0;
 
   const inCart = new Set(cart.map(c=>c.cod));
-  function toggle(p,e){e?.stopPropagation();setCart(prev=>inCart.has(p.cod)?prev.filter(c=>c.cod!==p.cod):[...prev,p]);}
+  const [toastAggiunta, setToastAggiunta] = useState(null); // {nome} | null
+  useEffect(()=>{
+    if(!toastAggiunta) return;
+    const t = setTimeout(()=>setToastAggiunta(null), 2800);
+    return ()=>clearTimeout(t);
+  },[toastAggiunta]);
+  function toggle(p,e){
+    e?.stopPropagation();
+    const giaPresente = inCart.has(p.cod);
+    setCart(prev=>giaPresente?prev.filter(c=>c.cod!==p.cod):[...prev,p]);
+    if(!giaPresente) setToastAggiunta({nome:p.nome});
+  }
 
   // ─── Navigazione a livelli (attiva solo quando NON stai cercando testo) ───
   // Livelli: 1 categoria (cat) · 2 settore (settore, se presente) · 3 tipologia
@@ -1048,11 +1061,23 @@ function Prodotti({cart,setCart,catalog:catProp,catalogLoading,sessione,ruolo,se
 
       {detail&&<SchedaProdotto p={detail} isIn={inCart.has(detail.cod)} onToggleCart={e=>toggle(detail,e)} onClose={()=>setDetail(null)} ruolo={ruolo} onModifica={()=>setEditando(detail)}/>}
 
+      {toastAggiunta && (
+        <div style={{position:"fixed",left:"50%",bottom:24,transform:"translateX(-50%)",zIndex:80,display:"flex",alignItems:"center",gap:12,background:C.ink,color:"#fff",borderRadius:10,padding:"12px 16px",boxShadow:"0 8px 24px rgba(0,0,0,0.25)",maxWidth:"90vw"}}>
+          <span style={{fontSize:16,color:C.cyan,flexShrink:0}}>✓</span>
+          <span style={{fontSize:13,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>"{toastAggiunta.nome}" aggiunto al preventivo</span>
+          <button onClick={()=>{setToastAggiunta(null); if(setArea) setArea("preventivi");}} style={{background:C.cyan,color:C.inkDeep,border:"none",borderRadius:6,padding:"6px 11px",fontSize:12,fontWeight:600,cursor:"pointer",flexShrink:0,whiteSpace:"nowrap"}}>
+            Vai al preventivo →
+          </button>
+        </div>
+      )}
+
       {editando && (
         <EditaProdotto
           ruolo={ruolo}
           p={editando}
           categorieEsistenti={categorieCatalogo}
+          tipologieEsistenti={tipologieCatalogo}
+          marchiEsistenti={marchiCatalogo}
           sessione={sessione}
           onClose={()=>setEditando(null)}
           onSalvato={()=>{
@@ -1710,6 +1735,7 @@ function Preventivi({cart,setCart,preventivi,setPreventivi,setOrdini,setArea,ruo
               } : {
                 cliente:"", cliente_codice:null, cliente_localita:"", cliente_provincia:"", cliente_piva:"",
               })}
+              sessione={sessione}
             />
           </div>
         ) : (
@@ -2624,12 +2650,22 @@ function PannelloAdmin({ setCatalog, ruolo, sessione }) {
   const [esportando, setEsportando] = useState(false);
   const [conteggio, setConteggio] = useState(null);
   const [categorie, setCategorie] = useState([]);
+  const [tipologie, setTipologie] = useState([]);
+  const [marchi, setMarchi] = useState([]);
   const fileRef = useRef(null);
 
   function ricaricaCategorie() {
     chiamaCatalogAdmin("categorie", {}, accessToken)
       .then(d => setCategorie(d?.categorie ?? []))
       .catch(() => setCategorie([]));
+  }
+  function ricaricaTipologieMarchi() {
+    chiamaCatalogAdmin("tipologie", {}, accessToken)
+      .then(d => setTipologie(d?.tipologie ?? []))
+      .catch(() => setTipologie([]));
+    chiamaCatalogAdmin("marchi", {}, accessToken)
+      .then(d => setMarchi(d?.marchi ?? []))
+      .catch(() => setMarchi([]));
   }
 
   // Carica conteggio prodotti attuali
@@ -2638,6 +2674,7 @@ function PannelloAdmin({ setCatalog, ruolo, sessione }) {
       .then(d => setConteggio(d?.count ?? "—"))
       .catch(() => setConteggio("—"));
     ricaricaCategorie();
+    ricaricaTipologieMarchi();
   }, [importando]);
 
   function addLog(msg, tipo = "info") {
@@ -2939,7 +2976,7 @@ function PannelloAdmin({ setCatalog, ruolo, sessione }) {
       <ImportClienti ruolo={ruolo}/>
 
       <div style={{height:8}}/>
-      <CreaProdotto ruolo={ruolo} onCreato={()=>{ caricaCatalogo(CATALOG).then(d=>setCatalog(d)); ricaricaCategorie(); }} categorieEsistenti={categorie.map(c=>c.categoria)} sessione={sessione}/>
+      <CreaProdotto ruolo={ruolo} onCreato={()=>{ caricaCatalogo(CATALOG).then(d=>setCatalog(d)); ricaricaCategorie(); ricaricaTipologieMarchi(); }} categorieEsistenti={categorie.map(c=>c.categoria)} tipologieEsistenti={tipologie} marchiEsistenti={marchi} sessione={sessione}/>
 
       {/* Tab */}
       <div style={{display:"flex",borderBottom:`1px solid ${C.paperLine}`,marginBottom:18}}>

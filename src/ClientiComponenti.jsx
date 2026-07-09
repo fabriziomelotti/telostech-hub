@@ -23,6 +23,21 @@ async function sbGet(table, params = "") {
   return res.json();
 }
 
+// Come sbGet, ma con il token di sessione dell'utente loggato al posto della
+// chiave pubblica generica nell'header Authorization. Necessario per tabelle
+// con dati sensibili (es. "clienti") le cui policy RLS richiedono una
+// sessione autenticata per la lettura — con la sola chiave pubblica la
+// richiesta viene trattata come anonima e la RLS restituisce zero risultati,
+// senza errore (da cui la ricerca che "non trova nulla").
+async function sbGetAuth(table, params = "", accessToken) {
+  if (!accessToken) throw new Error("Sessione non trovata: ricarica la pagina e rieffettua il login.");
+  const res = await fetch(`${SUPABASE_URL}/rest/v1/${table}?${params}`, {
+    headers: { ...sbHeaders, "Authorization": `Bearer ${accessToken}` },
+  });
+  if (!res.ok) throw new Error(`Supabase ${res.status}`);
+  return res.json();
+}
+
 // POST/UPSERT con Prefer: resolution=merge-duplicates → inserisce o aggiorna
 // sulla primary key (codice). Batch di righe già mappate alle colonne DB.
 // NOTA: dopo la disattivazione delle chiavi legacy (8 luglio), le policy RLS
@@ -272,7 +287,8 @@ const CAMPI_RICERCA = [
   "partita_iva","codice_fiscale","mail","telefono",
 ];
 
-export function SelezioneCliente({ onSeleziona, clienteSelezionato }){
+export function SelezioneCliente({ onSeleziona, clienteSelezionato, sessione }){
+  const accessToken = trovaAccessToken(sessione);
   const [q, setQ] = useState("");
   const [risultati, setRisultati] = useState([]);
   const [caricando, setCaricando] = useState(false);
@@ -297,7 +313,7 @@ export function SelezioneCliente({ onSeleziona, clienteSelezionato }){
         const params =
           `select=codice,ragione_sociale,rag_sociale_agg,indirizzo,localita,provincia,cap,partita_iva,codice_fiscale,telefono,mail,filiale` +
           `&or=(${orExpr})&limit=25&order=ragione_sociale`;
-        const dati = await sbGet("clienti", params);
+        const dati = await sbGetAuth("clienti", params, accessToken);
         setRisultati(dati || []);
       }catch(err){
         setErrore("Ricerca non disponibile: " + err.message);
@@ -388,7 +404,32 @@ const TIPI_PREZZO = [
   { v: "promo_fornitore", label: "Promo fornitore" },
 ];
 
-export function CreaProdotto({ ruolo, onCreato, categorieEsistenti, sessione }){
+// Menu a tendina con le opzioni già in uso nel catalogo (Tipologia, Marca) +
+// possibilità di scriverne una nuova. Stesso pattern già usato per la
+// Categoria: evita refusi/doppioni quando esiste già il valore giusto, ma
+// non blocca la creazione di uno nuovo quando serve davvero.
+function CampoSelezionabile({ valore, onChange, opzioni, placeholderNuovo, sentinellaLabel }){
+  const lista = opzioni || [];
+  const inElenco = lista.includes(valore);
+  return (
+    <>
+      <select
+        value={inElenco ? valore : "__nuovo__"}
+        onChange={e=>onChange(e.target.value==="__nuovo__" ? "" : e.target.value)}
+        style={S.inp}
+      >
+        <option value="__nuovo__">{sentinellaLabel}</option>
+        {valore && !inElenco && <option value={valore}>{valore} (attuale)</option>}
+        {lista.map(o=>(<option key={o} value={o}>{o}</option>))}
+      </select>
+      {!inElenco && (
+        <input value={valore} onChange={e=>onChange(e.target.value)} placeholder={placeholderNuovo} style={{...S.inp,marginTop:8}}/>
+      )}
+    </>
+  );
+}
+
+export function CreaProdotto({ ruolo, onCreato, categorieEsistenti, tipologieEsistenti, marchiEsistenti, sessione }){
   const accessToken = trovaAccessToken(sessione);
   const vuoto = {
     cod:"", nome:"", categoria:"", tipologia:"", marchio:"",
@@ -402,6 +443,10 @@ export function CreaProdotto({ ruolo, onCreato, categorieEsistenti, sessione }){
   const [caricandoImg, setCaricandoImg] = useState(false);
   const [erroreImg, setErroreImg] = useState("");
   const fileImgRef = useRef(null);
+  const [schede, setSchede] = useState([]); // [{nome, url}]
+  const [caricandoScheda, setCaricandoScheda] = useState(false);
+  const [erroreScheda, setErroreScheda] = useState("");
+  const fileSchedaRef = useRef(null);
 
   if(ruolo !== "admin"){
     return (
@@ -443,6 +488,41 @@ export function CreaProdotto({ ruolo, onCreato, categorieEsistenti, sessione }){
     setCaricandoImg(false);
   }
 
+  // Carica un PDF come nuova scheda tecnica. Il nome mostrato di default è
+  // il nome del file (senza estensione); l'admin può poi rinominarlo
+  // liberamente nell'elenco (es. "INFO PRODOTTO", "SCHEDA PER INSTALLAZIONE")
+  // — più file, anche con lo stesso PDF sorgente, possono avere nomi diversi.
+  async function caricaSchedaFile(file){
+    if(!file) return;
+    if(file.type !== "application/pdf"){ setErroreScheda("Sono ammessi solo file PDF."); return; }
+    if(file.size > 15*1024*1024){ setErroreScheda("File troppo grande (max 15MB)."); return; }
+    setErroreScheda(""); setCaricandoScheda(true);
+    try{
+      const base64 = await new Promise((res,rej)=>{
+        const r = new FileReader();
+        r.onload = () => res(r.result.split(",")[1]);
+        r.onerror = () => rej(new Error("Lettura file fallita"));
+        r.readAsDataURL(file);
+      });
+      const { url } = await chiamaCatalogAdmin(
+        "caricaSchedaTecnica",
+        { nomeFile: file.name, contentType: file.type, base64, cod: f.cod || "prodotto" },
+        accessToken
+      );
+      const nomeDefault = file.name.replace(/\.pdf$/i, "");
+      setSchede(prev => [...prev, { nome: nomeDefault, url }]);
+    }catch(err){
+      setErroreScheda("Errore caricamento: " + err.message);
+    }
+    setCaricandoScheda(false);
+  }
+  function rinominaScheda(i, nuovoNome){
+    setSchede(prev => prev.map((s,idx) => idx===i ? {...s, nome:nuovoNome} : s));
+  }
+  function rimuoviScheda(i){
+    setSchede(prev => prev.filter((_,idx) => idx!==i));
+  }
+
   // calcolo netto automatico da listino+sconto se netto non inserito a mano
   function nettoCalcolato(){
     const listino = parseFloat(f.listino);
@@ -475,6 +555,7 @@ export function CreaProdotto({ ruolo, onCreato, categorieEsistenti, sessione }){
       note: f.note.trim() || null,
       img: f.img.trim() || null,
       video_url: f.video.trim() || null,
+      schede_tecniche: schede,
       attivo: true,
     };
 
@@ -483,7 +564,7 @@ export function CreaProdotto({ ruolo, onCreato, categorieEsistenti, sessione }){
       await chiamaCatalogAdmin("upsertChunk", { rows: [riga] }, accessToken);
       setStato("fatto");
       setMsg(`Prodotto "${riga.nome}" salvato. Ricarica il catalogo per vederlo.`);
-      setF(vuoto); setSettori([]);
+      setF(vuoto); setSettori([]); setSchede([]);
       if(onCreato) onCreato();
     }catch(err){
       setStato("errore");
@@ -543,8 +624,8 @@ export function CreaProdotto({ ruolo, onCreato, categorieEsistenti, sessione }){
         </div>
       )}
 
-      {campo("Tipologia", <input value={f.tipologia} onChange={e=>set("tipologia",e.target.value)} placeholder="es. PONTI 2 COLONNE" style={S.inp}/>)}
-      {campo("Marca", <input value={f.marchio} onChange={e=>set("marchio",e.target.value)} placeholder="es. OMCN" style={S.inp}/>)}
+      {campo("Tipologia", <CampoSelezionabile valore={f.tipologia} onChange={v=>set("tipologia",v)} opzioni={tipologieEsistenti} placeholderNuovo="es. PONTI 2 COLONNE" sentinellaLabel="— nuova tipologia —"/>)}
+      {campo("Marca", <CampoSelezionabile valore={f.marchio} onChange={v=>set("marchio",v)} opzioni={marchiEsistenti} placeholderNuovo="es. OMCN" sentinellaLabel="— nuova marca —"/>)}
 
       {campo("Descrizione", <input value={f.descrizione} onChange={e=>set("descrizione",e.target.value)} placeholder="Descrizione estesa" style={S.inp}/>)}
       {campo("Descrizione per preventivo (una caratteristica per riga)",
@@ -594,6 +675,29 @@ export function CreaProdotto({ ruolo, onCreato, categorieEsistenti, sessione }){
           </div>
         )}
       </>)}
+
+      {campo("Schede tecniche (PDF)", <>
+        {schede.length > 0 && (
+          <div style={{marginBottom:10}}>
+            {schede.map((s,i)=>(
+              <div key={i} style={{display:"flex",gap:8,alignItems:"center",marginBottom:6}}>
+                <input value={s.nome} onChange={e=>rinominaScheda(i,e.target.value)} placeholder="es. INFO PRODOTTO" style={{...S.inp,flex:1}}/>
+                <a href={s.url} target="_blank" rel="noopener noreferrer" style={{fontSize:11,color:C.ink,whiteSpace:"nowrap"}}>Apri</a>
+                <button type="button" onClick={()=>rimuoviScheda(i)} style={{background:"none",border:"none",color:C.danger,cursor:"pointer",fontSize:16,padding:"0 4px"}}>✕</button>
+              </div>
+            ))}
+          </div>
+        )}
+        <button type="button" onClick={()=>fileSchedaRef.current?.click()} disabled={caricandoScheda} style={{...S.btnS,padding:"9px 14px",opacity:caricandoScheda?0.6:1}}>
+          {caricandoScheda ? "Carico…" : "⬆ Aggiungi scheda tecnica (PDF)"}
+        </button>
+        <input ref={fileSchedaRef} type="file" accept="application/pdf" style={{display:"none"}} onChange={e=>{caricaSchedaFile(e.target.files[0]); e.target.value="";}}/>
+        {erroreScheda && <div style={{fontSize:11,color:C.danger,marginTop:4}}>{erroreScheda}</div>}
+        <div style={{fontSize:11,color:"#9AA3AB",marginTop:6}}>
+          Carica il PDF, poi scrivi il nome da mostrare (es. "INFO PRODOTTO", "SCHEDA PER INSTALLAZIONE"). Puoi caricarne più di uno.
+        </div>
+      </>)}
+
       {campo("Video prodotto (URL, opzionale)", <input value={f.video} onChange={e=>set("video",e.target.value)} placeholder="https://www.youtube.com/... oppure sito del produttore" style={S.inp}/>)}
       {campo("Note", <input value={f.note} onChange={e=>set("note",e.target.value)} placeholder="Note interne" style={S.inp}/>)}
 
@@ -619,7 +723,7 @@ export function CreaProdotto({ ruolo, onCreato, categorieEsistenti, sessione }){
 // Prop: p = prodotto nel formato "corto" usato dal frontend (cat, mar, tip,
 // desc, ecc. — vedi mappatura in caricaCatalogo() dentro App.jsx).
 // ═══════════════════════════════════════════════════════════════════════════
-export function EditaProdotto({ ruolo, p, categorieEsistenti, onSalvato, onClose, sessione }){
+export function EditaProdotto({ ruolo, p, categorieEsistenti, tipologieEsistenti, marchiEsistenti, onSalvato, onClose, sessione }){
   const accessToken = trovaAccessToken(sessione);
   const settoriIniziali = (p.settori||"").split(",").map(s=>s.trim()).filter(Boolean);
   const [f, setF] = useState({
@@ -808,8 +912,8 @@ export function EditaProdotto({ ruolo, p, categorieEsistenti, onSalvato, onClose
             </div>
           )}
 
-          {campo("Tipologia", <input value={f.tipologia} onChange={e=>set("tipologia",e.target.value)} style={S.inp}/>)}
-          {campo("Marca", <input value={f.marchio} onChange={e=>set("marchio",e.target.value)} style={S.inp}/>)}
+          {campo("Tipologia", <CampoSelezionabile valore={f.tipologia} onChange={v=>set("tipologia",v)} opzioni={tipologieEsistenti} placeholderNuovo="es. PONTI 2 COLONNE" sentinellaLabel="— nuova tipologia —"/>)}
+          {campo("Marca", <CampoSelezionabile valore={f.marchio} onChange={v=>set("marchio",v)} opzioni={marchiEsistenti} placeholderNuovo="es. OMCN" sentinellaLabel="— nuova marca —"/>)}
 
           {campo("Descrizione", <input value={f.descrizione} onChange={e=>set("descrizione",e.target.value)} style={S.inp}/>)}
           {campo("Descrizione per preventivo (una caratteristica per riga)",
