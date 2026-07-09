@@ -1504,49 +1504,51 @@ function generaPreventivoPDF(righe, total, meta={}){
   const w = window.open("", "_blank");
   const html = `<!DOCTYPE html><html><head><title>Preventivo ${codiceMostrato}</title>
 <style>
+  @page{size:A4;margin:0}
   *{box-sizing:border-box;margin:0;padding:0}
+  html,body{width:210mm}
   body{font-family:Arial,sans-serif;color:#232323;font-size:12.5px}
-  .pagina{padding:40px 44px;page-break-after:always;position:relative;min-height:1000px}
+  .pagina{width:210mm;min-height:297mm;padding:14mm 16mm;page-break-after:always;position:relative}
   .pagina:last-child{page-break-after:auto}
 
   /* ── Copertina ── */
-  .cover{text-align:center;display:flex;flex-direction:column;align-items:center;padding-top:60px}
-  .cover-logo{width:280px;margin-bottom:50px}
-  .cover-cliente{font-size:26px;font-weight:700;margin-bottom:10px}
-  .cover-referente{font-size:15px;font-style:italic;color:#3A4248;margin-bottom:70px}
-  .cover-chevron{width:200px;margin-bottom:70px}
-  .cover-titolo{font-size:22px;font-weight:700;margin-bottom:120px}
+  .cover{text-align:center;display:flex;flex-direction:column;align-items:center;padding-top:16mm}
+  .cover-logo{width:85mm;margin-bottom:16mm}
+  .cover-cliente{font-size:28px;font-weight:700;margin-bottom:10px}
+  .cover-referente{font-size:15px;font-style:italic;color:#3A4248;margin-bottom:22mm}
+  .cover-chevron{width:62mm;margin-bottom:22mm}
+  .cover-titolo{font-size:23px;font-weight:700;margin-bottom:30mm}
   .cover-caption{font-size:11px;font-style:italic;color:#5B6770;margin-bottom:10px}
-  .cover-strip{width:100%;max-width:680px;margin-bottom:30px}
+  .cover-strip{width:100%;margin-bottom:10mm}
   .cover-contatti{font-size:10.5px;color:#162758;font-weight:700;line-height:1.7}
   .cover-contatti span{display:block;font-weight:400;color:#5B6770}
 
   /* ── Pagina contenuto ── */
   .hd-content{display:flex;align-items:center;gap:14px;margin-bottom:20px;padding-bottom:14px;border-bottom:2px solid #162758}
-  .hd-content img{height:34px}
-  .titolo-ordine{font-size:20px;font-weight:700;color:#162758;margin-bottom:16px}
-  .meta-box{position:absolute;top:44px;right:44px;text-align:right;font-size:11px;line-height:1.7}
+  .hd-content img{height:38px}
+  .titolo-ordine{font-size:21px;font-weight:700;color:#162758;margin-bottom:18px}
+  .meta-box{position:absolute;top:14mm;right:16mm;text-align:right;font-size:11px;line-height:1.7}
   .meta-box b{display:inline-block;width:70px;text-align:left;color:#7C879E;font-weight:400}
   .cliente-box{font-size:12.5px;margin-bottom:20px}
   .cliente-box .nome{font-weight:700;font-size:14px}
 
-  table.articoli{width:100%;border-collapse:collapse;margin-bottom:18px}
-  table.articoli thead th{background:#162758;color:#fff;padding:8px 8px;font-size:10.5px;text-align:left}
+  table.articoli{width:100%;border-collapse:collapse;margin-bottom:18px;table-layout:fixed}
+  table.articoli thead th{background:#162758;color:#fff;padding:9px 10px;font-size:10.5px;text-align:left}
   table.articoli thead th.cella-num{text-align:right}
-  .riga-prodotto td{border-bottom:1px solid #E3E5EA;padding:10px 8px;vertical-align:top;font-size:11.5px}
-  .cella-prodotto{width:20%}
+  .riga-prodotto td{border-bottom:1px solid #E3E5EA;padding:12px 10px;vertical-align:top;font-size:11.5px}
+  .cella-prodotto{width:22%}
   .tag{display:inline-block;font-size:9px;font-weight:600;text-transform:uppercase;background:#EEF0F4;color:#5B6770;padding:2px 7px;border-radius:3px;margin-bottom:3px}
   .prodotto-nome{font-weight:600}
   .prodotto-codice{font-family:monospace;font-size:9.5px;color:#9AA3AB;margin-top:2px}
-  .cella-descr{width:38%}
-  .prodotto-img{width:90px;height:70px;border:1px solid #E3E5EA;border-radius:6px;background:#FAFAFA;display:flex;align-items:center;justify-content:center;overflow:hidden;margin-bottom:6px}
+  .cella-descr{width:40%}
+  .prodotto-img{width:110px;height:80px;border:1px solid #E3E5EA;border-radius:6px;background:#FAFAFA;display:flex;align-items:center;justify-content:center;overflow:hidden;margin-bottom:6px}
   .prodotto-img img{max-width:100%;max-height:100%;object-fit:contain}
   .descr-testo{font-size:10.5px;color:#5B6770;line-height:1.5}
-  .cella-num{text-align:right;white-space:nowrap}
+  .cella-num{text-align:right;white-space:nowrap;width:9.5%}
   .cella-tot{font-weight:700;color:#162758}
 
   .totali-box{text-align:right;margin-top:8px}
-  .tot-imponibile{font-size:16px;font-weight:700;color:#162758}
+  .tot-imponibile{font-size:17px;font-weight:700;color:#162758}
   .finanziamento-riga{font-size:12px;color:#162758;font-weight:600;margin-top:4px}
   .finanziamento-nota{font-size:10px;color:#7C879E}
 
@@ -1554,11 +1556,11 @@ function generaPreventivoPDF(righe, total, meta={}){
   .note-box .lbl{font-weight:700;margin-bottom:4px}
   .note-box .testo{white-space:pre-line}
 
-  .footer-legale{position:absolute;bottom:24px;left:44px;right:44px;font-size:9px;color:#9AA3AB;border-top:1px solid #E3E5EA;padding-top:8px}
+  .footer-legale{position:absolute;bottom:10mm;left:16mm;right:16mm;font-size:9px;color:#9AA3AB;border-top:1px solid #E3E5EA;padding-top:8px}
   .footer-legale b{color:#5B6770}
 
   /* ── Pagina condizioni ── */
-  .condizioni h2{font-size:16px;color:#162758;margin-bottom:14px}
+  .condizioni h2{font-size:17px;color:#162758;margin-bottom:14px}
   .condizioni h3{font-size:11.5px;color:#162758;margin-top:14px;margin-bottom:4px}
   .condizioni p{font-size:10.5px;line-height:1.55;color:#3A4248}
   .condizioni p.intro{font-style:italic;margin-bottom:14px}
