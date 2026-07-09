@@ -2677,29 +2677,59 @@ function PannelloAdmin({ setCatalog, ruolo, sessione }) {
     setAnteprima(null);
     setLog([]);
 
-    // Legge le prime righe per anteprima
+    // Legge le prime righe per anteprima — usa lo stesso parser "vero"
+    // dell'import, così l'anteprima non mostra dati spezzati per via di
+    // descrizioni multi-riga (coerenza con avviaImport).
     const text = await f.text().catch(() => null);
     if (text) {
-      // CSV semplice
-      const righe = text.split("\n").filter(Boolean);
-      const headers = righe[0].split(/[,;\t]/);
-      const campione = righe.slice(1, 6).map(r => r.split(/[,;\t]/));
-      setAnteprima({ headers, campione, totale: righe.length - 1, tipo: "csv" });
+      const { headers, righe } = parseCSV(text);
+      const campione = righe.slice(0, 5).map(r => headers.map(h => r[h] ?? ""));
+      setAnteprima({ headers, campione, totale: righe.length, tipo: "csv" });
     }
   }
 
   // Parsing CSV con gestione campi quotati
+  // Parser CSV "vero" — un semplice text.split("\n") romperebbe a metà i
+  // campi tra virgolette che contengono un a-capo al loro interno (es. le
+  // descrizioni per preventivo, scritte una caratteristica per riga), e
+  // romperebbe anche i campi che contengono il separatore stesso tra
+  // virgolette. Questo parser scorre il testo carattere per carattere e
+  // rispetta le virgolette, come previsto dal formato CSV standard.
   function parseCSV(text) {
-    const righe = [];
-    const lines = text.split("\n").filter(Boolean);
-    const sep = lines[0].includes(";") ? ";" : lines[0].includes("\t") ? "\t" : ",";
-    const headers = lines[0].split(sep).map(h => h.trim().replace(/^"|"$/g, "").toLowerCase());
+    const primaLinea = text.slice(0, (text.indexOf("\n") + 1 || text.length + 1) - 1);
+    const sep = primaLinea.includes(";") ? ";" : primaLinea.includes("\t") ? "\t" : ",";
 
-    for (let i = 1; i < lines.length; i++) {
-      const vals = lines[i].split(sep).map(v => v.trim().replace(/^"|"$/g, ""));
+    const righeGrezze = [];
+    let campo = "", riga = [], inQuotes = false;
+    for (let i = 0; i < text.length; i++) {
+      const c = text[i];
+      if (inQuotes) {
+        if (c === '"') {
+          if (text[i+1] === '"') { campo += '"'; i++; }
+          else { inQuotes = false; }
+        } else {
+          campo += c;
+        }
+      } else {
+        if (c === '"') inQuotes = true;
+        else if (c === sep) { riga.push(campo); campo = ""; }
+        else if (c === "\r") { /* ignorato, gestito da \n */ }
+        else if (c === "\n") { riga.push(campo); campo = ""; righeGrezze.push(riga); riga = []; }
+        else campo += c;
+      }
+    }
+    if (campo !== "" || riga.length > 0) { riga.push(campo); righeGrezze.push(riga); } // ultima riga senza newline finale
+
+    const righeValide = righeGrezze.filter(r => r.some(v => v !== ""));
+    if (righeValide.length === 0) return { headers: [], righe: [] };
+
+    const headers = righeValide[0].map(h => h.trim().toLowerCase());
+    const righe = [];
+    for (let i = 1; i < righeValide.length; i++) {
+      const vals = righeValide[i];
       if (vals.length < 3) continue;
       const row = {};
-      headers.forEach((h, idx) => row[h] = vals[idx] || null);
+      headers.forEach((h, idx) => row[h] = (vals[idx] ?? "").trim() || null);
       righe.push(row);
     }
     return { headers, righe };
