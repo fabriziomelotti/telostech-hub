@@ -25,6 +25,11 @@ async function sbGet(table, params = "") {
 
 // POST/UPSERT con Prefer: resolution=merge-duplicates → inserisce o aggiorna
 // sulla primary key (codice). Batch di righe già mappate alle colonne DB.
+// NOTA: dopo la disattivazione delle chiavi legacy (8 luglio), le policy RLS
+// bloccano correttamente le scritture dirette con la sola chiave pubblica —
+// per questo la tabella "prodotti" NON usa più questo helper (vedi
+// chiamaCatalogAdmin più sotto), rimasto qui solo per le tabelle che
+// consentono scrittura diretta lato client (es. "clienti", se prevista).
 async function sbUpsert(table, righe) {
   const res = await fetch(`${SUPABASE_URL}/rest/v1/${table}`, {
     method: "POST",
@@ -38,6 +43,48 @@ async function sbUpsert(table, righe) {
     const txt = await res.text().catch(() => "");
     throw new Error(`Supabase ${res.status} ${txt}`);
   }
+}
+
+// La sessione custom (Auth.jsx) conserva il token in un campo il cui nome può
+// variare; stesso helper di App.jsx, duplicato qui per rendere il file
+// autonomo (vedi nota in cima al file).
+function trovaAccessToken(sessione) {
+  const diretto = sessione?.access_token || sessione?.accessToken || sessione?.token
+    || sessione?.session?.access_token;
+  if (diretto) return diretto;
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (!k || !k.toLowerCase().includes("auth")) continue;
+      const raw = localStorage.getItem(k);
+      if (!raw) continue;
+      const parsed = JSON.parse(raw);
+      const tok = parsed?.access_token || parsed?.session?.access_token || parsed?.currentSession?.access_token;
+      if (tok) return tok;
+    }
+  } catch { /* ignora, gestito dal chiamante */ }
+  return null;
+}
+
+// Chiama la Edge Function catalog-admin (verifica JWT + ruolo admin lato
+// server, poi opera con la service_role key). Creazione/modifica prodotto e
+// upload immagine passano da qui invece che da sbUpsert diretto, perché le
+// policy RLS della tabella "prodotti" non permettono scritture con la sola
+// chiave pubblica — stesso principio già applicato a admin-users.
+async function chiamaCatalogAdmin(action, payload, accessToken) {
+  if (!accessToken) throw new Error("Sessione non trovata: ricarica la pagina e rieffettua il login.");
+  const res = await fetch(`${SUPABASE_URL}/functions/v1/catalog-admin`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "apikey": SUPABASE_ANON_KEY,
+      "Authorization": `Bearer ${accessToken}`,
+    },
+    body: JSON.stringify({ action, ...payload }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data?.error || `Edge Function ${res.status}`);
+  return data;
 }
 
 // ─── STILE (deve combaciare con C / S / F_* di App.jsx) ───────────────────────
@@ -341,7 +388,8 @@ const TIPI_PREZZO = [
   { v: "promo_fornitore", label: "Promo fornitore" },
 ];
 
-export function CreaProdotto({ ruolo, onCreato, categorieEsistenti }){
+export function CreaProdotto({ ruolo, onCreato, categorieEsistenti, sessione }){
+  const accessToken = trovaAccessToken(sessione);
   const vuoto = {
     cod:"", nome:"", categoria:"", tipologia:"", marchio:"",
     descrizione:"", desc_prev:"", um:"pz",
@@ -351,6 +399,9 @@ export function CreaProdotto({ ruolo, onCreato, categorieEsistenti }){
   const [settori, setSettori] = useState([]); // array di stringhe
   const [stato, setStato] = useState("idle"); // idle | salvo | fatto | errore
   const [msg, setMsg] = useState("");
+  const [caricandoImg, setCaricandoImg] = useState(false);
+  const [erroreImg, setErroreImg] = useState("");
+  const fileImgRef = useRef(null);
 
   if(ruolo !== "admin"){
     return (
@@ -364,6 +415,32 @@ export function CreaProdotto({ ruolo, onCreato, categorieEsistenti }){
   function set(campo, val){ setF(prev=>({...prev, [campo]:val})); }
   function toggleSettore(s){
     setSettori(prev => prev.includes(s) ? prev.filter(x=>x!==s) : [...prev, s]);
+  }
+
+  // Legge il file scelto, lo manda alla Edge Function (che lo carica sullo
+  // storage bucket "prodotti-immagini" con la service_role key) e imposta
+  // l'URL pubblico restituito nel campo immagine.
+  async function caricaImmagineFile(file){
+    if(!file) return;
+    if(file.size > 5*1024*1024){ setErroreImg("Immagine troppo grande (max 5MB)."); return; }
+    setErroreImg(""); setCaricandoImg(true);
+    try{
+      const base64 = await new Promise((res,rej)=>{
+        const r = new FileReader();
+        r.onload = () => res(r.result.split(",")[1]);
+        r.onerror = () => rej(new Error("Lettura file fallita"));
+        r.readAsDataURL(file);
+      });
+      const { url } = await chiamaCatalogAdmin(
+        "caricaImmagine",
+        { nomeFile: file.name, contentType: file.type, base64, cod: f.cod || "prodotto" },
+        accessToken
+      );
+      set("img", url);
+    }catch(err){
+      setErroreImg("Errore caricamento: " + err.message);
+    }
+    setCaricandoImg(false);
   }
 
   // calcolo netto automatico da listino+sconto se netto non inserito a mano
@@ -402,7 +479,7 @@ export function CreaProdotto({ ruolo, onCreato, categorieEsistenti }){
 
     try{
       setStato("salvo"); setMsg("Salvataggio…");
-      await sbUpsert("prodotti", [riga]);
+      await chiamaCatalogAdmin("upsertChunk", { rows: [riga] }, accessToken);
       setStato("fatto");
       setMsg(`Prodotto "${riga.nome}" salvato. Ricarica il catalogo per vederlo.`);
       setF(vuoto); setSettori([]);
@@ -434,12 +511,19 @@ export function CreaProdotto({ ruolo, onCreato, categorieEsistenti }){
       {campo("Nome *", <input value={f.nome} onChange={e=>set("nome",e.target.value)} placeholder="Nome commerciale" style={S.inp}/>)}
 
       {campo("Categoria *", <>
-        <input value={f.categoria} onChange={e=>set("categoria",e.target.value)} placeholder="es. PONTI SOLLEVATORI" style={S.inp} list="categoria-esistenti-datalist"/>
-        <datalist id="categoria-esistenti-datalist">
-          {(categorieEsistenti||[]).map(c=>(<option key={c} value={c}/>))}
-        </datalist>
+        <select
+          value={(categorieEsistenti||[]).includes(f.categoria) ? f.categoria : "__nuova__"}
+          onChange={e=>set("categoria", e.target.value==="__nuova__" ? "" : e.target.value)}
+          style={S.inp}
+        >
+          <option value="__nuova__">— nuova categoria —</option>
+          {(categorieEsistenti||[]).map(c=>(<option key={c} value={c}>{c}</option>))}
+        </select>
+        {!(categorieEsistenti||[]).includes(f.categoria) && (
+          <input value={f.categoria} onChange={e=>set("categoria",e.target.value)} placeholder="es. PONTI SOLLEVATORI" style={{...S.inp,marginTop:8}}/>
+        )}
         <div style={{fontSize:11,color:"#9AA3AB",marginTop:3}}>
-          Scrivi per vedere le categorie già in uso — usarne una esistente evita doppioni. Viene salvata automaticamente in MAIUSCOLO, quindi "Battery" e "BATTERY" finiscono comunque nella stessa categoria.
+          Scegli una categoria esistente per evitare doppioni, oppure lascia "— nuova categoria —" e scrivine una. Viene salvata automaticamente in MAIUSCOLO.
         </div>
       </>)}
 
@@ -493,7 +577,22 @@ export function CreaProdotto({ ruolo, onCreato, categorieEsistenti }){
         </div>
       )}
 
-      {campo("URL immagine", <input value={f.img} onChange={e=>set("img",e.target.value)} placeholder="https://…" style={S.inp}/>)}
+      {campo("Immagine prodotto", <>
+        <div style={{display:"flex",gap:8}}>
+          <input value={f.img} onChange={e=>set("img",e.target.value)} placeholder="https://… oppure carica un file" style={{...S.inp,flex:1}}/>
+          <button type="button" onClick={()=>fileImgRef.current?.click()} disabled={caricandoImg} style={{...S.btnS,padding:"0 14px",whiteSpace:"nowrap",opacity:caricandoImg?0.6:1}}>
+            {caricandoImg ? "Carico…" : "⬆ CARICA"}
+          </button>
+          <input ref={fileImgRef} type="file" accept="image/*" style={{display:"none"}} onChange={e=>{caricaImmagineFile(e.target.files[0]); e.target.value="";}}/>
+        </div>
+        {erroreImg && <div style={{fontSize:11,color:C.danger,marginTop:4}}>{erroreImg}</div>}
+        {f.img && (
+          <div style={{marginTop:8,display:"flex",alignItems:"center",gap:8}}>
+            <img src={f.img} alt="anteprima" style={{width:48,height:48,objectFit:"contain",border:`1px solid ${C.paperLine}`,borderRadius:6,background:C.paper}} onError={e=>{e.target.style.display="none";}}/>
+            <span style={{fontSize:11,color:"#9AA3AB"}}>Anteprima</span>
+          </div>
+        )}
+      </>)}
       {campo("Note", <input value={f.note} onChange={e=>set("note",e.target.value)} placeholder="Note interne" style={S.inp}/>)}
 
       <button onClick={salva} disabled={stato==="salvo"} style={{...S.btnP,width:"100%",padding:"12px",marginTop:4,opacity:stato==="salvo"?0.6:1}}>
@@ -518,7 +617,8 @@ export function CreaProdotto({ ruolo, onCreato, categorieEsistenti }){
 // Prop: p = prodotto nel formato "corto" usato dal frontend (cat, mar, tip,
 // desc, ecc. — vedi mappatura in caricaCatalogo() dentro App.jsx).
 // ═══════════════════════════════════════════════════════════════════════════
-export function EditaProdotto({ ruolo, p, categorieEsistenti, onSalvato, onClose }){
+export function EditaProdotto({ ruolo, p, categorieEsistenti, onSalvato, onClose, sessione }){
+  const accessToken = trovaAccessToken(sessione);
   const settoriIniziali = (p.settori||"").split(",").map(s=>s.trim()).filter(Boolean);
   const [f, setF] = useState({
     nome: p.nome||"", categoria: p.cat||"", tipologia: p.tip||"", marchio: p.mar||"",
@@ -529,12 +629,38 @@ export function EditaProdotto({ ruolo, p, categorieEsistenti, onSalvato, onClose
   const [settori, setSettori] = useState(settoriIniziali);
   const [stato, setStato] = useState("idle"); // idle | salvo | fatto | errore
   const [msg, setMsg] = useState("");
+  const [caricandoImg, setCaricandoImg] = useState(false);
+  const [erroreImg, setErroreImg] = useState("");
+  const fileImgRef = useRef(null);
 
   if(ruolo !== "admin") return null;
 
   function set(campo, val){ setF(prev=>({...prev, [campo]:val})); }
   function toggleSettore(s){
     setSettori(prev => prev.includes(s) ? prev.filter(x=>x!==s) : [...prev, s]);
+  }
+
+  async function caricaImmagineFile(file){
+    if(!file) return;
+    if(file.size > 5*1024*1024){ setErroreImg("Immagine troppo grande (max 5MB)."); return; }
+    setErroreImg(""); setCaricandoImg(true);
+    try{
+      const base64 = await new Promise((res,rej)=>{
+        const r = new FileReader();
+        r.onload = () => res(r.result.split(",")[1]);
+        r.onerror = () => rej(new Error("Lettura file fallita"));
+        r.readAsDataURL(file);
+      });
+      const { url } = await chiamaCatalogAdmin(
+        "caricaImmagine",
+        { nomeFile: file.name, contentType: file.type, base64, cod: p.cod },
+        accessToken
+      );
+      set("img", url);
+    }catch(err){
+      setErroreImg("Errore caricamento: " + err.message);
+    }
+    setCaricandoImg(false);
   }
 
   function nettoCalcolato(){
@@ -571,7 +697,7 @@ export function EditaProdotto({ ruolo, p, categorieEsistenti, onSalvato, onClose
 
     try{
       setStato("salvo"); setMsg("Salvataggio…");
-      await sbUpsert("prodotti", [riga]);
+      await chiamaCatalogAdmin("upsertChunk", { rows: [riga] }, accessToken);
       setStato("fatto");
       setMsg("Prodotto aggiornato.");
       if(onSalvato) onSalvato(riga);
@@ -607,10 +733,20 @@ export function EditaProdotto({ ruolo, p, categorieEsistenti, onSalvato, onClose
           {campo("Nome *", <input value={f.nome} onChange={e=>set("nome",e.target.value)} style={S.inp}/>)}
 
           {campo("Categoria *", <>
-            <input value={f.categoria} onChange={e=>set("categoria",e.target.value)} style={S.inp} list="categoria-esistenti-datalist-edit"/>
-            <datalist id="categoria-esistenti-datalist-edit">
-              {(categorieEsistenti||[]).map(c=>(<option key={c} value={c}/>))}
-            </datalist>
+            <select
+              value={(categorieEsistenti||[]).includes(f.categoria) ? f.categoria : "__nuova__"}
+              onChange={e=>set("categoria", e.target.value==="__nuova__" ? "" : e.target.value)}
+              style={S.inp}
+            >
+              {f.categoria && !(categorieEsistenti||[]).includes(f.categoria) && (
+                <option value={f.categoria}>{f.categoria} (attuale)</option>
+              )}
+              {(categorieEsistenti||[]).map(c=>(<option key={c} value={c}>{c}</option>))}
+              <option value="__nuova__">+ Nuova categoria…</option>
+            </select>
+            {!(categorieEsistenti||[]).includes(f.categoria) && (
+              <input value={f.categoria} onChange={e=>set("categoria",e.target.value)} placeholder="Nome della nuova categoria" style={{...S.inp,marginTop:8}}/>
+            )}
             <div style={{fontSize:11,color:"#9AA3AB",marginTop:3}}>Viene salvata automaticamente in MAIUSCOLO.</div>
           </>)}
 
@@ -664,7 +800,22 @@ export function EditaProdotto({ ruolo, p, categorieEsistenti, onSalvato, onClose
             </div>
           )}
 
-          {campo("URL immagine", <input value={f.img} onChange={e=>set("img",e.target.value)} style={S.inp}/>)}
+          {campo("Immagine prodotto", <>
+            <div style={{display:"flex",gap:8}}>
+              <input value={f.img} onChange={e=>set("img",e.target.value)} placeholder="https://… oppure carica un file" style={{...S.inp,flex:1}}/>
+              <button type="button" onClick={()=>fileImgRef.current?.click()} disabled={caricandoImg} style={{...S.btnS,padding:"0 14px",whiteSpace:"nowrap",opacity:caricandoImg?0.6:1}}>
+                {caricandoImg ? "Carico…" : "⬆ CARICA"}
+              </button>
+              <input ref={fileImgRef} type="file" accept="image/*" style={{display:"none"}} onChange={e=>{caricaImmagineFile(e.target.files[0]); e.target.value="";}}/>
+            </div>
+            {erroreImg && <div style={{fontSize:11,color:C.danger,marginTop:4}}>{erroreImg}</div>}
+            {f.img && (
+              <div style={{marginTop:8,display:"flex",alignItems:"center",gap:8}}>
+                <img src={f.img} alt="anteprima" style={{width:48,height:48,objectFit:"contain",border:`1px solid ${C.paperLine}`,borderRadius:6,background:C.paper}} onError={e=>{e.target.style.display="none";}}/>
+                <span style={{fontSize:11,color:"#9AA3AB"}}>Anteprima</span>
+              </div>
+            )}
+          </>)}
           {campo("Note", <input value={f.note} onChange={e=>set("note",e.target.value)} style={S.inp}/>)}
 
           <button onClick={salva} disabled={stato==="salvo"} style={{...S.btnP,width:"100%",padding:"12px",marginTop:4,opacity:stato==="salvo"?0.6:1}}>

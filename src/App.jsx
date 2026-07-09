@@ -1024,6 +1024,7 @@ function Prodotti({cart,setCart,catalog:catProp,catalogLoading,sessione,ruolo,se
           ruolo={ruolo}
           p={editando}
           categorieEsistenti={categorieCatalogo}
+          sessione={sessione}
           onClose={()=>setEditando(null)}
           onSalvato={()=>{
             setEditando(null);
@@ -2842,7 +2843,7 @@ function PannelloAdmin({ setCatalog, ruolo, sessione }) {
       <ImportClienti ruolo={ruolo}/>
 
       <div style={{height:8}}/>
-      <CreaProdotto ruolo={ruolo} onCreato={()=>{ caricaCatalogo(CATALOG).then(d=>setCatalog(d)); ricaricaCategorie(); }} categorieEsistenti={categorie.map(c=>c.categoria)}/>
+      <CreaProdotto ruolo={ruolo} onCreato={()=>{ caricaCatalogo(CATALOG).then(d=>setCatalog(d)); ricaricaCategorie(); }} categorieEsistenti={categorie.map(c=>c.categoria)} sessione={sessione}/>
 
       {/* Tab */}
       <div style={{display:"flex",borderBottom:`1px solid ${C.paperLine}`,marginBottom:18}}>
