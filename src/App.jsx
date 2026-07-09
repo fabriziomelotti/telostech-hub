@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect, useRef } from "react";
-import { ImportClienti, SelezioneCliente, CreaProdotto } from "./ClientiComponenti";
+import { ImportClienti, SelezioneCliente, CreaProdotto, EditaProdotto } from "./ClientiComponenti";
 import { useAuth, LoginReale } from "./Auth";
 
 // ─── SUPABASE REST (fetch diretto — nessuna libreria esterna) ────────────────
@@ -225,12 +225,46 @@ export default function App(){
   const [catalog, setCatalog] = useState(CATALOG); // parte col demo, poi si aggiorna
   const [catalogLoading, setCatalogLoading] = useState(false);
   const [dbOnline, setDbOnline] = useState(null); // null=non testato, true/false
+  const [nuovaVersione, setNuovaVersione] = useState(false);
 
   useEffect(()=>{
     const check=()=>setIsMobile(window.innerWidth < 860);
     check();
     window.addEventListener("resize",check);
     return ()=>window.removeEventListener("resize",check);
+  },[]);
+
+  // Rileva nuovi deploy mentre l'app è già aperta in una scheda. L'header
+  // no-cache su index.html (vercel.json) fa sì che questo fetch veda sempre
+  // la versione realmente pubblicata; confrontiamo il file JS referenziato
+  // con quello attualmente caricato (identificato dal nome con hash che Vite
+  // genera ad ogni build). Se diverso, avvisiamo invece di forzare il reload
+  // a sorpresa mentre magari si sta compilando un preventivo.
+  useEffect(()=>{
+    const scriptTag = document.querySelector('script[type="module"][src]');
+    const versioneCaricata = scriptTag?.getAttribute("src") || null;
+    if(!versioneCaricata) return; // ambiente non standard (es. dev server): non applicabile
+
+    async function controllaAggiornamento(){
+      try{
+        const res = await fetch("/index.html", { cache: "no-store" });
+        const html = await res.text();
+        let versioneServer = null;
+        for(const m of html.matchAll(/<script\b[^>]*>/g)){
+          const tag = m[0];
+          if(/type=["']module["']/.test(tag)){
+            const srcMatch = tag.match(/src=["']([^"']+)["']/);
+            if(srcMatch){ versioneServer = srcMatch[1]; break; }
+          }
+        }
+        if(versioneServer && versioneServer !== versioneCaricata){
+          setNuovaVersione(true);
+        }
+      }catch{ /* rete assente: ignora, riprova al prossimo giro */ }
+    }
+
+    const interval = setInterval(controllaAggiornamento, 5*60*1000); // ogni 5 minuti
+    return ()=>clearInterval(interval);
   },[]);
 
   // Carica il catalogo reale da Supabase appena l'app monta
@@ -300,6 +334,13 @@ export default function App(){
     <div style={S.app}>
       <style>{G}</style>
 
+      {nuovaVersione && (
+        <div style={{position:"fixed",top:0,left:0,right:0,background:C.ink,color:"#fff",padding:"9px 14px",fontSize:12.5,display:"flex",justifyContent:"center",alignItems:"center",gap:12,zIndex:200}}>
+          <span>È disponibile una nuova versione dell'app.</span>
+          <button onClick={()=>window.location.reload()} style={{background:"#fff",color:C.ink,border:"none",borderRadius:6,padding:"4px 12px",fontSize:12,fontWeight:600,cursor:"pointer"}}>Aggiorna ora</button>
+        </div>
+      )}
+
       {!isMobile && (
         <div style={S.sidebar}>
           <div style={{padding:"20px 14px 18px",borderBottom:`1px solid ${C.surface}`,display:"flex",justifyContent:"center"}}>
@@ -359,7 +400,7 @@ export default function App(){
         <div style={S.content}>
           {area==="home" && <Home r={r} role={role} setArea={setArea} isMobile={isMobile}/>}
           {area==="ai" && <AIChat msgs={msgs} msgInput={msgInput} setMsgInput={setMsgInput} sendMsg={sendMsg} aiTyping={aiTyping}/>}
-          {area==="prodotti" && <Prodotti cart={cart} setCart={setCart} catalog={catalog} catalogLoading={catalogLoading} sessione={sessione}/>}
+          {area==="prodotti" && <Prodotti cart={cart} setCart={setCart} catalog={catalog} catalogLoading={catalogLoading} sessione={sessione} ruolo={role} setCatalog={setCatalog}/>}
           {area==="clienti" && <Clienti/>}
           {area==="preventivi" && <Preventivi cart={cart} setCart={setCart} preventivi={preventivi} setPreventivi={setPreventivi} setOrdini={setOrdini} setArea={setArea} ruolo={role} catalog={catalog} sessione={sessione}/>}
           {area==="ordini" && <Ordini ordini={ordini} setOrdini={setOrdini}/>}
@@ -733,10 +774,12 @@ async function searchSemantica(query, catalog, accessToken){
 }
 
 // ─── CATALOGO PRODOTTI ────────────────────────────────────────────────────────
-function Prodotti({cart,setCart,catalog:catProp,catalogLoading,sessione}){
+function Prodotti({cart,setCart,catalog:catProp,catalogLoading,sessione,ruolo,setCatalog}){
   const CATS = catProp || CATALOG;
   const accessToken = trovaAccessToken(sessione);
   const [q,setQ]=useState(""); const [detail,setDetail]=useState(null);
+  const [editando,setEditando]=useState(null); // prodotto attualmente in modifica (solo admin)
+  const categorieCatalogo = useMemo(()=>[...new Set(CATS.map(p=>p.cat).filter(Boolean))].sort(),[CATS]);
   const [aiResults,setAiResults]=useState(null);
   const [aiSearching,setAiSearching]=useState(false);
 
@@ -974,13 +1017,27 @@ function Prodotti({cart,setCart,catalog:catProp,catalogLoading,sessione}){
         </>)}
       </>)}
 
-      {detail&&<SchedaProdotto p={detail} isIn={inCart.has(detail.cod)} onToggleCart={e=>toggle(detail,e)} onClose={()=>setDetail(null)}/>}
+      {detail&&<SchedaProdotto p={detail} isIn={inCart.has(detail.cod)} onToggleCart={e=>toggle(detail,e)} onClose={()=>setDetail(null)} ruolo={ruolo} onModifica={()=>setEditando(detail)}/>}
+
+      {editando && (
+        <EditaProdotto
+          ruolo={ruolo}
+          p={editando}
+          categorieEsistenti={categorieCatalogo}
+          onClose={()=>setEditando(null)}
+          onSalvato={()=>{
+            setEditando(null);
+            setDetail(null);
+            if(setCatalog) caricaCatalogo(CATALOG).then(d=>setCatalog(d));
+          }}
+        />
+      )}
     </div>
   );
 }
 
 // ─── SCHEDA PRODOTTO (dettaglio) ──────────────────────────────────────────────
-function SchedaProdotto({p, isIn, onToggleCart, onClose}){
+function SchedaProdotto({p, isIn, onToggleCart, onClose, ruolo, onModifica}){
   const scontoPerc = p.listino>0 ? Math.round((1 - p.netto/p.listino)*100) : 0;
   // Spezza la descrizione preventivo in righe — ogni riga è una caratteristica
   const righeCaratteristiche = (p.desc_prev || p.desc || "").split(/\n|;/).map(r=>r.trim()).filter(Boolean);
@@ -995,7 +1052,14 @@ function SchedaProdotto({p, isIn, onToggleCart, onClose}){
           {/* Header: titolo + chiudi */}
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:6}}>
             <div style={{fontFamily:F_DISPLAY,fontSize:21,fontWeight:600,color:C.charcoal}}>{p.nome||p.desc}</div>
-            <button onClick={onClose} style={{background:"none",border:"none",fontSize:20,cursor:"pointer",color:"#9AA3AB",flexShrink:0,marginLeft:10}}>✕</button>
+            <div style={{display:"flex",alignItems:"center",gap:8,flexShrink:0,marginLeft:10}}>
+              {ruolo==="admin" && (
+                <button onClick={onModifica} style={{background:C.paper,border:`1px solid ${C.paperLine}`,borderRadius:7,padding:"6px 11px",fontSize:12,fontWeight:600,cursor:"pointer",color:C.ink}}>
+                  ✎ Modifica
+                </button>
+              )}
+              <button onClick={onClose} style={{background:"none",border:"none",fontSize:20,cursor:"pointer",color:"#9AA3AB"}}>✕</button>
+            </div>
           </div>
           <div style={{display:"flex",gap:6,alignItems:"center",marginBottom:18,flexWrap:"wrap"}}>
             <Tag tone="primary">{p.mar}</Tag>

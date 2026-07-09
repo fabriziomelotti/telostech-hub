@@ -508,3 +508,176 @@ export function CreaProdotto({ ruolo, onCreato, categorieEsistenti }){
     </div>
   );
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// MODIFICA PRODOTTO — solo admin. Modale a foglio inferiore aperta dal tasto
+// "Modifica" nella scheda prodotto del Catalogo. Stessi campi di CreaProdotto,
+// precompilati; il codice (cod) resta fisso perché è la chiave usata
+// dall'upsert su Supabase — cambiarlo creerebbe un prodotto nuovo invece di
+// aggiornare quello esistente.
+// Prop: p = prodotto nel formato "corto" usato dal frontend (cat, mar, tip,
+// desc, ecc. — vedi mappatura in caricaCatalogo() dentro App.jsx).
+// ═══════════════════════════════════════════════════════════════════════════
+export function EditaProdotto({ ruolo, p, categorieEsistenti, onSalvato, onClose }){
+  const settoriIniziali = (p.settori||"").split(",").map(s=>s.trim()).filter(Boolean);
+  const [f, setF] = useState({
+    nome: p.nome||"", categoria: p.cat||"", tipologia: p.tip||"", marchio: p.mar||"",
+    descrizione: p.desc||"", desc_prev: p.desc_prev||"", um: p.um||"pz",
+    listino: p.listino ?? "", sconto: p.sconto ?? "", netto: p.netto ?? "",
+    tipo_prezzo: p.tipo_prezzo||"listino", note: p.note||"", img: p.img||"",
+  });
+  const [settori, setSettori] = useState(settoriIniziali);
+  const [stato, setStato] = useState("idle"); // idle | salvo | fatto | errore
+  const [msg, setMsg] = useState("");
+
+  if(ruolo !== "admin") return null;
+
+  function set(campo, val){ setF(prev=>({...prev, [campo]:val})); }
+  function toggleSettore(s){
+    setSettori(prev => prev.includes(s) ? prev.filter(x=>x!==s) : [...prev, s]);
+  }
+
+  function nettoCalcolato(){
+    const listino = parseFloat(f.listino);
+    const sconto = parseFloat(f.sconto);
+    if(!isNaN(listino) && !isNaN(sconto)) return +(listino*(1-sconto/100)).toFixed(2);
+    return null;
+  }
+
+  async function salva(){
+    setMsg("");
+    if(!f.nome.trim()){ setStato("errore"); setMsg("Il nome è obbligatorio."); return; }
+    if(!f.categoria.trim()){ setStato("errore"); setMsg("La categoria è obbligatoria."); return; }
+
+    const nettoAuto = nettoCalcolato();
+    const riga = {
+      cod: p.cod, // invariato: è la chiave su cui avviene l'upsert
+      nome: f.nome.trim(),
+      categoria: f.categoria.trim().toUpperCase(),
+      tipologia: f.tipologia.trim() || null,
+      marchio: f.marchio.trim() || null,
+      settori: settori.join(","),
+      descrizione: f.descrizione.trim() || null,
+      desc_prev: f.desc_prev.trim() || null,
+      um: f.um.trim() || "pz",
+      listino: f.listino!=="" ? parseFloat(f.listino) : null,
+      sconto: f.sconto!=="" ? parseFloat(f.sconto) : 0,
+      netto: f.netto!=="" ? parseFloat(f.netto) : (nettoAuto ?? null),
+      tipo_prezzo: f.tipo_prezzo,
+      note: f.note.trim() || null,
+      img: f.img.trim() || null,
+      attivo: true,
+    };
+
+    try{
+      setStato("salvo"); setMsg("Salvataggio…");
+      await sbUpsert("prodotti", [riga]);
+      setStato("fatto");
+      setMsg("Prodotto aggiornato.");
+      if(onSalvato) onSalvato(riga);
+    }catch(err){
+      setStato("errore");
+      setMsg("Errore nel salvataggio: " + err.message);
+    }
+  }
+
+  const lbl = {fontSize:11,fontFamily:F_MONO,color:"#9AA3AB",textTransform:"uppercase",letterSpacing:"0.05em",marginBottom:4,display:"block"};
+  const campo = (etichetta, node) => (
+    <div style={{marginBottom:11}}>
+      <label style={lbl}>{etichetta}</label>
+      {node}
+    </div>
+  );
+
+  const nettoAuto = nettoCalcolato();
+
+  return (
+    <div onClick={e=>{if(e.target===e.currentTarget && stato!=="salvo") onClose();}} style={{position:"fixed",inset:0,background:"rgba(14,26,64,.55)",display:"flex",alignItems:"flex-end",justifyContent:"center",zIndex:60}}>
+      <div style={{background:"#fff",borderRadius:"14px 14px 0 0",width:"100%",maxWidth:600,maxHeight:"90vh",overflowY:"auto"}}>
+        <div style={{position:"sticky",top:0,background:"#fff",padding:"14px 20px 0",zIndex:2}}>
+          <div style={{width:36,height:4,background:C.paperLine,borderRadius:2,margin:"0 auto 14px"}}/>
+        </div>
+        <div style={{padding:"0 20px 24px"}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:2}}>
+            <div style={{fontFamily:F_DISPLAY,fontSize:18,fontWeight:600}}>Modifica prodotto</div>
+            <button onClick={onClose} style={{background:"none",border:"none",fontSize:20,cursor:"pointer",color:"#9AA3AB",flexShrink:0,marginLeft:10}}>✕</button>
+          </div>
+          <div className="tnum" style={{fontSize:11.5,color:"#8A929A",fontFamily:F_MONO,marginBottom:16}}>COD {p.cod} — il codice non è modificabile</div>
+
+          {campo("Nome *", <input value={f.nome} onChange={e=>set("nome",e.target.value)} style={S.inp}/>)}
+
+          {campo("Categoria *", <>
+            <input value={f.categoria} onChange={e=>set("categoria",e.target.value)} style={S.inp} list="categoria-esistenti-datalist-edit"/>
+            <datalist id="categoria-esistenti-datalist-edit">
+              {(categorieEsistenti||[]).map(c=>(<option key={c} value={c}/>))}
+            </datalist>
+            <div style={{fontSize:11,color:"#9AA3AB",marginTop:3}}>Viene salvata automaticamente in MAIUSCOLO.</div>
+          </>)}
+
+          {campo("Settore (uno o più)",
+            <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+              {SETTORI_DISPONIBILI.map(s=>{
+                const on = settori.includes(s);
+                return (
+                  <button key={s} onClick={()=>toggleSettore(s)} style={{
+                    border:`1px solid ${on?C.ink:C.paperLine}`, borderRadius:7,
+                    padding:"8px 14px", fontSize:12.5, cursor:"pointer", fontWeight:on?600:400,
+                    background:on?C.ink:"#fff", color:on?"#fff":"#5B6770", textTransform:"capitalize",
+                  }}>{on?"✓ ":""}{s}</button>
+                );
+              })}
+            </div>
+          )}
+
+          {campo("Tipologia", <input value={f.tipologia} onChange={e=>set("tipologia",e.target.value)} style={S.inp}/>)}
+          {campo("Marca", <input value={f.marchio} onChange={e=>set("marchio",e.target.value)} style={S.inp}/>)}
+
+          {campo("Descrizione", <input value={f.descrizione} onChange={e=>set("descrizione",e.target.value)} style={S.inp}/>)}
+          {campo("Descrizione per preventivo (una caratteristica per riga)",
+            <textarea value={f.desc_prev} onChange={e=>set("desc_prev",e.target.value)} rows={3} style={{...S.inp,resize:"vertical",fontFamily:F_BODY}}/>
+          )}
+
+          <div style={{display:"flex",gap:10}}>
+            <div style={{flex:1}}>{campo("Unità", <input value={f.um} onChange={e=>set("um",e.target.value)} style={S.inp}/>)}</div>
+            <div style={{flex:1}}>{campo("Listino €", <input type="number" value={f.listino} onChange={e=>set("listino",e.target.value)} style={S.inp}/>)}</div>
+          </div>
+          <div style={{display:"flex",gap:10}}>
+            <div style={{flex:1}}>{campo("Sconto %", <input type="number" value={f.sconto} onChange={e=>set("sconto",e.target.value)} style={S.inp}/>)}</div>
+            <div style={{flex:1}}>{campo("Netto € (vuoto = calcolato)", <input type="number" value={f.netto} onChange={e=>set("netto",e.target.value)} placeholder={nettoAuto!==null?String(nettoAuto):"0.00"} style={S.inp}/>)}</div>
+          </div>
+          {f.netto==="" && nettoAuto!==null && (
+            <div style={{fontSize:11,fontFamily:F_MONO,color:C.steel,marginTop:-4,marginBottom:11}}>Netto calcolato: € {nettoAuto}</div>
+          )}
+
+          {campo("Tipo prezzo",
+            <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+              {TIPI_PREZZO.map(tp=>{
+                const on=f.tipo_prezzo===tp.v;
+                return (
+                  <button key={tp.v} onClick={()=>set("tipo_prezzo",tp.v)} style={{
+                    border:`1px solid ${on?C.ink:C.paperLine}`, borderRadius:7, padding:"7px 12px",
+                    fontSize:12, cursor:"pointer", fontWeight:on?600:400,
+                    background:on?C.ink:"#fff", color:on?"#fff":"#5B6770",
+                  }}>{tp.label}</button>
+                );
+              })}
+            </div>
+          )}
+
+          {campo("URL immagine", <input value={f.img} onChange={e=>set("img",e.target.value)} style={S.inp}/>)}
+          {campo("Note", <input value={f.note} onChange={e=>set("note",e.target.value)} style={S.inp}/>)}
+
+          <button onClick={salva} disabled={stato==="salvo"} style={{...S.btnP,width:"100%",padding:"12px",marginTop:4,opacity:stato==="salvo"?0.6:1}}>
+            {stato==="salvo" ? "Salvataggio…" : "Salva modifiche"}
+          </button>
+
+          {msg && (
+            <div style={{marginTop:12,fontSize:12,fontFamily:F_MONO,color: stato==="errore"?C.danger : stato==="fatto"?C.ok : C.steel}}>
+              {stato==="errore"?"● ":stato==="fatto"?"✓ ":"… "}{msg}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
