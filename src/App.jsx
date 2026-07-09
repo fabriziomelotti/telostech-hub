@@ -152,6 +152,11 @@ function codicePreventivo(p){
 function codiceOrdine(p){
   return p?.progressivo ? `ORD-${String(p.progressivo).padStart(4,"0")}` : (p?.id || "—");
 }
+// Codice del preventivo da cui è nato un ordine, letto dal campo denormalizzato
+// preventivo_progressivo (evita di dover incrociare le due tabelle solo per mostrarlo)
+function codicePreventivoRif(o){
+  return o?.preventivo_progressivo ? `PRV-${String(o.preventivo_progressivo).padStart(4,"0")}` : (o?.preventivo_id || o?.preventivoId || "—");
+}
 
 const CHECKLIST_TEMPLATES = {
   installazione:["Verifica imballo e integrità prodotto","Posizionamento secondo planimetria","Collegamento elettrico/pneumatico","Test funzionale completo","Pulizia area post-installazione"],
@@ -319,6 +324,9 @@ export default function App(){
     sbGetAuth("preventivi", "select=*&order=creato_il.desc&limit=500", accessToken)
       .then(dati => setPreventivi(dati || []))
       .catch(err => console.warn("Preventivi non raggiungibili:", err.message));
+    sbGetAuth("ordini", "select=*&order=creato_il.desc&limit=500", accessToken)
+      .then(dati => setOrdini(dati || []))
+      .catch(err => console.warn("Ordini non raggiungibili:", err.message));
   },[role]);
 
   // permessi/nav dal ruolo, ma nome reale dalla sessione
@@ -447,7 +455,7 @@ export default function App(){
           {area==="prodotti" && <Prodotti cart={cart} setCart={setCart} catalog={catalog} catalogLoading={catalogLoading} sessione={sessione} ruolo={role} setCatalog={setCatalog} setArea={setArea}/>}
           {area==="clienti" && <Clienti/>}
           {area==="preventivi" && <Preventivi cart={cart} setCart={setCart} preventivi={preventivi} setPreventivi={setPreventivi} setOrdini={setOrdini} setArea={setArea} ruolo={role} catalog={catalog} sessione={sessione}/>}
-          {area==="ordini" && <Ordini ordini={ordini} setOrdini={setOrdini}/>}
+          {area==="ordini" && <Ordini ordini={ordini} setOrdini={setOrdini} sessione={sessione}/>}
           {area==="interventi" && <Interventi/>}
           {area==="rapporti" && <RapportoDemo/>}
           {area==="analytics" && RUOLI_APPROVATORI.includes(role) && <CondizioniAcquisto/>}
@@ -1715,21 +1723,24 @@ function Preventivi({cart,setCart,preventivi,setPreventivi,setOrdini,setArea,ruo
     const righe = esiste ? p.righe.map(r=>r.cod===riga.cod ? riga : r) : [...p.righe, riga];
     aggiorna(id, { righe, approvato:false });
   }
-  function convertiInOrdine(p){
-    const nuovoOrdine = {
-      id: p.id,
-      codice: codiceOrdine(p),
-      preventivoId: p.id,
-      preventivoCodice: codicePreventivo(p),
+  async function convertiInOrdine(p){
+    setErroreSync("");
+    const nuovo = {
+      preventivo_id: p.id,
+      preventivo_progressivo: p.progressivo,
       cliente: p.cliente,
       righe: p.righe,
       val: p.val,
       stato: "Da evadere",
-      creato: new Date().toLocaleDateString("it-IT"),
     };
-    setOrdini(prev=>[nuovoOrdine,...prev]);
-    aggiorna(p.id, {stato:"Convertito in ordine"});
-    setArea("ordini");
+    try{
+      const [salvato] = await sbAuth("POST","ordini","",nuovo,accessToken);
+      setOrdini(prev=>[salvato,...prev]);
+      aggiorna(p.id, {stato:"Convertito in ordine"});
+      setArea("ordini");
+    }catch(err){
+      setErroreSync("Conversione in ordine non riuscita: "+err.message);
+    }
   }
   // Elimina un preventivo intero (non una singola riga). Bloccato per quelli
   // già trasformati in ordine: cancellarli lascerebbe l'ordine collegato
@@ -1981,12 +1992,20 @@ function ListaPreventivi({preventivi,onApri,onNuovo}){
 }
 
 // ─── ORDINI ───────────────────────────────────────────────────────────────────
-function Ordini({ordini,setOrdini}){
+function Ordini({ordini,setOrdini,sessione}){
   const [selId,setSelId]=useState(null);
+  const [erroreSync,setErroreSync]=useState("");
   const selezionato = ordini.find(o=>o.id===selId);
+  const accessToken = trovaAccessToken(sessione);
 
-  function setStato(id, stato){
+  async function setStato(id, stato){
+    setErroreSync("");
     setOrdini(prev=>prev.map(o=>o.id===id?{...o,stato}:o));
+    try{
+      await sbAuth("PATCH","ordini",`id=eq.${id}`,{stato},accessToken);
+    }catch(err){
+      setErroreSync("Modifica non salvata sul server: "+err.message);
+    }
   }
   function generaOrdinePDF(o){
     const righe = o.righe.map(r => `
@@ -1995,7 +2014,7 @@ function Ordini({ordini,setOrdini}){
       <td style="padding:8px 6px;border-bottom:1px solid #E3E5EA;font-size:12px;text-align:center">${r.qty||1}</td>
       <td style="padding:8px 6px;border-bottom:1px solid #E3E5EA;font-size:12px;text-align:right">€${(r.netto*(r.qty||1)).toFixed(2)}</td></tr>`).join("");
     const w = window.open("", "_blank");
-    const html = `<!DOCTYPE html><html><head><title>Ordine ${o.id}</title>
+    const html = `<!DOCTYPE html><html><head><title>Ordine ${codiceOrdine(o)}</title>
 <style>
   *{box-sizing:border-box;margin:0;padding:0}
   body{font-family:Arial,sans-serif;padding:36px 40px;color:#232323;font-size:13px}
@@ -2008,7 +2027,7 @@ function Ordini({ordini,setOrdini}){
   .footer{margin-top:32px;font-size:10px;color:#9AA3AB;border-top:1px solid #E3E5EA;padding-top:10px}
 </style></head><body>
 <div class="hd"><div><div class="brand">Telos Tech</div><div style="font-size:11px;color:#7C879E">Conferma d'ordine</div></div>
-<div class="meta"><div>N° ${o.codice || o.id}</div><div>Rif. preventivo ${o.preventivoCodice || o.preventivoId}</div><div>Data: ${o.creato}</div></div></div>
+<div class="meta"><div>N° ${codiceOrdine(o)}</div><div>Rif. preventivo ${codicePreventivoRif(o)}</div><div>Data: ${o.creato_il ? new Date(o.creato_il).toLocaleDateString("it-IT") : ""}</div></div></div>
 <div style="font-size:15px;font-weight:600;margin-bottom:6px">${o.cliente}</div>
 <table><thead><tr><th>Articolo</th><th>Codice</th><th style="text-align:center">Qtà</th><th style="text-align:right">Totale</th></tr></thead><tbody>${righe}</tbody></table>
 <div class="tot">Totale: €${o.val.toFixed(2)}</div>
@@ -2022,12 +2041,13 @@ function Ordini({ordini,setOrdini}){
     return (
       <div>
         <button onClick={()=>setSelId(null)} style={{...S.btnS,marginBottom:14}}>← Tutti gli ordini</button>
+        {erroreSync && <div style={{fontSize:12,color:C.danger,background:"rgba(200,75,58,0.08)",borderRadius:6,padding:"9px 11px",marginBottom:14}}>⚠ {erroreSync}</div>}
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:6}}>
-          <div className="tnum" style={{fontFamily:F_MONO,fontSize:12,color:"#9AA3AB"}}>{selezionato.codice || selezionato.id}</div>
+          <div className="tnum" style={{fontFamily:F_MONO,fontSize:12,color:"#9AA3AB"}}>{codiceOrdine(selezionato)}</div>
           <Tag tone={selezionato.stato==="Da evadere"?"warn":"ok"}>{selezionato.stato}</Tag>
         </div>
         <div style={{fontFamily:F_DISPLAY,fontSize:19,fontWeight:600,marginBottom:4}}>{selezionato.cliente}</div>
-        <div style={{fontSize:11.5,color:"#8A929A",marginBottom:14}}>Da preventivo {selezionato.preventivoCodice || selezionato.preventivoId} · creato il {selezionato.creato}</div>
+        <div style={{fontSize:11.5,color:"#8A929A",marginBottom:14}}>Da preventivo {codicePreventivoRif(selezionato)} · creato il {selezionato.creato_il ? new Date(selezionato.creato_il).toLocaleDateString("it-IT") : ""}</div>
         <div style={S.eyebrow}>Articoli ({selezionato.righe.length})</div>
         {selezionato.righe.map(r=>(
           <div key={r.cod} style={{...S.card,cursor:"default",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
@@ -2056,6 +2076,7 @@ function Ordini({ordini,setOrdini}){
   return (
     <div>
       <div style={S.eyebrow}>Ordini</div>
+      {erroreSync && <div style={{fontSize:12,color:C.danger,background:"rgba(200,75,58,0.08)",borderRadius:6,padding:"9px 11px",marginBottom:14}}>⚠ {erroreSync}</div>}
       {ordini.length===0 && (
         <div style={{textAlign:"center",padding:"2.5rem 1rem",color:"#9AA3AB"}}>
           <div style={{fontSize:28,marginBottom:8}}>⬡</div>
@@ -2066,9 +2087,9 @@ function Ordini({ordini,setOrdini}){
       {ordini.map(o=>(
         <div key={o.id} onClick={()=>setSelId(o.id)} style={{...S.card,display:"flex",justifyContent:"space-between",alignItems:"center",gap:10}}>
           <div style={{minWidth:0}}>
-            <div className="tnum" style={{fontSize:10.5,color:"#9AA3AB",fontFamily:F_MONO}}>{o.codice || o.id}</div>
+            <div className="tnum" style={{fontSize:10.5,color:"#9AA3AB",fontFamily:F_MONO}}>{codiceOrdine(o)}</div>
             <div style={{fontWeight:600,fontSize:13.5,marginTop:2}}>{o.cliente}</div>
-            <div style={{fontSize:11.5,color:"#8A929A",marginTop:1}}>{o.righe.length} articol{o.righe.length===1?"o":"i"} · {o.creato}</div>
+            <div style={{fontSize:11.5,color:"#8A929A",marginTop:1}}>{o.righe.length} articol{o.righe.length===1?"o":"i"} · {o.creato_il ? new Date(o.creato_il).toLocaleDateString("it-IT") : ""}</div>
           </div>
           <div style={{textAlign:"right",flexShrink:0}}>
             <div className="tnum" style={{fontWeight:700,fontSize:14,fontFamily:F_MONO}}>€{o.val.toLocaleString("it-IT")}</div>
