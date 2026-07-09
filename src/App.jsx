@@ -158,6 +158,108 @@ function codicePreventivoRif(o){
   return o?.preventivo_progressivo ? `PRV-${String(o.preventivo_progressivo).padStart(4,"0")}` : (o?.preventivo_id || o?.preventivoId || "—");
 }
 
+// Aggiunge N giorni lavorativi (esclusi sabato e domenica — non tiene conto
+// delle festività italiane) a una data, restituendo una stringa "YYYY-MM-DD"
+// pronta per un <input type="date">.
+function aggiungiGiorniLavorativi(dataIniziale, giorni){
+  const d = new Date(dataIniziale);
+  let aggiunti = 0;
+  while(aggiunti < giorni){
+    d.setDate(d.getDate()+1);
+    const giornoSettimana = d.getDay(); // 0=domenica, 6=sabato
+    if(giornoSettimana!==0 && giornoSettimana!==6) aggiunti++;
+  }
+  return d.toISOString().slice(0,10);
+}
+
+// Elenco utenti Telos (id, nome, ruolo) per il menu a tendina "Referente
+// Telos" — riservato lato server a responsabili/admin (vedi Edge Function
+// utenti-info); chi non ha i permessi riceve semplicemente un errore 403
+// e il chiamante mostra il proprio nome senza menu a tendina.
+async function chiamaUtentiInfo(accessToken) {
+  if (!accessToken) throw new Error("Sessione non trovata: ricarica la pagina e rieffettua il login.");
+  const res = await fetch(`${SUPABASE_URL}/functions/v1/utenti-info`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "apikey": SUPABASE_ANON_KEY,
+      "Authorization": `Bearer ${accessToken}`,
+    },
+    body: JSON.stringify({}),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data?.error || `Edge Function ${res.status}`);
+  return data;
+}
+
+// ─── FINANZIAMENTO / NOLEGGIO ──────────────────────────────────────────────
+// Tabelle tassi 2025 (fonte: Tabella_Finanziamento_Finalizzato_2025.xlsx e
+// Tabella_Noleggio_Finalizzato_2025.xlsx). Il "coefficiente" è una PERCENTUALE
+// dell'importo beni da applicare per ottenere la rata mensile — verificato
+// contro l'esempio reale: 9.400 € × 3,215% = 302,21 € (36 rate, fascia
+// 5.001-15.000, finanziamento). Se cambiano le condizioni con il fornitore
+// del finanziamento, aggiornare solo questi due oggetti.
+const DURATE_MESI = [12,24,30,36,48,60];
+
+const TASSI_FINANZIAMENTO = {
+  canoni: [
+    { max: 5000,   coeff: {12:8.926,24:4.658,30:3.806,36:3.239,48:2.535,60:2.119} },
+    { min: 5001,  max: 15000,  coeff: {12:8.902,24:4.635,30:3.783,36:3.215,48:2.511,60:2.094} },
+    { min: 15001, max: 25000,  coeff: {12:8.879,24:4.612,30:3.759,36:3.192,48:2.487,60:2.070} },
+    { min: 25001, max: 50000,  coeff: {12:8.833,24:4.588,30:3.740,36:3.175,48:2.474,60:2.059} },
+  ],
+  speseContratto: [
+    { max: 5000,  spese: 50 },
+    { min: 5001,  max: 10000, spese: 75 },
+    { min: 10001, max: 25000, spese: 100 },
+    { min: 25001, max: 50000, spese: 150 },
+  ],
+  // Sopra 50.000€ questo prodotto "finalizzato" non copre l'importo: serve
+  // una pratica di finanziamento tradizionale, da concordare a parte.
+  limiteMassimo: 50000,
+};
+
+const TASSI_NOLEGGIO = {
+  canoni: [
+    { max: 5000,   coeff: {12:6.144,24:4.721,30:3.896,36:3.302,48:2.598,60:2.182} },
+    { min: 5001,   max: 15000,  coeff: {12:6.087,24:4.664,30:3.812,36:3.244,48:2.539,60:2.122} },
+    { min: 15001,  max: 25000,  coeff: {12:6.042,24:4.627,30:3.778,36:3.213,48:2.512,60:2.097} },
+    { min: 25001,  max: 50000,  coeff: {12:5.955,24:4.548,30:3.703,36:3.141,48:2.442,60:2.028} },
+    { min: 50001,  max: 100000, coeff: {12:5.918,24:4.518,30:3.678,36:3.118,48:2.423,60:2.011} },
+    { min: 100001, max: null,   coeff: {12:5.872,24:4.478,30:3.643,36:3.086,48:2.394,60:1.984} },
+  ],
+  speseContratto: [
+    { max: 5000,   spese: 50 },
+    { min: 5001,   max: 10000,  spese: 75 },
+    { min: 10001,  max: 25000,  spese: 100 },
+    { min: 25001,  max: 50000,  spese: 150 },
+    { min: 50001,  max: 100000, spese: 200 },
+    { min: 100001, max: 200000, spese: 300 },
+    { min: 200001, max: null,   spese: 500 },
+  ],
+  riscattoPercentuale: 1, // 1% dell'imponibile, dovuto a fine noleggio
+  limiteMassimo: null, // nessun tetto: l'ultima fascia è aperta
+};
+
+function trovaFascia(fasce, importo){
+  return fasce.find(f => (f.min===undefined || importo>=f.min) && (f.max===undefined || f.max===null || importo<=f.max)) || null;
+}
+
+// Calcola rata mensile, spese contratto e (per il noleggio) riscatto finale.
+// Ritorna null se l'importo eccede il tetto del prodotto (solo finanziamento,
+// il noleggio non ha limite superiore).
+function calcolaFinanziamento(tipo, importo, mesi){
+  const tabella = tipo==="noleggio" ? TASSI_NOLEGGIO : TASSI_FINANZIAMENTO;
+  if(tabella.limiteMassimo && importo > tabella.limiteMassimo) return null;
+  const fasciaCanoni = trovaFascia(tabella.canoni, importo);
+  const fasciaSpese = trovaFascia(tabella.speseContratto, importo);
+  if(!fasciaCanoni || !fasciaCanoni.coeff[mesi]) return null;
+  const rata = +(importo * fasciaCanoni.coeff[mesi] / 100).toFixed(2);
+  const speseContratto = fasciaSpese ? fasciaSpese.spese : null;
+  const riscatto = tipo==="noleggio" ? +(importo * tabella.riscattoPercentuale / 100).toFixed(2) : null;
+  return { rata, speseContratto, riscatto };
+}
+
 const CHECKLIST_TEMPLATES = {
   installazione:["Verifica imballo e integrità prodotto","Posizionamento secondo planimetria","Collegamento elettrico/pneumatico","Test funzionale completo","Pulizia area post-installazione"],
   riparazione:["Diagnosi del guasto","Sostituzione componente","Test funzionale post-intervento","Pulizia area di lavoro"],
@@ -1323,62 +1425,210 @@ function Clienti(){
 }
 
 // ─── PREVENTIVI ───────────────────────────────────────────────────────────────
-// Genera il PDF del preventivo con foto prodotto sotto ogni riga
-function generaPreventivoPDF(cart, total){
+// Loghi/grafica fissi del modello Telos (caricati una tantum su Storage,
+// bucket pubblico "preventivo-assets" — vedi istruzioni di caricamento).
+const ASSET_BASE = `${SUPABASE_URL}/storage/v1/object/public/preventivo-assets`;
+const LOGO_TELOS_TECH = `${ASSET_BASE}/telos-tech-logo.png`;
+const LOGO_CHEVRON = `${ASSET_BASE}/chevron.png`;
+const LOGO_STRISCIA_MARCHI = `${ASSET_BASE}/striscia-loghi-marchi.png`;
+const LOGO_HEADER_TELOS_SPA = `${ASSET_BASE}/header-telos-spa.png`;
+
+const TESTO_CONDIZIONI = `
+<h2>Condizioni di accettazione del preventivo</h2>
+<p class="intro">La sottoscrizione del presente preventivo, mediante apposizione di timbro e firma del Cliente nello spazio dedicato, vale quale accettazione integrale dell'offerta e produce gli effetti di un ordine contrattuale vincolante ai sensi degli artt. 1326 e ss. del Codice Civile.</p>
+<h3>1. Conclusione del contratto</h3>
+<p>Il preventivo costituisce proposta contrattuale ai sensi dell'art. 1326 c.c. Il contratto si intende concluso nel momento in cui Telos S.p.A. riceve copia del presente documento sottoscritta dal Cliente con timbro e firma per accettazione, anche a mezzo email o PEC. L'accettazione deve pervenire entro la data di scadenza indicata; decorso tale termine la proposta si intende decaduta, salvo conferma scritta del fornitore.</p>
+<h3>2. Oggetto, prezzi e validità</h3>
+<p>I prezzi indicati sono espressi in Euro, si intendono al netto di IVA e di ogni altra imposta o contributo di legge, e sono validi per la quantità e configurazione descritte nel preventivo. Eventuali variazioni richieste dal Cliente successive all'accettazione potranno comportare un adeguamento dei prezzi e dei tempi di consegna, da concordarsi per iscritto.</p>
+<h3>3. Modalità di pagamento</h3>
+<p>I pagamenti dovranno essere effettuati secondo le modalità e i termini indicati nel preventivo. In caso di ritardato pagamento si applicano gli interessi moratori previsti dal D.Lgs. 231/2002 in materia di lotta contro i ritardi di pagamento nelle transazioni commerciali, fatto salvo il maggior danno.</p>
+<h3>4. Consegna, installazione e rischio</h3>
+<p>I termini di consegna sono indicativi e decorrono dalla data di ricevimento dell'accettazione e dell'eventuale acconto. Salvo diverso accordo scritto, la consegna si intende Franco Fabbrica (EXW Incoterms 2020): il rischio di perimento o danneggiamento dei beni si trasferisce al Cliente al momento della messa a disposizione dei beni medesimi.</p>
+<h3>5. Riserva di proprietà</h3>
+<p>Ai sensi dell'art. 1523 c.c., i beni oggetto del preventivo restano di proprietà di Telos S.p.A. fino all'integrale pagamento del prezzo pattuito. Il Cliente si impegna a custodirli con la diligenza del buon padre di famiglia e a non alienarli o costituire diritti di garanzia in favore di terzi prima del saldo.</p>
+<h3>6. Garanzia e responsabilità</h3>
+<p>Trovano applicazione le garanzie di legge previste dal Codice Civile (artt. 1490 e ss.) e, ove ricorra trattativa con consumatore, dal D.Lgs. 206/2005 (Codice del Consumo). La responsabilità di Telos S.p.A. per eventuali danni è limitata, nei limiti consentiti dalla legge, al valore della fornitura, con esclusione di danni indiretti, mancato guadagno o perdita di chance.</p>
+<h3>7. Recesso e annullamento</h3>
+<p>L'accettazione del preventivo è vincolante per il Cliente professionale. Per i contratti conclusi a distanza o fuori dai locali commerciali con soggetto consumatore si applica il diritto di recesso entro 14 giorni ai sensi degli artt. 52 e ss. del Codice del Consumo, ove ne ricorrano i presupposti.</p>
+<h3>8. Trattamento dei dati personali</h3>
+<p>I dati personali del Cliente sono trattati da Telos S.p.A., in qualità di Titolare, per la gestione del rapporto contrattuale e degli adempimenti di legge, nel rispetto del Regolamento (UE) 2016/679 (GDPR) e del D.Lgs. 196/2003. L'informativa estesa è disponibile su richiesta e sul sito www.telosspa.it.</p>
+<h3>9. Foro competente e legge applicabile</h3>
+<p>Il contratto è regolato dalla legge italiana. Per ogni controversia derivante dall'interpretazione o esecuzione del presente preventivo è competente in via esclusiva il Foro di Torino, salvo, ove inderogabilmente previsto dalla legge, il foro del consumatore.</p>
+`;
+
+// Genera il PDF del preventivo in tre parti: copertina, pagina/e contenuto
+// (intestazione Telos SPA, tabella articoli con foto dal catalogo, totali,
+// finanziamento/noleggio se scelto, note), pagina condizioni + firma —
+// stesso schema dei preventivi Telos già in uso.
+// "righe": array di {cod, mar, nome, netto, listino, qty, img, desc_prev} —
+// img/desc_prev vanno arricchiti dal chiamante pescandoli dal catalogo,
+// perché le righe salvate nel preventivo non li contengono.
+function generaPreventivoPDF(righe, total, meta={}){
   const iva = total * 0.22;
   const totaleIva = total + iva;
-  const righe = cart.map(p => `
-    <div class="riga-prodotto">
-      ${p.img ? `<div class="riga-img"><img src="${p.img}" alt=""/></div>` : `<div class="riga-img riga-img-vuota"></div>`}
-      <div class="riga-info">
-        <div class="riga-tag"><span class="tag">${p.mar}</span><span class="codice">${p.cod}</span></div>
-        <div class="riga-nome">${p.nome || p.desc}</div>
-        ${p.desc_prev ? `<div class="riga-descr">${p.desc_prev.split(/\n|;/).map(r=>r.trim()).filter(Boolean).join(" · ")}</div>` : ""}
-      </div>
-      <div class="riga-prezzo">
-        <div class="riga-prezzo-val">€${p.netto.toFixed(2)}</div>
-        <div class="riga-prezzo-lbl">netto</div>
-      </div>
-    </div>`).join("");
+  const oggi = new Date().toLocaleDateString("it-IT");
+  const codiceMostrato = meta.codice || `PRV-${Date.now().toString().slice(-6)}`;
+  const scadenzaMostrata = meta.scadenza ? new Date(meta.scadenza).toLocaleDateString("it-IT") : null;
+  const pagamentoMostrato = meta.pagamento_modalita
+    ? `${meta.pagamento_modalita}${meta.pagamento_dettagli?` — ${meta.pagamento_dettagli}`:""}`
+    : "Da concordare";
+  const referente = meta.referente_telos || "";
+
+  const righeHtml = righe.map(r => {
+    const totRiga = r.netto * (r.qty||1);
+    const descRighe = (r.desc_prev||"").split(/\n|;/).map(x=>x.trim()).filter(Boolean);
+    return `
+    <tr class="riga-prodotto">
+      <td class="cella-prodotto">
+        <div class="prodotto-tag"><span class="tag">${r.mar||""}</span></div>
+        <div class="prodotto-nome">${r.nome||""}</div>
+        <div class="prodotto-codice">${r.cod||""}</div>
+      </td>
+      <td class="cella-descr">
+        ${r.img ? `<div class="prodotto-img"><img src="${r.img}" alt=""/></div>` : ""}
+        ${descRighe.length ? `<div class="descr-testo">${descRighe.join("<br/>")}</div>` : ""}
+      </td>
+      <td class="cella-num">${r.qty||1}</td>
+      <td class="cella-num">€${(r.listino||0).toFixed(2)}</td>
+      <td class="cella-num">€${r.netto.toFixed(2)}</td>
+      <td class="cella-num cella-tot">€${totRiga.toFixed(2)}</td>
+    </tr>`;
+  }).join("");
+
+  const finanziamentoHtml = meta.finanziamento_tipo && meta.finanziamento_rata ? `
+    <div class="finanziamento-riga">${meta.finanziamento_tipo==="noleggio"?"Noleggio":"Finanziamento"}: €${meta.finanziamento_rata.toFixed(2)} x ${meta.finanziamento_mesi} mesi</div>
+    ${meta.finanziamento_spese_contratto!=null ? `<div class="finanziamento-nota">Spese di istruttoria: €${meta.finanziamento_spese_contratto.toFixed(2)}</div>` : ""}
+    ${meta.finanziamento_tipo==="noleggio" && meta.finanziamento_riscatto!=null ? `<div class="finanziamento-nota">Riscatto finale (1% imponibile): €${meta.finanziamento_riscatto.toFixed(2)}</div>` : ""}
+  ` : "";
 
   const w = window.open("", "_blank");
-  const html = `<!DOCTYPE html><html><head><title>Preventivo Telos Tech</title>
+  const html = `<!DOCTYPE html><html><head><title>Preventivo ${codiceMostrato}</title>
 <style>
   *{box-sizing:border-box;margin:0;padding:0}
-  body{font-family:Arial,sans-serif;padding:36px 40px;color:#232323;font-size:13px}
-  .hd{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:24px;padding-bottom:16px;border-bottom:2px solid #162758}
-  .brand{font-size:22px;font-weight:700;color:#162758}
-  .meta{text-align:right;font-size:11px;color:#7C879E;line-height:1.6}
-  .riga-prodotto{display:flex;gap:14px;padding:16px 0;border-bottom:1px solid #E3E5EA;align-items:flex-start}
-  .riga-img{width:72px;height:72px;flex-shrink:0;border:1px solid #E3E5EA;border-radius:6px;background:#FAFAFA;display:flex;align-items:center;justify-content:center;overflow:hidden}
-  .riga-img img{max-width:100%;max-height:100%;object-fit:contain}
-  .riga-img-vuota{background:#F0F0EE}
-  .riga-info{flex:1}
-  .riga-tag{margin-bottom:4px}
-  .tag{display:inline-block;font-size:9px;font-weight:600;text-transform:uppercase;background:#EEF0F4;color:#5B6770;padding:2px 7px;border-radius:3px;margin-right:6px}
-  .codice{font-family:monospace;font-size:10px;color:#9AA3AB}
-  .riga-nome{font-size:13px;font-weight:600;margin-bottom:3px}
-  .riga-descr{font-size:11px;color:#7C879E;line-height:1.4}
-  .riga-prezzo{text-align:right;flex-shrink:0}
-  .riga-prezzo-val{font-family:monospace;font-size:15px;font-weight:700;color:#162758}
-  .riga-prezzo-lbl{font-size:9px;color:#9AA3AB;text-transform:uppercase}
-  .totali{text-align:right;margin-top:20px;line-height:2}
-  .tot-line{font-size:12px;color:#7C879E}
-  .tot-main{font-size:19px;font-weight:700;color:#162758;margin-top:6px}
-  .footer{margin-top:32px;font-size:10px;color:#9AA3AB;border-top:1px solid #E3E5EA;padding-top:10px}
+  body{font-family:Arial,sans-serif;color:#232323;font-size:12.5px}
+  .pagina{padding:40px 44px;page-break-after:always;position:relative;min-height:1000px}
+  .pagina:last-child{page-break-after:auto}
+
+  /* ── Copertina ── */
+  .cover{text-align:center;display:flex;flex-direction:column;align-items:center;padding-top:60px}
+  .cover-logo{width:280px;margin-bottom:50px}
+  .cover-cliente{font-size:26px;font-weight:700;margin-bottom:10px}
+  .cover-referente{font-size:15px;font-style:italic;color:#3A4248;margin-bottom:70px}
+  .cover-chevron{width:200px;margin-bottom:70px}
+  .cover-titolo{font-size:22px;font-weight:700;margin-bottom:120px}
+  .cover-caption{font-size:11px;font-style:italic;color:#5B6770;margin-bottom:10px}
+  .cover-strip{width:100%;max-width:680px;margin-bottom:30px}
+  .cover-contatti{font-size:10.5px;color:#162758;font-weight:700;line-height:1.7}
+  .cover-contatti span{display:block;font-weight:400;color:#5B6770}
+
+  /* ── Pagina contenuto ── */
+  .hd-content{display:flex;align-items:center;gap:14px;margin-bottom:20px;padding-bottom:14px;border-bottom:2px solid #162758}
+  .hd-content img{height:34px}
+  .titolo-ordine{font-size:20px;font-weight:700;color:#162758;margin-bottom:16px}
+  .meta-box{position:absolute;top:44px;right:44px;text-align:right;font-size:11px;line-height:1.7}
+  .meta-box b{display:inline-block;width:70px;text-align:left;color:#7C879E;font-weight:400}
+  .cliente-box{font-size:12.5px;margin-bottom:20px}
+  .cliente-box .nome{font-weight:700;font-size:14px}
+
+  table.articoli{width:100%;border-collapse:collapse;margin-bottom:18px}
+  table.articoli thead th{background:#162758;color:#fff;padding:8px 8px;font-size:10.5px;text-align:left}
+  table.articoli thead th.cella-num{text-align:right}
+  .riga-prodotto td{border-bottom:1px solid #E3E5EA;padding:10px 8px;vertical-align:top;font-size:11.5px}
+  .cella-prodotto{width:20%}
+  .tag{display:inline-block;font-size:9px;font-weight:600;text-transform:uppercase;background:#EEF0F4;color:#5B6770;padding:2px 7px;border-radius:3px;margin-bottom:3px}
+  .prodotto-nome{font-weight:600}
+  .prodotto-codice{font-family:monospace;font-size:9.5px;color:#9AA3AB;margin-top:2px}
+  .cella-descr{width:38%}
+  .prodotto-img{width:90px;height:70px;border:1px solid #E3E5EA;border-radius:6px;background:#FAFAFA;display:flex;align-items:center;justify-content:center;overflow:hidden;margin-bottom:6px}
+  .prodotto-img img{max-width:100%;max-height:100%;object-fit:contain}
+  .descr-testo{font-size:10.5px;color:#5B6770;line-height:1.5}
+  .cella-num{text-align:right;white-space:nowrap}
+  .cella-tot{font-weight:700;color:#162758}
+
+  .totali-box{text-align:right;margin-top:8px}
+  .tot-imponibile{font-size:16px;font-weight:700;color:#162758}
+  .finanziamento-riga{font-size:12px;color:#162758;font-weight:600;margin-top:4px}
+  .finanziamento-nota{font-size:10px;color:#7C879E}
+
+  .note-box{margin-top:22px;font-size:11px;color:#3A4248}
+  .note-box .lbl{font-weight:700;margin-bottom:4px}
+  .note-box .testo{white-space:pre-line}
+
+  .footer-legale{position:absolute;bottom:24px;left:44px;right:44px;font-size:9px;color:#9AA3AB;border-top:1px solid #E3E5EA;padding-top:8px}
+  .footer-legale b{color:#5B6770}
+
+  /* ── Pagina condizioni ── */
+  .condizioni h2{font-size:16px;color:#162758;margin-bottom:14px}
+  .condizioni h3{font-size:11.5px;color:#162758;margin-top:14px;margin-bottom:4px}
+  .condizioni p{font-size:10.5px;line-height:1.55;color:#3A4248}
+  .condizioni p.intro{font-style:italic;margin-bottom:14px}
+  .firma-box{margin-top:36px;border:1px solid #162758;border-radius:6px;padding:16px}
+  .firma-box .titolo{font-weight:700;font-size:12px;margin-bottom:6px}
+  .firma-box .testo{font-size:10.5px;color:#3A4248;margin-bottom:36px}
+  .firma-linee{display:flex;justify-content:space-between;font-size:10px;color:#7C879E}
+  .firma-linee div{width:45%;border-top:1px solid #232323;padding-top:4px}
 </style></head><body>
-<div class="hd">
-  <div><div class="brand">Telos Tech</div><div style="font-size:11px;color:#7C879E">Preventivo commerciale</div></div>
-  <div class="meta"><div>N° PRV-${Date.now().toString().slice(-6)}</div><div>Data: ${new Date().toLocaleDateString("it-IT")}</div><div>Validità 30 giorni</div></div>
+
+<div class="pagina cover">
+  <img class="cover-logo" src="${LOGO_TELOS_TECH}" alt="Telos Tech"/>
+  <div class="cover-cliente">${(meta.cliente||"CLIENTE").toUpperCase()}</div>
+  ${referente ? `<div class="cover-referente">vs. referente: ${referente}</div>` : ""}
+  <img class="cover-chevron" src="${LOGO_CHEVRON}" alt=""/>
+  <div class="cover-titolo">Preventivo</div>
+  <div style="flex:1"></div>
+  <div class="cover-caption">Rivenditori attrezzature ufficiali per</div>
+  <img class="cover-strip" src="${LOGO_STRISCIA_MARCHI}" alt=""/>
+  <div class="cover-contatti">TELOS SPA - Reparto Telos Tech<span>Via Aosta, 5 - 10078 Venaria Reale (TO)</span><span>Tel. 0114242932 - E-Mail: attrezzatura@telosgroup.it</span></div>
 </div>
-${righe}
-<div class="totali">
-  <div class="tot-line">Imponibile: €${total.toFixed(2)}</div>
-  <div class="tot-line">IVA 22%: €${iva.toFixed(2)}</div>
-  <div class="tot-main">Totale: €${totaleIva.toFixed(2)}</div>
+
+<div class="pagina">
+  <div class="meta-box">
+    <div><b>Numero</b>${codiceMostrato}</div>
+    <div><b>Data</b>${oggi}</div>
+    <div><b>Scadenza</b>${scadenzaMostrata||"—"}</div>
+    <div><b>Pagamento</b>${pagamentoMostrato}</div>
+  </div>
+  <div class="hd-content"><img src="${LOGO_HEADER_TELOS_SPA}" alt="Telos SPA"/></div>
+  <div class="titolo-ordine">PROPOSTA ORDINE</div>
+  <div class="cliente-box">
+    <div style="color:#7C879E;font-size:10px">Spett.le Cliente</div>
+    <div class="nome">${meta.cliente||""}</div>
+  </div>
+
+  <table class="articoli">
+    <thead><tr>
+      <th>Prodotto</th><th>Descrizione</th><th class="cella-num">Qtà</th><th class="cella-num">Listino</th><th class="cella-num">Netto</th><th class="cella-num">Totale</th>
+    </tr></thead>
+    <tbody>${righeHtml}</tbody>
+  </table>
+
+  <div class="totali-box">
+    <div class="tot-imponibile">Totale (IVA esclusa): €${total.toFixed(2)}</div>
+    ${finanziamentoHtml}
+  </div>
+
+  ${meta.note ? `<div class="note-box"><div class="lbl">Note:</div><div class="testo">${meta.note}</div></div>` : ""}
+
+  <div class="footer-legale">
+    <b>TELOS S.P.A.</b> P.I./C.F. 00525920013 - capitale sociale € 3.586.191,18 i.v. - REA TO-457465 | www.telosspa.it<br/>
+    <b>SEDE Legale:</b> VENARIA (TO) - 10078 - Via Aosta 5 - Tel. 011.4242932 · <b>Amministrazione:</b> amministrazione.torino@telosgroup.it
+  </div>
 </div>
-<div class="footer">Telos Tech S.r.l. · Prezzi IVA esclusa salvo indicazione · Condizioni di pagamento da concordare</div>
-<script>setTimeout(()=>window.print(),400)</script>
+
+<div class="pagina condizioni">
+  ${TESTO_CONDIZIONI}
+  <div class="firma-box">
+    <div class="titolo">Timbro e Firma per accettazione</div>
+    <div class="testo">Il sottoscritto Cliente dichiara di aver letto, compreso e integralmente accettato il preventivo e le condizioni che precedono, che assumono valore di ordine contrattuale vincolante.</div>
+    <div class="firma-linee"><div>Luogo e data</div><div>Timbro e firma del Cliente</div></div>
+  </div>
+  <div class="footer-legale" style="position:static;margin-top:24px">
+    <b>TELOS S.P.A.</b> P.I./C.F. 00525920013 - capitale sociale € 3.586.191,18 i.v. - REA TO-457465 | www.telosspa.it<br/>
+    <b>SEDE Legale:</b> VENARIA (TO) - 10078 - Via Aosta 5 - Tel. 011.4242932 · <b>Amministrazione:</b> amministrazione.torino@telosgroup.it
+  </div>
+</div>
+
+<script>setTimeout(()=>window.print(),500)</script>
 </body></html>`;
   w.document.write(html);
   w.document.close();
@@ -1512,6 +1762,7 @@ function SchedaProdottoSelezione({p, ruolo, giaPresente, onConferma, onClose}){
       listino: p.listino, netto: nettoUnitario, qty,
       costo: costoCalcolato,
       sottoMargine: sottoMargine,
+      notaProdotto: p.note || null,
     });
   }
 
@@ -1650,8 +1901,18 @@ function Preventivi({cart,setCart,preventivi,setPreventivi,setOrdini,setArea,ruo
   const [view,setView]=useState("lista"); // lista | nuovo | dettaglio
   const [selId,setSelId]=useState(null);
   const [erroreSync,setErroreSync]=useState("");
+  const [utentiTelos,setUtentiTelos]=useState(null); // null=non caricato, [] o [...]
   const total=cart.reduce((s,p)=>s+p.netto,0);
   const accessToken = trovaAccessToken(sessione);
+
+  // Elenco utenti solo per chi può effettivamente scegliere il referente
+  // (stesso permesso già usato per l'approvazione margini/prezzi)
+  useEffect(()=>{
+    if(!puoModificarePrezzoLiberamente(ruolo) || utentiTelos!==null) return;
+    chiamaUtentiInfo(accessToken)
+      .then(d=>setUtentiTelos(d?.utenti ?? []))
+      .catch(()=>setUtentiTelos([]));
+  },[ruolo]);
 
   function totaleRighe(righe){
     return righe.reduce((s,r)=>s+r.netto*(r.qty||1),0);
@@ -1669,7 +1930,15 @@ function Preventivi({cart,setCart,preventivi,setPreventivi,setOrdini,setArea,ruo
   // poi lo aggiunge in cima alla lista locale con quanto restituito dal server.
   async function creaPreventivo(righe){
     setErroreSync("");
-    const nuovo = { cliente:"", stato:"Bozza", approvato:false, righe, val: totaleRighe(righe) };
+    const oggi = new Date().toISOString().slice(0,10);
+    const nuovo = {
+      cliente:"", stato:"Bozza", approvato:false, righe, val: totaleRighe(righe),
+      scadenza: aggiungiGiorniLavorativi(oggi, 20),
+      pagamento_modalita: "USUALE CODIFICATA",
+      pagamento_dettagli: "",
+      referente_telos: sessione?.nome || "",
+      note: "",
+    };
     try{
       const [salvato] = await sbAuth("POST","preventivi","",nuovo,accessToken);
       setPreventivi(prev=>[salvato,...prev]);
@@ -1700,6 +1969,19 @@ function Preventivi({cart,setCart,preventivi,setPreventivi,setOrdini,setArea,ruo
     if(!corrente) return;
     const righe = patch.righe || corrente.righe;
     const patchCompleto = { ...patch, val: totaleRighe(righe) };
+    // Se il totale cambia (articoli aggiunti/rimossi/modificati) e c'è già
+    // un finanziamento/noleggio scelto, ricalcola la rata sul nuovo importo
+    // invece di lasciarla ferma al valore vecchio — a meno che questa stessa
+    // chiamata non stia già impostando esplicitamente i campi finanziamento
+    // (es. quando l'utente cambia tipo/durata a mano).
+    const tipoFinanziamento = patch.finanziamento_tipo!==undefined ? patch.finanziamento_tipo : corrente.finanziamento_tipo;
+    if(patch.righe && tipoFinanziamento && patch.finanziamento_rata===undefined){
+      const mesi = corrente.finanziamento_mesi || 36;
+      const calcolo = calcolaFinanziamento(tipoFinanziamento, patchCompleto.val, mesi);
+      patchCompleto.finanziamento_rata = calcolo ? calcolo.rata : null;
+      patchCompleto.finanziamento_spese_contratto = calcolo ? calcolo.speseContratto : null;
+      patchCompleto.finanziamento_riscatto = calcolo ? calcolo.riscatto : null;
+    }
     setPreventivi(prev=>prev.map(p=>p.id===id ? {...p, ...patchCompleto} : p));
     try{
       await sbAuth("PATCH","preventivi",`id=eq.${id}`,patchCompleto,accessToken);
@@ -1715,13 +1997,22 @@ function Preventivi({cart,setCart,preventivi,setPreventivi,setOrdini,setArea,ruo
   }
   // Aggiunge un articolo, oppure ne aggiorna qty/netto se è già presente
   // (così riaprire la scheda di un prodotto già in preventivo permette di
-  // correggere la quantità senza creare una riga duplicata)
+  // correggere la quantità senza creare una riga duplicata). Se il prodotto
+  // ha una nota associata (campo "note" in anagrafica, es. "richiede
+  // installazione trifase"), la aggiunge al campo Note del preventivo — una
+  // volta sola per nota, e resta comunque modificabile/rimovibile a mano
+  // come qualsiasi altro testo in quel campo.
   function aggiungiRiga(id, riga){
     const p = preventivi.find(x=>x.id===id);
     if(!p) return;
     const esiste = p.righe.some(r=>r.cod===riga.cod);
     const righe = esiste ? p.righe.map(r=>r.cod===riga.cod ? riga : r) : [...p.righe, riga];
-    aggiorna(id, { righe, approvato:false });
+    const patch = { righe, approvato:false };
+    const notaProdotto = (riga.notaProdotto||"").trim();
+    if(!esiste && notaProdotto && !(p.note||"").includes(notaProdotto)){
+      patch.note = p.note ? `${p.note}\n${notaProdotto}` : notaProdotto;
+    }
+    aggiorna(id, patch);
   }
   async function convertiInOrdine(p){
     setErroreSync("");
@@ -1858,6 +2149,121 @@ function Preventivi({cart,setCart,preventivi,setPreventivi,setOrdini,setArea,ruo
           </div>
         )}
 
+        {/* Dettagli preventivo: scadenza, pagamento, referente, note */}
+        <div style={{...S.card,cursor:"default",marginBottom:16}}>
+          <div style={{display:"flex",gap:10,flexWrap:"wrap",marginBottom:editable?12:0}}>
+            <div style={{flex:"1 1 160px"}}>
+              <div style={{fontSize:11,fontFamily:F_MONO,color:"#9AA3AB",textTransform:"uppercase",letterSpacing:"0.05em",marginBottom:4}}>Scadenza preventivo</div>
+              {editable ? (
+                <input type="date" value={selezionato.scadenza||""} onChange={e=>aggiorna(selezionato.id,{scadenza:e.target.value})} style={S.inp}/>
+              ) : (
+                <div style={{fontSize:13,fontWeight:600}}>{selezionato.scadenza ? new Date(selezionato.scadenza).toLocaleDateString("it-IT") : "—"}</div>
+              )}
+            </div>
+            <div style={{flex:"1 1 200px"}}>
+              <div style={{fontSize:11,fontFamily:F_MONO,color:"#9AA3AB",textTransform:"uppercase",letterSpacing:"0.05em",marginBottom:4}}>Referente Telos</div>
+              {editable && puoModificarePrezzoLiberamente(ruolo) ? (
+                <select value={selezionato.referente_telos||""} onChange={e=>aggiorna(selezionato.id,{referente_telos:e.target.value})} style={S.inp}>
+                  {selezionato.referente_telos && !(utentiTelos||[]).some(u=>u.nome===selezionato.referente_telos) && (
+                    <option value={selezionato.referente_telos}>{selezionato.referente_telos}</option>
+                  )}
+                  {(utentiTelos||[]).map(u=>(<option key={u.id} value={u.nome}>{u.nome}</option>))}
+                </select>
+              ) : (
+                <div style={{fontSize:13,fontWeight:600}}>{selezionato.referente_telos || "—"}</div>
+              )}
+            </div>
+          </div>
+
+          {editable ? (
+            <div style={{marginBottom:12}}>
+              <div style={{fontSize:11,fontFamily:F_MONO,color:"#9AA3AB",textTransform:"uppercase",letterSpacing:"0.05em",marginBottom:4}}>Modalità di pagamento</div>
+              <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+                <select value={selezionato.pagamento_modalita||"USUALE CODIFICATA"} onChange={e=>aggiorna(selezionato.id,{pagamento_modalita:e.target.value})} style={{...S.inp,flex:"1 1 180px"}}>
+                  {["USUALE CODIFICATA","RI.BA.","RIMESSA DIRETTA","RID"].map(o=>(<option key={o} value={o}>{o}</option>))}
+                </select>
+                <input value={selezionato.pagamento_dettagli||""} onChange={e=>aggiorna(selezionato.id,{pagamento_dettagli:e.target.value})} placeholder="Dettagli (es. 60gg fine mese, al 15 del mese…)" style={{...S.inp,flex:"2 1 240px"}}/>
+              </div>
+            </div>
+          ) : (
+            <div style={{marginBottom:12}}>
+              <div style={{fontSize:11,fontFamily:F_MONO,color:"#9AA3AB",textTransform:"uppercase",letterSpacing:"0.05em",marginBottom:4}}>Modalità di pagamento</div>
+              <div style={{fontSize:13,fontWeight:600}}>{selezionato.pagamento_modalita}{selezionato.pagamento_dettagli?` — ${selezionato.pagamento_dettagli}`:""}</div>
+            </div>
+          )}
+
+          <div>
+            <div style={{fontSize:11,fontFamily:F_MONO,color:"#9AA3AB",textTransform:"uppercase",letterSpacing:"0.05em",marginBottom:4}}>Note</div>
+            {editable ? (
+              <textarea value={selezionato.note||""} onChange={e=>aggiorna(selezionato.id,{note:e.target.value})} rows={3} placeholder="Note per il cliente — alcune vengono aggiunte automaticamente in base agli articoli inseriti, ma restano modificabili" style={{...S.inp,resize:"vertical",fontFamily:F_BODY}}/>
+            ) : (
+              <div style={{fontSize:13,whiteSpace:"pre-line"}}>{selezionato.note || "—"}</div>
+            )}
+          </div>
+        </div>
+
+        {/* Finanziamento / Noleggio — rata calcolata automaticamente in base
+            al totale del preventivo e alla durata scelta */}
+        <div style={{...S.card,cursor:"default",marginBottom:16}}>
+          <div style={{fontSize:11,fontFamily:F_MONO,color:"#9AA3AB",textTransform:"uppercase",letterSpacing:"0.05em",marginBottom:8}}>Finanziamento / Noleggio</div>
+          {editable ? (
+            <>
+              <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:10}}>
+                {[["","Nessuno"],["finanziamento","Finanziamento"],["noleggio","Noleggio"]].map(([v,lbl])=>{
+                  const on = (selezionato.finanziamento_tipo||"")===v;
+                  return (
+                    <button key={v||"nessuno"} onClick={()=>{
+                      if(!v){ aggiorna(selezionato.id,{finanziamento_tipo:null,finanziamento_mesi:null,finanziamento_rata:null,finanziamento_spese_contratto:null,finanziamento_riscatto:null}); return; }
+                      const mesi = selezionato.finanziamento_mesi || 36;
+                      const calcolo = calcolaFinanziamento(v, selezionato.val, mesi);
+                      aggiorna(selezionato.id, calcolo ? {
+                        finanziamento_tipo:v, finanziamento_mesi:mesi,
+                        finanziamento_rata:calcolo.rata, finanziamento_spese_contratto:calcolo.speseContratto,
+                        finanziamento_riscatto:calcolo.riscatto,
+                      } : { finanziamento_tipo:v, finanziamento_mesi:mesi, finanziamento_rata:null, finanziamento_spese_contratto:null, finanziamento_riscatto:null });
+                    }} style={{
+                      border:`1px solid ${on?C.ink:C.paperLine}`, borderRadius:7, padding:"8px 14px",
+                      fontSize:12.5, cursor:"pointer", fontWeight:on?600:400,
+                      background:on?C.ink:"#fff", color:on?"#fff":"#5B6770",
+                    }}>{lbl}</button>
+                  );
+                })}
+              </div>
+
+              {selezionato.finanziamento_tipo && (
+                <>
+                  <select value={selezionato.finanziamento_mesi||36} onChange={e=>{
+                    const mesi = parseInt(e.target.value,10);
+                    const calcolo = calcolaFinanziamento(selezionato.finanziamento_tipo, selezionato.val, mesi);
+                    aggiorna(selezionato.id, calcolo ? {
+                      finanziamento_mesi:mesi, finanziamento_rata:calcolo.rata,
+                      finanziamento_spese_contratto:calcolo.speseContratto, finanziamento_riscatto:calcolo.riscatto,
+                    } : { finanziamento_mesi:mesi, finanziamento_rata:null, finanziamento_spese_contratto:null, finanziamento_riscatto:null });
+                  }} style={{...S.inp,marginBottom:10}}>
+                    {DURATE_MESI.map(m=>(<option key={m} value={m}>{m} mesi</option>))}
+                  </select>
+
+                  {selezionato.finanziamento_rata ? (
+                    <div style={{fontSize:12.5,color:C.steel,lineHeight:1.8}}>
+                      <div><strong style={{color:C.ink,fontFamily:F_MONO}}>€{selezionato.finanziamento_rata.toFixed(2)}</strong> al mese × {selezionato.finanziamento_mesi} rate</div>
+                      {selezionato.finanziamento_spese_contratto!=null && <div>Spese di istruttoria: €{selezionato.finanziamento_spese_contratto.toFixed(2)}</div>}
+                      {selezionato.finanziamento_tipo==="noleggio" && selezionato.finanziamento_riscatto!=null && <div>Riscatto finale (1% imponibile): €{selezionato.finanziamento_riscatto.toFixed(2)}</div>}
+                    </div>
+                  ) : (
+                    <div style={{fontSize:12,color:C.warn}}>⚠ Importo fuori tabella per questo prodotto — verifica manualmente con l'ufficio finanziamenti.</div>
+                  )}
+                </>
+              )}
+            </>
+          ) : selezionato.finanziamento_tipo ? (
+            <div style={{fontSize:13,fontWeight:600}}>
+              {selezionato.finanziamento_tipo==="noleggio"?"Noleggio":"Finanziamento"}: €{(selezionato.finanziamento_rata||0).toFixed(2)} × {selezionato.finanziamento_mesi} mesi
+            </div>
+          ) : (
+            <div style={{fontSize:12.5,color:"#9AA3AB"}}>Nessuno</div>
+          )}
+        </div>
+
         <div style={S.eyebrow}>Articoli ({selezionato.righe.length})</div>
         {selezionato.righe.length===0 && (
           <div style={{fontSize:12.5,color:"#9AA3AB",padding:"10px 0"}}>Nessun articolo — usa la ricerca qui sotto per aggiungerne.</div>
@@ -1916,7 +2322,26 @@ function Preventivi({cart,setCart,preventivi,setPreventivi,setOrdini,setArea,ruo
           {selezionato.stato==="Convertito in ordine" && (
             <button onClick={()=>setArea("ordini")} style={{...S.btnP,padding:"12px"}}>Vedi l'ordine →</button>
           )}
-          <button onClick={()=>generaPreventivoPDF(selezionato.righe.flatMap(r=>Array(r.qty||1).fill(r)), selezionato.val)} style={{...S.btnS,padding:"11px"}}>
+          <button onClick={()=>{
+            const righeArricchite = selezionato.righe.map(r=>{
+              const prodottoCatalogo = (catalog||[]).find(p=>p.cod===r.cod);
+              return { ...r, img: prodottoCatalogo?.img, desc_prev: prodottoCatalogo?.desc_prev };
+            });
+            generaPreventivoPDF(righeArricchite, selezionato.val, {
+              codice: codicePreventivo(selezionato),
+              cliente: selezionato.cliente,
+              scadenza: selezionato.scadenza,
+              pagamento_modalita: selezionato.pagamento_modalita,
+              pagamento_dettagli: selezionato.pagamento_dettagli,
+              referente_telos: selezionato.referente_telos,
+              note: selezionato.note,
+              finanziamento_tipo: selezionato.finanziamento_tipo,
+              finanziamento_mesi: selezionato.finanziamento_mesi,
+              finanziamento_rata: selezionato.finanziamento_rata,
+              finanziamento_spese_contratto: selezionato.finanziamento_spese_contratto,
+              finanziamento_riscatto: selezionato.finanziamento_riscatto,
+            });
+          }} style={{...S.btnS,padding:"11px"}}>
             📄 Genera preventivo PDF
           </button>
         </div>
