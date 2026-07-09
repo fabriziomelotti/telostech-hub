@@ -80,7 +80,7 @@ const NAV_META = {
 };
 function navMobile(nav){ return nav.slice(0,4).concat(nav.length>4?["more"]:[]); }
 
-const BADGE_LABEL = {promo_telos:"Promo Telos",promo_fornitore:"Promo fornitore",sconto_base:"Sconto base",listino:"Listino"};
+const BADGE_LABEL = {promo_telos:"Netto Telos",promo_fornitore:"Promo fornitore",sconto_base:"Sconto base",listino:"Listino"};
 
 const DEMO_CLIENTI = [
   {id:"cli-1",ragione_sociale:"Autofficina Bianchi",citta:"Pistoia",provincia:"PT",telefono:"0573 123456",email:"info@bianchi.it",settori:["auto","truck"],note:"Cliente storico"},
@@ -574,8 +574,22 @@ function normalizza(s){
     .trim();
 }
 
+// Numeri scritti in lettere -> cifra, per far combaciare la ricerca
+// indipendentemente da come sono scritti (es. il catalogo dice "2 colonne"
+// e l'utente cerca "due colonne", o viceversa). "uno/un/una" sono esclusi
+// perché in italiano sono anche articoli/pronomi molto comuni: convertirli
+// in "1" farebbe fallire ricerche normalissime come "un ponte sollevatore"
+// (la query pretenderebbe di trovare anche la cifra "1" nel prodotto).
+const NUMERI_IN_LETTERE = {
+  zero:"0", due:"2", tre:"3", quattro:"4", cinque:"5",
+  sei:"6", sette:"7", otto:"8", nove:"9", dieci:"10", undici:"11", dodici:"12",
+  tredici:"13", quattordici:"14", quindici:"15", sedici:"16", diciassette:"17",
+  diciotto:"18", diciannove:"19", venti:"20",
+};
+
 function tokenizza(s){
-  return normalizza(s).split(" ").filter(Boolean);
+  return normalizza(s).split(" ").filter(Boolean)
+    .map(t => NUMERI_IN_LETTERE[t] || t);
 }
 
 // Stemming leggero per l'italiano: tronca i suffissi di genere/numero più
@@ -2691,6 +2705,25 @@ function PannelloAdmin({ setCatalog, ruolo, sessione }) {
     return { headers, righe };
   }
 
+  // Il tipo di prezzo (e il relativo netto) sono derivati da QUALE colonna
+  // di prezzo è valorizzata nella riga, non da un'etichetta testuale scritta
+  // a mano — molto più veloce da compilare in Excel e senza rischio di
+  // refusi ("Promo Telos" vs "promo_telos" vs "PROMO TELOS" ecc.).
+  // Ordine di priorità se per errore più colonne fossero valorizzate insieme:
+  // netto_telos > netto_fornitore > sconto (sconto base) > listino (default).
+  // Per compatibilità resta anche il vecchio riconoscimento su una colonna
+  // "tipo_prezzo" testuale, usato solo se nessuna delle colonne sopra è
+  // valorizzata (file più vecchi che usano ancora quel formato).
+  function normalizzaTipoPrezzo(v) {
+    if (!v) return null;
+    const s = String(v).trim().toLowerCase().replace(/[\s-]+/g, "_");
+    if (s.includes("promo") && s.includes("telos")) return "promo_telos";
+    if (s.includes("promo") && (s.includes("fornitore") || s.includes("fornit"))) return "promo_fornitore";
+    if (s.includes("sconto") && s.includes("base")) return "sconto_base";
+    if (s.includes("listino")) return "listino";
+    return null; // valore presente ma non riconosciuto — verrà segnalato nel log import
+  }
+
   // Normalizza una riga CSV/Excel nel formato Supabase
   function normalizzaRiga(row) {
     const get = (...keys) => {
@@ -2710,6 +2743,29 @@ function PannelloAdmin({ setCatalog, ruolo, sessione }) {
     const cod = get("cod", "codice", "code", "sku");
     if (!cod) return null;
 
+    const listinoVal = num(get("listino", "prezzo_listino", "prezzo listino", "list_price"));
+    const scontoVal = num(get("sconto", "discount", "sconto%"));
+    const nettoTelos = num(get("netto_telos", "netto telos", "nettotelos"));
+    const nettoFornitore = num(get("netto_fornitore", "netto fornitore", "nettofornitore"));
+    const nettoGenerico = num(get("netto", "net_price", "prezzo_netto"));
+
+    let tipoPrezzo, netto, prezzoAmbiguo = false;
+    if (nettoTelos != null) {
+      tipoPrezzo = "promo_telos"; netto = nettoTelos;
+    } else if (nettoFornitore != null) {
+      tipoPrezzo = "promo_fornitore"; netto = nettoFornitore;
+    } else if (scontoVal) {
+      tipoPrezzo = "sconto_base";
+      netto = nettoGenerico ?? (listinoVal != null ? +(listinoVal * (1 - scontoVal / 100)).toFixed(2) : null);
+    } else {
+      const tipoPrezzoGrezzo = get("tipo_prezzo", "tipo prezzo", "prezzo_tipo", "tipo_listino",
+        "tipologia_prezzo", "condizione", "condizione_prezzo", "tipo_promo", "promo");
+      const tipoPrezzoNorm = normalizzaTipoPrezzo(tipoPrezzoGrezzo);
+      tipoPrezzo = tipoPrezzoNorm || "listino";
+      netto = nettoGenerico ?? listinoVal;
+      prezzoAmbiguo = !!tipoPrezzoGrezzo && !tipoPrezzoNorm;
+    }
+
     return {
       cod: String(cod).trim(),
       nome: tronca(get("nome", "name", "descrizione_breve") || get("descrizione", "description"), 500),
@@ -2719,10 +2775,11 @@ function PannelloAdmin({ setCatalog, ruolo, sessione }) {
       marchio: tronca(get("marchio", "brand", "mar"), 100),
       tipologia: tronca(get("tipologia", "tipo", "tip"), 100),
       um: get("um", "unita", "unit") || "pz",
-      listino: num(get("listino", "prezzo_listino", "prezzo listino", "list_price")),
-      sconto: num(get("sconto", "discount", "sconto%")),
-      netto: num(get("netto", "netto_telos", "net_price", "prezzo_netto")),
-      tipo_prezzo: get("tipo_prezzo") || "listino",
+      listino: listinoVal,
+      sconto: scontoVal ?? 0,
+      netto: netto,
+      tipo_prezzo: tipoPrezzo,
+      _tipoPrezzoDaVerificare: prezzoAmbiguo,
       note: tronca(get("note", "notes"), 500),
       attivo: true,
     };
@@ -2738,13 +2795,23 @@ function PannelloAdmin({ setCatalog, ruolo, sessione }) {
       addLog("Lettura file in corso…");
       const text = await file.text();
       const { righe } = parseCSV(text);
-      const prodotti = righe.map(normalizzaRiga).filter(Boolean);
+      const prodottiGrezzi = righe.map(normalizzaRiga).filter(Boolean);
 
-      if (prodotti.length === 0) {
+      if (prodottiGrezzi.length === 0) {
         addLog("Nessun prodotto valido trovato nel file. Verifica il formato.", "errore");
         setImportando(false);
         return;
       }
+
+      // Segnala quante righe avevano un valore di tipo_prezzo presente ma
+      // non riconosciuto (finito su "Listino" di default) — utile per
+      // controllare la sorgente dati invece di scoprirlo solo dopo,
+      // spulciando il catalogo prodotto per prodotto.
+      const nonRiconosciuti = prodottiGrezzi.filter(p => p._tipoPrezzoDaVerificare).length;
+      if (nonRiconosciuti > 0) {
+        addLog(`⚠ ${nonRiconosciuti} prodotti avevano un valore di "tipo prezzo" non riconosciuto — impostati su Listino di default. Controlla la colonna nel file di origine.`, "warn");
+      }
+      const prodotti = prodottiGrezzi.map(({ _tipoPrezzoDaVerificare, ...p }) => p);
 
       addLog(`${prodotti.length} prodotti validi trovati. Avvio import…`);
       setProgress({ done: 0, total: prodotti.length, errori: 0 });
@@ -2826,10 +2893,21 @@ function PannelloAdmin({ setCatalog, ruolo, sessione }) {
         offset += PAGE;
       }
 
-      // Genera CSV
-      const cols = ["cod","nome","descrizione","desc_prev","categoria","marchio","tipologia","um","listino","sconto","netto","tipo_prezzo","note"];
+      // Colonne separate per tipo di prezzo (invece di un'unica colonna
+      // "tipo_prezzo" testuale): più veloce da modificare in Excel — basta
+      // scrivere il numero nella colonna giusta, senza rischio di refusi
+      // nell'etichetta. Stesso formato riconosciuto da normalizzaRiga in
+      // fase di reimport, per un ciclo modifica→reimport senza sorprese.
+      const cols = ["cod","nome","descrizione","desc_prev","categoria","marchio","tipologia","um","listino","sconto","netto_telos","netto_fornitore","note"];
       const esc = v => v == null ? "" : `"${String(v).replace(/"/g,'""')}"`;
-      const csv = [cols.join(";"), ...tutti.map(r => cols.map(c => esc(r[c])).join(";"))].join("\n");
+      const csv = [cols.join(";"), ...tutti.map(r => {
+        const riga = {
+          ...r,
+          netto_telos: r.tipo_prezzo === "promo_telos" ? r.netto : "",
+          netto_fornitore: r.tipo_prezzo === "promo_fornitore" ? r.netto : "",
+        };
+        return cols.map(c => esc(riga[c])).join(";");
+      })].join("\n");
 
       const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8" });
       const url = URL.createObjectURL(blob);
@@ -2878,7 +2956,7 @@ function PannelloAdmin({ setCatalog, ruolo, sessione }) {
           <div style={{fontSize:13,color:"#5B6770",marginBottom:14,lineHeight:1.6}}>
             Carica un file <strong>CSV</strong> con i prodotti del catalogo. Le colonne riconosciute sono:
             <code style={{fontSize:11,background:C.paper,padding:"2px 6px",borderRadius:4,marginLeft:6}}>
-              cod, nome, descrizione, categoria, marchio, um, listino, sconto, netto
+              cod, nome, descrizione, desc_prev, categoria, marchio, um, listino, sconto, netto_telos, netto_fornitore, note
             </code>
           </div>
 
