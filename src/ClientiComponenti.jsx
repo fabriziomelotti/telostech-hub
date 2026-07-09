@@ -632,12 +632,51 @@ export function EditaProdotto({ ruolo, p, categorieEsistenti, onSalvato, onClose
   const [caricandoImg, setCaricandoImg] = useState(false);
   const [erroreImg, setErroreImg] = useState("");
   const fileImgRef = useRef(null);
+  const [schede, setSchede] = useState(p.schede || []); // [{nome, url}]
+  const [caricandoScheda, setCaricandoScheda] = useState(false);
+  const [erroreScheda, setErroreScheda] = useState("");
+  const fileSchedaRef = useRef(null);
 
   if(ruolo !== "admin") return null;
 
   function set(campo, val){ setF(prev=>({...prev, [campo]:val})); }
   function toggleSettore(s){
     setSettori(prev => prev.includes(s) ? prev.filter(x=>x!==s) : [...prev, s]);
+  }
+
+  // Carica un PDF come nuova scheda tecnica. Il nome mostrato di default è
+  // il nome del file (senza estensione); l'admin può poi rinominarlo
+  // liberamente nell'elenco (es. "INFO PRODOTTO", "SCHEDA PER INSTALLAZIONE")
+  // — più file, anche con lo stesso PDF sorgente, possono avere nomi diversi.
+  async function caricaSchedaFile(file){
+    if(!file) return;
+    if(file.type !== "application/pdf"){ setErroreScheda("Sono ammessi solo file PDF."); return; }
+    if(file.size > 15*1024*1024){ setErroreScheda("File troppo grande (max 15MB)."); return; }
+    setErroreScheda(""); setCaricandoScheda(true);
+    try{
+      const base64 = await new Promise((res,rej)=>{
+        const r = new FileReader();
+        r.onload = () => res(r.result.split(",")[1]);
+        r.onerror = () => rej(new Error("Lettura file fallita"));
+        r.readAsDataURL(file);
+      });
+      const { url } = await chiamaCatalogAdmin(
+        "caricaSchedaTecnica",
+        { nomeFile: file.name, contentType: file.type, base64, cod: p.cod },
+        accessToken
+      );
+      const nomeDefault = file.name.replace(/\.pdf$/i, "");
+      setSchede(prev => [...prev, { nome: nomeDefault, url }]);
+    }catch(err){
+      setErroreScheda("Errore caricamento: " + err.message);
+    }
+    setCaricandoScheda(false);
+  }
+  function rinominaScheda(i, nuovoNome){
+    setSchede(prev => prev.map((s,idx) => idx===i ? {...s, nome:nuovoNome} : s));
+  }
+  function rimuoviScheda(i){
+    setSchede(prev => prev.filter((_,idx) => idx!==i));
   }
 
   async function caricaImmagineFile(file){
@@ -692,6 +731,7 @@ export function EditaProdotto({ ruolo, p, categorieEsistenti, onSalvato, onClose
       tipo_prezzo: f.tipo_prezzo,
       note: f.note.trim() || null,
       img: f.img.trim() || null,
+      schede_tecniche: schede,
       attivo: true,
     };
 
@@ -816,6 +856,29 @@ export function EditaProdotto({ ruolo, p, categorieEsistenti, onSalvato, onClose
               </div>
             )}
           </>)}
+
+          {campo("Schede tecniche (PDF)", <>
+            {schede.length > 0 && (
+              <div style={{marginBottom:10}}>
+                {schede.map((s,i)=>(
+                  <div key={i} style={{display:"flex",gap:8,alignItems:"center",marginBottom:6}}>
+                    <input value={s.nome} onChange={e=>rinominaScheda(i,e.target.value)} placeholder="es. INFO PRODOTTO" style={{...S.inp,flex:1}}/>
+                    <a href={s.url} target="_blank" rel="noopener noreferrer" style={{fontSize:11,color:C.ink,whiteSpace:"nowrap"}}>Apri</a>
+                    <button type="button" onClick={()=>rimuoviScheda(i)} style={{background:"none",border:"none",color:C.danger,cursor:"pointer",fontSize:16,padding:"0 4px"}}>✕</button>
+                  </div>
+                ))}
+              </div>
+            )}
+            <button type="button" onClick={()=>fileSchedaRef.current?.click()} disabled={caricandoScheda} style={{...S.btnS,padding:"9px 14px",opacity:caricandoScheda?0.6:1}}>
+              {caricandoScheda ? "Carico…" : "⬆ Aggiungi scheda tecnica (PDF)"}
+            </button>
+            <input ref={fileSchedaRef} type="file" accept="application/pdf" style={{display:"none"}} onChange={e=>{caricaSchedaFile(e.target.files[0]); e.target.value="";}}/>
+            {erroreScheda && <div style={{fontSize:11,color:C.danger,marginTop:4}}>{erroreScheda}</div>}
+            <div style={{fontSize:11,color:"#9AA3AB",marginTop:6}}>
+              Carica il PDF, poi scrivi il nome da mostrare (es. "INFO PRODOTTO", "SCHEDA PER INSTALLAZIONE"). Puoi caricarne più di uno.
+            </div>
+          </>)}
+
           {campo("Note", <input value={f.note} onChange={e=>set("note",e.target.value)} style={S.inp}/>)}
 
           <button onClick={salva} disabled={stato==="salvo"} style={{...S.btnP,width:"100%",padding:"12px",marginTop:4,opacity:stato==="salvo"?0.6:1}}>

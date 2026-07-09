@@ -27,7 +27,7 @@ async function caricaCatalogo(catalogoDemo) {
   try {
     const PAGE = 1000;
     let tutti = [], offset = 0;
-    const cols = "cod,nome,descrizione,desc_prev,categoria,marchio,tipologia,um,listino,sconto,netto,tipo_prezzo,note,img,settori";
+    const cols = "cod,nome,descrizione,desc_prev,categoria,marchio,tipologia,um,listino,sconto,netto,tipo_prezzo,note,img,settori,schede_tecniche";
     while (true) {
       const dati = await sbGet("prodotti",
         `select=${cols}&attivo=eq.true&order=categoria&limit=${PAGE}&offset=${offset}`);
@@ -43,6 +43,7 @@ async function caricaCatalogo(catalogoDemo) {
       listino: p.listino || 0, sconto: p.sconto || 0, netto: p.netto || 0,
       tipo_prezzo: p.tipo_prezzo || "listino",
       note: p.note, img: p.img, settori: p.settori || "",
+      schede: p.schede_tecniche || [],
     }));
   } catch (err) {
     console.warn("Supabase non raggiungibile, uso catalogo demo:", err.message);
@@ -1146,15 +1147,25 @@ function SchedaProdotto({p, isIn, onToggleCart, onClose, ruolo, onModifica}){
             </div>
           </div>
 
-          {/* Schede tecniche */}
+          {/* Schede tecniche — file PDF caricati dall'admin, non generati dai dati prodotto */}
           <div style={S.eyebrow}>Schede tecniche</div>
-          <button onClick={()=>generaSchedaTecnicaPDF(p)} style={{display:"flex",alignItems:"center",gap:9,width:"100%",background:C.paper,border:`1px solid ${C.paperLine}`,borderRadius:8,padding:"11px 13px",cursor:"pointer",marginBottom:22,textAlign:"left"}}>
-            <span style={{fontSize:17,color:C.ink}}>⬇</span>
-            <div style={{flex:1}}>
-              <div style={{fontSize:13,fontWeight:600,color:C.charcoal}}>Scheda tecnica {p.cod}.pdf</div>
-              <div style={{fontSize:11,color:"#9AA3AB",marginTop:1}}>Specifiche complete, scaricabile e stampabile</div>
+          {(p.schede && p.schede.length > 0) ? (
+            <div style={{marginBottom:22}}>
+              {p.schede.map((s,i)=>(
+                <a key={i} href={s.url} target="_blank" rel="noopener noreferrer" style={{display:"flex",alignItems:"center",gap:9,width:"100%",background:C.paper,border:`1px solid ${C.paperLine}`,borderRadius:8,padding:"11px 13px",cursor:"pointer",textAlign:"left",marginBottom:8,textDecoration:"none"}}>
+                  <span style={{fontSize:17,color:C.ink}}>⬇</span>
+                  <div style={{flex:1}}>
+                    <div style={{fontSize:13,fontWeight:600,color:C.charcoal}}>{s.nome}</div>
+                    <div style={{fontSize:11,color:"#9AA3AB",marginTop:1}}>Documento PDF</div>
+                  </div>
+                </a>
+              ))}
             </div>
-          </button>
+          ) : (
+            <div style={{fontSize:12,color:C.steel,marginBottom:22}}>
+              Nessuna scheda tecnica caricata{ruolo==="admin" ? " — usa Modifica per aggiungerne una." : "."}
+            </div>
+          )}
 
           {/* Azioni */}
           <button onClick={onToggleCart} style={{...S.btnAccent,width:"100%",padding:"14px",fontSize:14,background:isIn?C.ok:C.cyan,color:isIn?"#fff":C.inkDeep}}>
@@ -1164,53 +1175,6 @@ function SchedaProdotto({p, isIn, onToggleCart, onClose, ruolo, onModifica}){
       </div>
     </div>
   );
-}
-
-// Genera scheda tecnica PDF stampabile per il singolo prodotto
-function generaSchedaTecnicaPDF(p){
-  const righeCaratteristiche = (p.desc_prev || p.desc || "").split(/\n|;/).map(r=>r.trim()).filter(Boolean);
-  const w = window.open("", "_blank");
-  const html = `<!DOCTYPE html><html><head><title>Scheda tecnica ${p.cod}</title>
-<style>
-  *{box-sizing:border-box;margin:0;padding:0}
-  body{font-family:Arial,sans-serif;padding:36px 40px;color:#232323;font-size:13px}
-  .hd{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:24px;padding-bottom:16px;border-bottom:2px solid #162758}
-  .brand{font-size:20px;font-weight:700;color:#162758}
-  .meta{text-align:right;font-size:11px;color:#7C879E;line-height:1.6}
-  .img-box{background:#FAFAFA;border:1px solid #E3E5EA;border-radius:8px;padding:24px;text-align:center;margin-bottom:22px}
-  .img-box img{max-width:100%;max-height:280px;object-fit:contain}
-  h1{font-size:20px;margin-bottom:4px}
-  .codice{font-family:monospace;font-size:12px;color:#7C879E;margin-bottom:18px}
-  .tag{display:inline-block;font-size:10px;font-weight:600;text-transform:uppercase;background:#EEF0F4;color:#5B6770;padding:3px 9px;border-radius:4px;margin-right:6px}
-  h3{font-size:11px;color:#9AA3AB;text-transform:uppercase;letter-spacing:0.05em;margin:18px 0 8px}
-  .descr{font-size:13px;line-height:1.6;color:#3A4248}
-  .feat-row{font-size:13px;padding:6px 0;border-bottom:1px solid #F0F0EE;color:#3A4248}
-  .prices{display:flex;gap:24px;padding:16px 0;border-top:1px solid #E3E5EA;border-bottom:1px solid #E3E5EA;margin-top:18px}
-  .price-lbl{font-size:10px;color:#9AA3AB;text-transform:uppercase;letter-spacing:0.05em}
-  .price-val{font-family:monospace;font-size:20px;font-weight:700;margin-top:3px}
-  .footer{margin-top:32px;font-size:10px;color:#9AA3AB;border-top:1px solid #E3E5EA;padding-top:10px}
-</style></head><body>
-<div class="hd">
-  <div><div class="brand">Telos Tech</div><div style="font-size:11px;color:#7C879E">Scheda tecnica prodotto</div></div>
-  <div class="meta"><div>Documento generato il ${new Date().toLocaleDateString("it-IT")}</div></div>
-</div>
-${p.img?`<div class="img-box"><img src="${p.img}" alt="${p.nome}"/></div>`:""}
-<h1>${p.nome || p.desc}</h1>
-<div class="codice">${p.cod}</div>
-<div><span class="tag">${p.mar}</span><span class="tag">${p.cat}</span></div>
-<h3>Descrizione generica</h3>
-<div class="descr">${p.desc || ""}</div>
-${righeCaratteristiche.length?`<h3>Caratteristiche tecnico-commerciali</h3>${righeCaratteristiche.map(r=>`<div class="feat-row">${r}</div>`).join("")}`:""}
-<div class="prices">
-  <div><div class="price-lbl">Listino</div><div class="price-val" style="color:#9AA3AB">€${p.listino.toFixed(2)}</div></div>
-  <div><div class="price-lbl">Netto Telos</div><div class="price-val" style="color:#162758">€${p.netto.toFixed(2)}</div></div>
-  <div><div class="price-lbl">Unità</div><div class="price-val" style="font-size:14px">${p.um||"Nr."}</div></div>
-</div>
-<div class="footer">Telos Tech S.r.l. · Documento informativo, non valido come preventivo ufficiale · Prezzi soggetti a variazione</div>
-<script>setTimeout(()=>window.print(),400)</script>
-</body></html>`;
-  w.document.write(html);
-  w.document.close();
 }
 
 // ─── CLIENTI ──────────────────────────────────────────────────────────────────
