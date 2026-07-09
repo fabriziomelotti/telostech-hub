@@ -341,7 +341,7 @@ const TIPI_PREZZO = [
   { v: "promo_fornitore", label: "Promo fornitore" },
 ];
 
-export function CreaProdotto({ ruolo, onCreato }){
+export function CreaProdotto({ ruolo, onCreato, categorieEsistenti }){
   const vuoto = {
     cod:"", nome:"", categoria:"", tipologia:"", marchio:"",
     descrizione:"", desc_prev:"", um:"pz",
@@ -384,7 +384,7 @@ export function CreaProdotto({ ruolo, onCreato }){
     const riga = {
       cod: f.cod.trim(),
       nome: f.nome.trim(),
-      categoria: f.categoria.trim(),
+      categoria: f.categoria.trim().toUpperCase(),
       tipologia: f.tipologia.trim() || null,
       marchio: f.marchio.trim() || null,
       settori: settori.join(","), // "auto,truck"  (stringa vuota se nessuno)
@@ -433,7 +433,15 @@ export function CreaProdotto({ ruolo, onCreato }){
       {campo("Codice *", <input value={f.cod} onChange={e=>set("cod",e.target.value)} placeholder="es. 199/GK" style={S.inp}/>)}
       {campo("Nome *", <input value={f.nome} onChange={e=>set("nome",e.target.value)} placeholder="Nome commerciale" style={S.inp}/>)}
 
-      {campo("Categoria *", <input value={f.categoria} onChange={e=>set("categoria",e.target.value)} placeholder="es. PONTI SOLLEVATORI" style={S.inp}/>)}
+      {campo("Categoria *", <>
+        <input value={f.categoria} onChange={e=>set("categoria",e.target.value)} placeholder="es. PONTI SOLLEVATORI" style={S.inp} list="categoria-esistenti-datalist"/>
+        <datalist id="categoria-esistenti-datalist">
+          {(categorieEsistenti||[]).map(c=>(<option key={c} value={c}/>))}
+        </datalist>
+        <div style={{fontSize:11,color:"#9AA3AB",marginTop:3}}>
+          Scrivi per vedere le categorie già in uso — usarne una esistente evita doppioni. Viene salvata automaticamente in MAIUSCOLO, quindi "Battery" e "BATTERY" finiscono comunque nella stessa categoria.
+        </div>
+      </>)}
 
       {campo("Settore (uno o più)",
         <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>

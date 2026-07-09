@@ -2417,6 +2417,135 @@ function GestioneUtenti({ ruolo, sessione }) {
   );
 }
 
+// ─── GESTIONE CATEGORIE ────────────────────────────────────────────────────
+// Elenco delle categorie derivate dai prodotti reali, con la possibilità di
+// rinominare/unire una categoria in un'altra (risolve doppioni come
+// "Battery"/"BATTERY" nati da un refuso nel campo libero di CreaProdotto).
+function GestioneCategorie({ sessione, categorie, ricarica }) {
+  const accessToken = trovaAccessToken(sessione);
+  const [origine, setOrigine] = useState("");
+  const [destinazione, setDestinazione] = useState("");
+  const [stato, setStato] = useState("idle"); // idle | salvo | fatto | errore
+  const [msg, setMsg] = useState("");
+  const [confermaAperta, setConfermaAperta] = useState(false);
+  const [normalizzando, setNormalizzando] = useState(false);
+  const [msgNorm, setMsgNorm] = useState("");
+
+  async function normalizzaTutte() {
+    setNormalizzando(true);
+    setMsgNorm("Controllo in corso…");
+    try {
+      const { aggiornati, cambi } = await chiamaCatalogAdmin("normalizzaCategorie", {}, accessToken);
+      if (!cambi || cambi.length === 0) {
+        setMsgNorm("Tutte le categorie erano già normalizzate — nessuna modifica necessaria.");
+      } else {
+        const dettaglio = cambi.map(c => `"${c.da}" → "${c.a}" (${c.righe})`).join(", ");
+        setMsgNorm(`Fatto: ${aggiornati} prodotti aggiornati. ${dettaglio}`);
+      }
+      ricarica();
+    } catch (err) {
+      setMsgNorm("Errore: " + err.message);
+    }
+    setNormalizzando(false);
+  }
+
+  async function esegui() {
+    setStato("salvo"); setMsg("Aggiornamento in corso…");
+    try {
+      const { aggiornati } = await chiamaCatalogAdmin(
+        "rinominaCategoria", { vecchia: origine, nuova: destinazione.trim() }, accessToken
+      );
+      setStato("fatto");
+      setMsg(`Fatto: ${aggiornati ?? 0} prodotti spostati da "${origine}" a "${destinazione.trim()}".`);
+      setOrigine(""); setDestinazione("");
+      setConfermaAperta(false);
+      ricarica();
+    } catch (err) {
+      setStato("errore");
+      setMsg("Errore: " + err.message);
+      setConfermaAperta(false);
+    }
+  }
+
+  const contaOrigine = categorie.find(c => c.categoria === origine)?.n ?? 0;
+  const pronto = origine && destinazione.trim() && origine !== destinazione.trim();
+
+  return (
+    <div>
+      <div style={{fontSize:13,color:"#5B6770",marginBottom:16,lineHeight:1.6}}>
+        Le categorie qui sotto sono quelle attualmente presenti nel catalogo (derivate direttamente
+        dai prodotti). Se ne vedi due che dovrebbero essere una sola — es. per una differenza di
+        maiuscole/minuscole o uno spazio — usa "Rinomina/unisci" per spostare tutti i prodotti dall'una
+        all'altra in un colpo solo.
+      </div>
+
+      <div style={{...S.card,cursor:"default",marginBottom:16}}>
+        <div style={S.eyebrow}>Normalizzazione automatica</div>
+        <div style={{fontSize:12.5,color:C.steel,marginTop:6,marginBottom:10,lineHeight:1.6}}>
+          Da ora ogni nuova categoria (dal form o da import CSV) viene salvata automaticamente in
+          MAIUSCOLO senza spazi ai bordi, quindi non nasceranno più doppioni come "Battery"/"BATTERY".
+          Questo pulsante sistema in un colpo solo eventuali doppioni di questo tipo già presenti nel catalogo.
+        </div>
+        <button onClick={normalizzaTutte} disabled={normalizzando} style={{...S.btnS,padding:"9px 15px",opacity:normalizzando?0.5:1}}>
+          {normalizzando?"Normalizzo…":"Normalizza tutte le categorie"}
+        </button>
+        {msgNorm && <div style={{fontSize:12,color:C.steel,marginTop:10}}>{msgNorm}</div>}
+      </div>
+
+      <div style={{...S.card,cursor:"default",marginBottom:16}}>
+        <div style={S.eyebrow}>Rinomina / unisci categorie</div>
+        <div style={{display:"flex",gap:10,flexWrap:"wrap",alignItems:"flex-end",marginTop:8}}>
+          <div style={{flex:"1 1 200px"}}>
+            <label style={{fontSize:11,fontFamily:F_MONO,color:"#9AA3AB",textTransform:"uppercase",letterSpacing:"0.05em",display:"block",marginBottom:4}}>Da</label>
+            <select value={origine} onChange={e=>{setOrigine(e.target.value); setMsg("");}} style={S.inp}>
+              <option value="">— seleziona —</option>
+              {categorie.map(c=>(<option key={c.categoria} value={c.categoria}>{c.categoria} ({c.n})</option>))}
+            </select>
+          </div>
+          <div style={{flex:"1 1 220px"}}>
+            <label style={{fontSize:11,fontFamily:F_MONO,color:"#9AA3AB",textTransform:"uppercase",letterSpacing:"0.05em",display:"block",marginBottom:4}}>A (nome nuovo o categoria esistente)</label>
+            <input value={destinazione} onChange={e=>{setDestinazione(e.target.value); setMsg("");}} placeholder="es. BATTERY" style={S.inp} list="categorie-destinazione"/>
+            <datalist id="categorie-destinazione">
+              {categorie.map(c=>(<option key={c.categoria} value={c.categoria}/>))}
+            </datalist>
+          </div>
+          <button onClick={()=>setConfermaAperta(true)} disabled={!pronto||stato==="salvo"} style={{...S.btnAccent,padding:"10px 16px",opacity:!pronto?0.4:1}}>
+            Applica
+          </button>
+        </div>
+        {msg && <div style={{fontSize:12,color:stato==="errore"?C.warn:C.steel,marginTop:10}}>{msg}</div>}
+      </div>
+
+      {confermaAperta && (
+        <div style={{...S.card,cursor:"default",border:`1px solid ${C.warn}`,marginBottom:16}}>
+          <div style={{fontSize:13,fontWeight:600,marginBottom:6}}>Confermi lo spostamento?</div>
+          <div style={{fontSize:12.5,color:C.steel,marginBottom:12}}>
+            Sposti <strong>{contaOrigine} prodotti</strong> dalla categoria "<strong>{origine}</strong>" a
+            "<strong>{destinazione.trim()}</strong>". L'operazione va poi corretta manualmente se sbagliata.
+          </div>
+          <div style={{display:"flex",gap:8}}>
+            <button onClick={esegui} disabled={stato==="salvo"} style={{...S.btnAccent,padding:"8px 14px"}}>
+              {stato==="salvo"?"Applico…":"Sì, conferma"}
+            </button>
+            <button onClick={()=>setConfermaAperta(false)} style={{...S.btnS,padding:"8px 14px"}}>Annulla</button>
+          </div>
+        </div>
+      )}
+
+      <div style={S.eyebrow}>Categorie attuali ({categorie.length})</div>
+      <div style={{display:"flex",flexDirection:"column",marginTop:8}}>
+        {categorie.length===0 && <div style={{fontSize:12,color:C.steel,padding:"8px 4px"}}>Nessuna categoria trovata.</div>}
+        {categorie.map(c=>(
+          <div key={c.categoria} style={{display:"flex",justifyContent:"space-between",padding:"8px 4px",borderBottom:`1px solid ${C.paperLine}`,fontSize:13}}>
+            <span>{c.categoria}</span>
+            <span className="tnum" style={{color:C.steel}}>{c.n}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function PannelloAdmin({ setCatalog, ruolo, sessione }) {
   const accessToken = trovaAccessToken(sessione);
   const [tab, setTab] = useState("utenti");
@@ -2427,13 +2556,21 @@ function PannelloAdmin({ setCatalog, ruolo, sessione }) {
   const [log, setLog] = useState([]);
   const [esportando, setEsportando] = useState(false);
   const [conteggio, setConteggio] = useState(null);
+  const [categorie, setCategorie] = useState([]);
   const fileRef = useRef(null);
+
+  function ricaricaCategorie() {
+    chiamaCatalogAdmin("categorie", {}, accessToken)
+      .then(d => setCategorie(d?.categorie ?? []))
+      .catch(() => setCategorie([]));
+  }
 
   // Carica conteggio prodotti attuali
   useEffect(() => {
     chiamaCatalogAdmin("count", {}, accessToken)
       .then(d => setConteggio(d?.count ?? "—"))
       .catch(() => setConteggio("—"));
+    ricaricaCategorie();
   }, [importando]);
 
   function addLog(msg, tipo = "info") {
@@ -2641,11 +2778,11 @@ function PannelloAdmin({ setCatalog, ruolo, sessione }) {
       <ImportClienti ruolo={ruolo}/>
 
       <div style={{height:8}}/>
-      <CreaProdotto ruolo={ruolo} onCreato={()=>{ caricaCatalogo(CATALOG).then(d=>setCatalog(d)); }}/>
+      <CreaProdotto ruolo={ruolo} onCreato={()=>{ caricaCatalogo(CATALOG).then(d=>setCatalog(d)); ricaricaCategorie(); }} categorieEsistenti={categorie.map(c=>c.categoria)}/>
 
       {/* Tab */}
       <div style={{display:"flex",borderBottom:`1px solid ${C.paperLine}`,marginBottom:18}}>
-        {[["utenti","👤 Utenti"],["import","⬆ Importa"],["export","⬇ Esporta"]].map(([id,lbl])=>(
+        {[["utenti","👤 Utenti"],["import","⬆ Importa"],["export","⬇ Esporta"],["categorie","▤ Categorie"]].map(([id,lbl])=>(
           <button key={id} onClick={()=>setTab(id)} style={{
             background:"none",border:"none",borderBottom:`2px solid ${tab===id?C.ink:"transparent"}`,
             padding:"8px 16px",fontSize:13,cursor:"pointer",
@@ -2655,6 +2792,8 @@ function PannelloAdmin({ setCatalog, ruolo, sessione }) {
       </div>
 
       {tab==="utenti" && <GestioneUtenti ruolo={ruolo} sessione={sessione}/>}
+
+      {tab==="categorie" && <GestioneCategorie sessione={sessione} categorie={categorie} ricarica={()=>{ ricaricaCategorie(); caricaCatalogo(CATALOG).then(d=>setCatalog(d)); }}/>}
 
       {tab==="import" && (
         <div>
