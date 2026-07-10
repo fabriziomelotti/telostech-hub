@@ -1431,7 +1431,8 @@ const ASSET_BASE = `${SUPABASE_URL}/storage/v1/object/public/preventivo-assets`;
 const LOGO_TELOS_TECH = `${ASSET_BASE}/telos-tech-logo.png`;
 const LOGO_CHEVRON = `${ASSET_BASE}/chevron.png`;
 const LOGO_STRISCIA_MARCHI = `${ASSET_BASE}/striscia-loghi-marchi.png`;
-const LOGO_HEADER_TELOS_SPA = `${ASSET_BASE}/header-telos-spa.png`;
+const LOGO_TELOS_SPA = `${ASSET_BASE}/telos-spa-logo.png`;
+const LOGO_BADGE_PARTNER = `${ASSET_BASE}/badge-partner.png`;
 
 const TESTO_CONDIZIONI = `
 <h2>Condizioni di accettazione del preventivo</h2>
@@ -1474,19 +1475,20 @@ function generaPreventivoPDF(righe, total, meta={}){
     : "Da concordare";
   const referente = meta.referente_telos || "";
 
-  const righeHtml = righe.map(r => {
+  const righeHtml = righe.map((r,i) => {
     const totRiga = r.netto * (r.qty||1);
-    const descRighe = (r.desc_prev||"").split(/\n|;/).map(x=>x.trim()).filter(Boolean);
+    const caratteristiche = (r.desc_prev||"").split(/\n|;/).map(x=>x.trim()).filter(Boolean);
     return `
-    <tr class="riga-prodotto">
+    <tr class="riga-prodotto ${i%2===1?"riga-alt":""}">
       <td class="cella-prodotto">
         <div class="prodotto-tag"><span class="tag">${r.mar||""}</span></div>
         <div class="prodotto-nome">${r.nome||""}</div>
         <div class="prodotto-codice">${r.cod||""}</div>
         ${r.img ? `<div class="prodotto-img"><img src="${r.img}" alt=""/></div>` : ""}
+        ${caratteristiche.length ? `<div class="caratteristiche-testo">${caratteristiche.join("<br/>")}</div>` : ""}
       </td>
       <td class="cella-descr">
-        ${descRighe.length ? `<div class="descr-testo">${descRighe.join("<br/>")}</div>` : ""}
+        ${r.desc ? `<div class="descr-testo">${r.desc}</div>` : ""}
       </td>
       <td class="cella-num">${r.qty||1}</td>
       <td class="cella-num">€${(r.listino||0).toFixed(2)}</td>
@@ -1512,25 +1514,28 @@ function generaPreventivoPDF(righe, total, meta={}){
   .pagina:last-child{page-break-after:auto}
 
   /* ── Copertina ── */
-  .cover{text-align:center;align-items:center;padding-top:6mm}
-  .cover-logo{width:62mm;margin-bottom:10mm}
-  .cover-cliente{font-size:24px;font-weight:700;margin-bottom:8px}
-  .cover-referente{font-size:14px;font-style:italic;color:#3A4248;margin-bottom:12mm}
-  .cover-chevron{width:42mm;margin-bottom:12mm}
-  .cover-titolo{font-size:21px;font-weight:700;margin-bottom:10mm}
-  .cover-spacer{flex:1}
-  .cover-strip{width:100%;margin-bottom:8mm}
-  .cover-contatti{font-size:10.5px;color:#162758;font-weight:700;line-height:1.7}
+  .cover{text-align:center;align-items:center;padding-top:0}
+  .cover-spacer-top{flex:1.6}
+  .cover-spacer-mid{flex:1}
+  .cover-logo{width:80mm;margin-bottom:12mm}
+  .cover-cliente{font-size:30px;font-weight:700;margin-bottom:8px}
+  .cover-referente{font-size:16px;font-style:italic;color:#3A4248;margin-bottom:14mm}
+  .cover-chevron{width:55mm;margin-bottom:14mm}
+  .cover-titolo{font-size:26px;font-weight:700}
+  .cover-strip{width:calc(100% + 20mm);margin-left:-10mm;margin-right:-10mm;margin-bottom:9mm}
+  .cover-contatti{font-size:11.5px;color:#162758;font-weight:700;line-height:1.8}
   .cover-contatti span{display:block;font-weight:400;color:#5B6770}
 
   /* ── Pagina contenuto ── */
   .corpo-contenuto{flex:1}
-  .hd-content{display:flex;align-items:center;gap:14px;margin-bottom:18px;padding-bottom:14px;border-bottom:2px solid #162758}
-  .hd-content img{height:38px}
+  .hd-content{display:flex;align-items:center;justify-content:space-between;margin-bottom:18px;padding-bottom:14px;border-bottom:2px solid #162758}
+  .hd-content .logo-telos-spa{height:46px}
+  .hd-content .badge-partner{height:36px}
   .riga-titolo{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;margin-bottom:18px}
   .titolo-ordine{font-size:21px;font-weight:700;color:#162758;white-space:nowrap}
-  .meta-box{text-align:right;font-size:11px;line-height:1.7;flex-shrink:0}
-  .meta-box b{display:inline-block;width:70px;text-align:left;color:#7C879E;font-weight:400}
+  .meta-box{display:grid;grid-template-columns:auto auto;column-gap:10px;row-gap:3px;font-size:11px;justify-content:end;flex-shrink:0}
+  .meta-box .etichetta{color:#7C879E;text-align:right}
+  .meta-box .valore{text-align:left;font-weight:600;white-space:nowrap}
   .cliente-box{font-size:12.5px;margin-bottom:20px}
   .cliente-box .nome{font-weight:700;font-size:14px}
 
@@ -1538,6 +1543,7 @@ function generaPreventivoPDF(righe, total, meta={}){
   table.articoli thead th{background:#162758;color:#fff;padding:9px 10px;font-size:10.5px;text-align:left}
   table.articoli thead th.cella-num{text-align:right}
   .riga-prodotto td{border-bottom:1px solid #E3E5EA;padding:12px 10px;vertical-align:top;font-size:11.5px}
+  .riga-alt td{background:#F3F6FB}
   .cella-prodotto{width:26%}
   .tag{display:inline-block;font-size:9px;font-weight:600;text-transform:uppercase;background:#EEF0F4;color:#5B6770;padding:2px 7px;border-radius:3px;margin-bottom:3px}
   .prodotto-nome{font-weight:600}
@@ -1545,6 +1551,7 @@ function generaPreventivoPDF(righe, total, meta={}){
   .cella-descr{width:36%}
   .prodotto-img{width:100%;max-width:140px;height:100px;border:1px solid #E3E5EA;border-radius:6px;background:#FAFAFA;display:flex;align-items:center;justify-content:center;overflow:hidden;margin-top:8px}
   .prodotto-img img{max-width:100%;max-height:100%;object-fit:contain}
+  .caratteristiche-testo{font-size:9.5px;color:#7C879E;line-height:1.5;margin-top:6px}
   .descr-testo{font-size:10.5px;color:#5B6770;line-height:1.5}
   .cella-num{text-align:right;white-space:nowrap;width:9.5%}
   .cella-tot{font-weight:700;color:#162758}
@@ -1574,26 +1581,30 @@ function generaPreventivoPDF(righe, total, meta={}){
 </style></head><body>
 
 <div class="pagina cover">
+  <div class="cover-spacer-top"></div>
   <img class="cover-logo" src="${LOGO_TELOS_TECH}" alt="Telos Tech"/>
   <div class="cover-cliente">${(meta.cliente||"CLIENTE").toUpperCase()}</div>
   ${referente ? `<div class="cover-referente">vs. referente: ${referente}</div>` : ""}
   <img class="cover-chevron" src="${LOGO_CHEVRON}" alt=""/>
   <div class="cover-titolo">Preventivo</div>
-  <div class="cover-spacer"></div>
+  <div class="cover-spacer-mid"></div>
   <img class="cover-strip" src="${LOGO_STRISCIA_MARCHI}" alt=""/>
   <div class="cover-contatti">TELOS SPA - Reparto Telos Tech<span>Via Aosta, 5 - 10078 Venaria Reale (TO)</span><span>Tel. 0114242932 - E-Mail: attrezzatura@telosgroup.it</span></div>
 </div>
 
 <div class="pagina">
   <div class="corpo-contenuto">
-    <div class="hd-content"><img src="${LOGO_HEADER_TELOS_SPA}" alt="Telos SPA"/></div>
+    <div class="hd-content">
+      <img class="logo-telos-spa" src="${LOGO_TELOS_SPA}" alt="Telos SPA"/>
+      <img class="badge-partner" src="${LOGO_BADGE_PARTNER}" alt=""/>
+    </div>
     <div class="riga-titolo">
       <div class="titolo-ordine">PROPOSTA ORDINE</div>
       <div class="meta-box">
-        <div><b>Numero</b>${codiceMostrato}</div>
-        <div><b>Data</b>${oggi}</div>
-        <div><b>Scadenza</b>${scadenzaMostrata||"—"}</div>
-        <div><b>Pagamento</b>${pagamentoMostrato}</div>
+        <div class="etichetta">Numero</div><div class="valore">${codiceMostrato}</div>
+        <div class="etichetta">Data</div><div class="valore">${oggi}</div>
+        <div class="etichetta">Scadenza</div><div class="valore">${scadenzaMostrata||"—"}</div>
+        <div class="etichetta">Pagamento</div><div class="valore">${pagamentoMostrato}</div>
       </div>
     </div>
     <div class="cliente-box">
@@ -2334,7 +2345,7 @@ function Preventivi({cart,setCart,preventivi,setPreventivi,setOrdini,setArea,ruo
           <button onClick={()=>{
             const righeArricchite = selezionato.righe.map(r=>{
               const prodottoCatalogo = (catalog||[]).find(p=>p.cod===r.cod);
-              return { ...r, img: prodottoCatalogo?.img, desc_prev: prodottoCatalogo?.desc_prev };
+              return { ...r, img: prodottoCatalogo?.img, desc: prodottoCatalogo?.desc, desc_prev: prodottoCatalogo?.desc_prev };
             });
             generaPreventivoPDF(righeArricchite, selezionato.val, {
               codice: codicePreventivo(selezionato),
