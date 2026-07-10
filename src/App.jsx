@@ -1483,9 +1483,9 @@ function generaPreventivoPDF(righe, total, meta={}){
         <div class="prodotto-tag"><span class="tag">${r.mar||""}</span></div>
         <div class="prodotto-nome">${r.nome||""}</div>
         <div class="prodotto-codice">${r.cod||""}</div>
+        ${r.img ? `<div class="prodotto-img"><img src="${r.img}" alt=""/></div>` : ""}
       </td>
       <td class="cella-descr">
-        ${r.img ? `<div class="prodotto-img"><img src="${r.img}" alt=""/></div>` : ""}
         ${descRighe.length ? `<div class="descr-testo">${descRighe.join("<br/>")}</div>` : ""}
       </td>
       <td class="cella-num">${r.qty||1}</td>
@@ -1502,32 +1502,34 @@ function generaPreventivoPDF(righe, total, meta={}){
   ` : "";
 
   const w = window.open("", "_blank");
-  const html = `<!DOCTYPE html><html><head><title>Preventivo ${codiceMostrato}</title>
+  const html = `<!DOCTYPE html><html><head><meta charset="utf-8"/><title>Preventivo ${codiceMostrato}</title>
 <style>
   @page{size:A4;margin:0}
   *{box-sizing:border-box;margin:0;padding:0}
   html,body{width:210mm}
   body{font-family:Arial,sans-serif;color:#232323;font-size:12.5px}
-  .pagina{width:210mm;min-height:297mm;padding:14mm 16mm;page-break-after:always;position:relative}
+  .pagina{width:210mm;min-height:297mm;padding:14mm 16mm;page-break-after:always;display:flex;flex-direction:column}
   .pagina:last-child{page-break-after:auto}
 
   /* ── Copertina ── */
-  .cover{text-align:center;display:flex;flex-direction:column;align-items:center;padding-top:16mm}
-  .cover-logo{width:85mm;margin-bottom:16mm}
-  .cover-cliente{font-size:28px;font-weight:700;margin-bottom:10px}
-  .cover-referente{font-size:15px;font-style:italic;color:#3A4248;margin-bottom:22mm}
-  .cover-chevron{width:62mm;margin-bottom:22mm}
-  .cover-titolo{font-size:23px;font-weight:700;margin-bottom:30mm}
-  .cover-caption{font-size:11px;font-style:italic;color:#5B6770;margin-bottom:10px}
-  .cover-strip{width:100%;margin-bottom:10mm}
+  .cover{text-align:center;align-items:center;padding-top:6mm}
+  .cover-logo{width:62mm;margin-bottom:10mm}
+  .cover-cliente{font-size:24px;font-weight:700;margin-bottom:8px}
+  .cover-referente{font-size:14px;font-style:italic;color:#3A4248;margin-bottom:12mm}
+  .cover-chevron{width:42mm;margin-bottom:12mm}
+  .cover-titolo{font-size:21px;font-weight:700;margin-bottom:10mm}
+  .cover-spacer{flex:1}
+  .cover-strip{width:100%;margin-bottom:8mm}
   .cover-contatti{font-size:10.5px;color:#162758;font-weight:700;line-height:1.7}
   .cover-contatti span{display:block;font-weight:400;color:#5B6770}
 
   /* ── Pagina contenuto ── */
-  .hd-content{display:flex;align-items:center;gap:14px;margin-bottom:20px;padding-bottom:14px;border-bottom:2px solid #162758}
+  .corpo-contenuto{flex:1}
+  .hd-content{display:flex;align-items:center;gap:14px;margin-bottom:18px;padding-bottom:14px;border-bottom:2px solid #162758}
   .hd-content img{height:38px}
-  .titolo-ordine{font-size:21px;font-weight:700;color:#162758;margin-bottom:18px}
-  .meta-box{position:absolute;top:14mm;right:16mm;text-align:right;font-size:11px;line-height:1.7}
+  .riga-titolo{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;margin-bottom:18px}
+  .titolo-ordine{font-size:21px;font-weight:700;color:#162758;white-space:nowrap}
+  .meta-box{text-align:right;font-size:11px;line-height:1.7;flex-shrink:0}
   .meta-box b{display:inline-block;width:70px;text-align:left;color:#7C879E;font-weight:400}
   .cliente-box{font-size:12.5px;margin-bottom:20px}
   .cliente-box .nome{font-weight:700;font-size:14px}
@@ -1536,12 +1538,12 @@ function generaPreventivoPDF(righe, total, meta={}){
   table.articoli thead th{background:#162758;color:#fff;padding:9px 10px;font-size:10.5px;text-align:left}
   table.articoli thead th.cella-num{text-align:right}
   .riga-prodotto td{border-bottom:1px solid #E3E5EA;padding:12px 10px;vertical-align:top;font-size:11.5px}
-  .cella-prodotto{width:22%}
+  .cella-prodotto{width:26%}
   .tag{display:inline-block;font-size:9px;font-weight:600;text-transform:uppercase;background:#EEF0F4;color:#5B6770;padding:2px 7px;border-radius:3px;margin-bottom:3px}
   .prodotto-nome{font-weight:600}
   .prodotto-codice{font-family:monospace;font-size:9.5px;color:#9AA3AB;margin-top:2px}
-  .cella-descr{width:40%}
-  .prodotto-img{width:110px;height:80px;border:1px solid #E3E5EA;border-radius:6px;background:#FAFAFA;display:flex;align-items:center;justify-content:center;overflow:hidden;margin-bottom:6px}
+  .cella-descr{width:36%}
+  .prodotto-img{width:100%;max-width:140px;height:100px;border:1px solid #E3E5EA;border-radius:6px;background:#FAFAFA;display:flex;align-items:center;justify-content:center;overflow:hidden;margin-top:8px}
   .prodotto-img img{max-width:100%;max-height:100%;object-fit:contain}
   .descr-testo{font-size:10.5px;color:#5B6770;line-height:1.5}
   .cella-num{text-align:right;white-space:nowrap;width:9.5%}
@@ -1556,7 +1558,7 @@ function generaPreventivoPDF(righe, total, meta={}){
   .note-box .lbl{font-weight:700;margin-bottom:4px}
   .note-box .testo{white-space:pre-line}
 
-  .footer-legale{position:absolute;bottom:10mm;left:16mm;right:16mm;font-size:9px;color:#9AA3AB;border-top:1px solid #E3E5EA;padding-top:8px}
+  .footer-legale{font-size:9px;color:#9AA3AB;border-top:1px solid #E3E5EA;padding-top:8px;margin-top:16px}
   .footer-legale b{color:#5B6770}
 
   /* ── Pagina condizioni ── */
@@ -1577,39 +1579,42 @@ function generaPreventivoPDF(righe, total, meta={}){
   ${referente ? `<div class="cover-referente">vs. referente: ${referente}</div>` : ""}
   <img class="cover-chevron" src="${LOGO_CHEVRON}" alt=""/>
   <div class="cover-titolo">Preventivo</div>
-  <div style="flex:1"></div>
-  <div class="cover-caption">Rivenditori attrezzature ufficiali per</div>
+  <div class="cover-spacer"></div>
   <img class="cover-strip" src="${LOGO_STRISCIA_MARCHI}" alt=""/>
   <div class="cover-contatti">TELOS SPA - Reparto Telos Tech<span>Via Aosta, 5 - 10078 Venaria Reale (TO)</span><span>Tel. 0114242932 - E-Mail: attrezzatura@telosgroup.it</span></div>
 </div>
 
 <div class="pagina">
-  <div class="meta-box">
-    <div><b>Numero</b>${codiceMostrato}</div>
-    <div><b>Data</b>${oggi}</div>
-    <div><b>Scadenza</b>${scadenzaMostrata||"—"}</div>
-    <div><b>Pagamento</b>${pagamentoMostrato}</div>
-  </div>
-  <div class="hd-content"><img src="${LOGO_HEADER_TELOS_SPA}" alt="Telos SPA"/></div>
-  <div class="titolo-ordine">PROPOSTA ORDINE</div>
-  <div class="cliente-box">
-    <div style="color:#7C879E;font-size:10px">Spett.le Cliente</div>
-    <div class="nome">${meta.cliente||""}</div>
-  </div>
+  <div class="corpo-contenuto">
+    <div class="hd-content"><img src="${LOGO_HEADER_TELOS_SPA}" alt="Telos SPA"/></div>
+    <div class="riga-titolo">
+      <div class="titolo-ordine">PROPOSTA ORDINE</div>
+      <div class="meta-box">
+        <div><b>Numero</b>${codiceMostrato}</div>
+        <div><b>Data</b>${oggi}</div>
+        <div><b>Scadenza</b>${scadenzaMostrata||"—"}</div>
+        <div><b>Pagamento</b>${pagamentoMostrato}</div>
+      </div>
+    </div>
+    <div class="cliente-box">
+      <div style="color:#7C879E;font-size:10px">Spett.le Cliente</div>
+      <div class="nome">${meta.cliente||""}</div>
+    </div>
 
-  <table class="articoli">
-    <thead><tr>
-      <th>Prodotto</th><th>Descrizione</th><th class="cella-num">Qtà</th><th class="cella-num">Listino</th><th class="cella-num">Netto</th><th class="cella-num">Totale</th>
-    </tr></thead>
-    <tbody>${righeHtml}</tbody>
-  </table>
+    <table class="articoli">
+      <thead><tr>
+        <th>Prodotto</th><th>Descrizione</th><th class="cella-num">Qtà</th><th class="cella-num">Listino</th><th class="cella-num">Netto</th><th class="cella-num">Totale</th>
+      </tr></thead>
+      <tbody>${righeHtml}</tbody>
+    </table>
 
-  <div class="totali-box">
-    <div class="tot-imponibile">Totale (IVA esclusa): €${total.toFixed(2)}</div>
-    ${finanziamentoHtml}
+    <div class="totali-box">
+      <div class="tot-imponibile">Totale (IVA esclusa): €${total.toFixed(2)}</div>
+      ${finanziamentoHtml}
+    </div>
+
+    ${meta.note ? `<div class="note-box"><div class="lbl">Note:</div><div class="testo">${meta.note}</div></div>` : ""}
   </div>
-
-  ${meta.note ? `<div class="note-box"><div class="lbl">Note:</div><div class="testo">${meta.note}</div></div>` : ""}
 
   <div class="footer-legale">
     <b>TELOS S.P.A.</b> P.I./C.F. 00525920013 - capitale sociale € 3.586.191,18 i.v. - REA TO-457465 | www.telosspa.it<br/>
@@ -1618,13 +1623,15 @@ function generaPreventivoPDF(righe, total, meta={}){
 </div>
 
 <div class="pagina condizioni">
-  ${TESTO_CONDIZIONI}
-  <div class="firma-box">
-    <div class="titolo">Timbro e Firma per accettazione</div>
-    <div class="testo">Il sottoscritto Cliente dichiara di aver letto, compreso e integralmente accettato il preventivo e le condizioni che precedono, che assumono valore di ordine contrattuale vincolante.</div>
-    <div class="firma-linee"><div>Luogo e data</div><div>Timbro e firma del Cliente</div></div>
+  <div class="corpo-contenuto">
+    ${TESTO_CONDIZIONI}
+    <div class="firma-box">
+      <div class="titolo">Timbro e Firma per accettazione</div>
+      <div class="testo">Il sottoscritto Cliente dichiara di aver letto, compreso e integralmente accettato il preventivo e le condizioni che precedono, che assumono valore di ordine contrattuale vincolante.</div>
+      <div class="firma-linee"><div>Luogo e data</div><div>Timbro e firma del Cliente</div></div>
+    </div>
   </div>
-  <div class="footer-legale" style="position:static;margin-top:24px">
+  <div class="footer-legale">
     <b>TELOS S.P.A.</b> P.I./C.F. 00525920013 - capitale sociale € 3.586.191,18 i.v. - REA TO-457465 | www.telosspa.it<br/>
     <b>SEDE Legale:</b> VENARIA (TO) - 10078 - Via Aosta 5 - Tel. 011.4242932 · <b>Amministrazione:</b> amministrazione.torino@telosgroup.it
   </div>
