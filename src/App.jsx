@@ -1928,7 +1928,9 @@ function Preventivi({cart,setCart,preventivi,setPreventivi,setOrdini,setArea,ruo
   const [confermaEliminazione,setConfermaEliminazione]=useState(false);
   const [confermaSalto,setConfermaSalto]=useState(false);
   const [motivoSalto,setMotivoSalto]=useState("");
-  useEffect(()=>{ setConfermaEliminazione(false); setConfermaSalto(false); setMotivoSalto(""); },[selId]);
+  const [bozza,setBozza]=useState(null); // scadenza/referente/pagamento in modifica locale, salvati solo al click su "Salva"
+  const [bozzaSalvata,setBozzaSalvata]=useState(false); // conferma temporanea dopo il salvataggio
+  useEffect(()=>{ setConfermaEliminazione(false); setConfermaSalto(false); setMotivoSalto(""); setBozzaSalvata(false); },[selId]);
   const [erroreSync,setErroreSync]=useState("");
   const [utentiTelos,setUtentiTelos]=useState(null); // null=non caricato, [] o [...]
   const [erroreUtentiTelos,setErroreUtentiTelos]=useState("");
@@ -1990,6 +1992,33 @@ function Preventivi({cart,setCart,preventivi,setPreventivi,setOrdini,setArea,ruo
   }
 
   const selezionato = preventivi.find(p=>p.id===selId);
+
+  // La bozza locale si inizializza solo quando si apre un preventivo diverso
+  // (dipende da selId, non da selezionato) — altrimenti un aggiornamento dal
+  // server nel frattempo (es. nota automatica da un articolo appena aggiunto)
+  // cancellerebbe le modifiche non ancora salvate dall'utente.
+  useEffect(()=>{
+    if(!selezionato) return;
+    setBozza({
+      scadenza: selezionato.scadenza||"",
+      referente_telos: selezionato.referente_telos||"",
+      pagamento_modalita: selezionato.pagamento_modalita||"USUALE CODIFICATA",
+      pagamento_dettagli: selezionato.pagamento_dettagli||"",
+    });
+  },[selId]);
+
+  const modificheNonSalvate = bozza && selezionato && (
+    bozza.scadenza !== (selezionato.scadenza||"") ||
+    bozza.referente_telos !== (selezionato.referente_telos||"") ||
+    bozza.pagamento_modalita !== (selezionato.pagamento_modalita||"USUALE CODIFICATA") ||
+    bozza.pagamento_dettagli !== (selezionato.pagamento_dettagli||"")
+  );
+  function salvaBozza(){
+    if(!bozza || !selezionato) return;
+    aggiorna(selezionato.id, { ...bozza });
+    setBozzaSalvata(true);
+    setTimeout(()=>setBozzaSalvata(false), 2500);
+  }
 
   // Aggiornamento ottimistico (l'interfaccia reagisce subito) + salvataggio
   // reale su Supabase in background. Se il salvataggio fallisce, l'interfaccia
@@ -2188,19 +2217,19 @@ function Preventivi({cart,setCart,preventivi,setPreventivi,setOrdini,setArea,ruo
           <div style={{display:"flex",gap:10,flexWrap:"wrap",marginBottom:editable?12:0}}>
             <div style={{flex:"1 1 160px"}}>
               <div style={{fontSize:11,fontFamily:F_MONO,color:"#9AA3AB",textTransform:"uppercase",letterSpacing:"0.05em",marginBottom:4}}>Scadenza preventivo</div>
-              {editable ? (
-                <input type="date" value={selezionato.scadenza||""} onChange={e=>aggiorna(selezionato.id,{scadenza:e.target.value})} style={S.inp}/>
+              {editable && bozza ? (
+                <input type="date" value={bozza.scadenza} onChange={e=>setBozza(b=>({...b,scadenza:e.target.value}))} style={S.inp}/>
               ) : (
                 <div style={{fontSize:13,fontWeight:600}}>{selezionato.scadenza ? new Date(selezionato.scadenza).toLocaleDateString("it-IT") : "—"}</div>
               )}
             </div>
             <div style={{flex:"1 1 200px"}}>
               <div style={{fontSize:11,fontFamily:F_MONO,color:"#9AA3AB",textTransform:"uppercase",letterSpacing:"0.05em",marginBottom:4}}>Referente Telos</div>
-              {editable && puoModificarePrezzoLiberamente(ruolo) ? (
+              {editable && bozza && puoModificarePrezzoLiberamente(ruolo) ? (
                 <>
-                  <select value={selezionato.referente_telos||""} onChange={e=>aggiorna(selezionato.id,{referente_telos:e.target.value})} style={S.inp}>
-                    {selezionato.referente_telos && !(utentiTelos||[]).some(u=>u.nome===selezionato.referente_telos) && (
-                      <option value={selezionato.referente_telos}>{selezionato.referente_telos}</option>
+                  <select value={bozza.referente_telos} onChange={e=>setBozza(b=>({...b,referente_telos:e.target.value}))} style={S.inp}>
+                    {bozza.referente_telos && !(utentiTelos||[]).some(u=>u.nome===bozza.referente_telos) && (
+                      <option value={bozza.referente_telos}>{bozza.referente_telos}</option>
                     )}
                     {(utentiTelos||[]).map(u=>{
                       const nomeCompleto = [u.nome, u.cognome].filter(Boolean).join(" ");
@@ -2220,14 +2249,14 @@ function Preventivi({cart,setCart,preventivi,setPreventivi,setOrdini,setArea,ruo
             </div>
           </div>
 
-          {editable ? (
+          {editable && bozza ? (
             <div style={{marginBottom:12}}>
               <div style={{fontSize:11,fontFamily:F_MONO,color:"#9AA3AB",textTransform:"uppercase",letterSpacing:"0.05em",marginBottom:4}}>Modalità di pagamento</div>
               <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
-                <select value={selezionato.pagamento_modalita||"USUALE CODIFICATA"} onChange={e=>aggiorna(selezionato.id,{pagamento_modalita:e.target.value})} style={{...S.inp,flex:"1 1 180px"}}>
-                  {["USUALE CODIFICATA","RI.BA.","RIMESSA DIRETTA","RID"].map(o=>(<option key={o} value={o}>{o}</option>))}
+                <select value={bozza.pagamento_modalita} onChange={e=>setBozza(b=>({...b,pagamento_modalita:e.target.value}))} style={{...S.inp,flex:"1 1 180px"}}>
+                  {["USUALE CODIFICATA","RI.BA.","RIMESSA DIRETTA","RID","DA CONCORDARE"].map(o=>(<option key={o} value={o}>{o}</option>))}
                 </select>
-                <input value={selezionato.pagamento_dettagli||""} onChange={e=>aggiorna(selezionato.id,{pagamento_dettagli:e.target.value})} placeholder="Dettagli (es. 60gg fine mese, al 15 del mese…)" style={{...S.inp,flex:"2 1 240px"}}/>
+                <input value={bozza.pagamento_dettagli} onChange={e=>setBozza(b=>({...b,pagamento_dettagli:e.target.value}))} placeholder="Dettagli (es. 60gg fine mese, al 15 del mese…)" style={{...S.inp,flex:"2 1 240px"}}/>
               </div>
             </div>
           ) : (
@@ -2245,6 +2274,51 @@ function Preventivi({cart,setCart,preventivi,setPreventivi,setOrdini,setArea,ruo
               <div style={{fontSize:13,whiteSpace:"pre-line"}}>{selezionato.note || "—"}</div>
             )}
           </div>
+
+          {editable && (
+            <div style={{marginTop:14,paddingTop:12,borderTop:`1px solid ${C.paperLine}`,display:"flex",alignItems:"center",gap:12}}>
+              <button onClick={salvaBozza} disabled={!modificheNonSalvate} style={{...S.btnAccent,padding:"11px 20px",fontSize:13,fontWeight:700,opacity:modificheNonSalvate?1:0.4,cursor:modificheNonSalvate?"pointer":"default"}}>
+                💾 Salva
+              </button>
+              {bozzaSalvata && <span style={{fontSize:12.5,color:C.ok,fontWeight:600}}>✓ Salvato</span>}
+              {!bozzaSalvata && modificheNonSalvate && <span style={{fontSize:12,color:"#9AA3AB"}}>Modifiche non salvate</span>}
+            </div>
+          )}
+        </div>
+
+        {/* Aggiungi articoli — resa ben visibile: è l'azione più frequente
+            mentre si compila un preventivo */}
+        {editable && (
+          <div style={{...S.card,cursor:"default",marginBottom:16,background:"#fff",border:`2px solid ${C.cyan}`}}>
+            <div style={{fontSize:14.5,fontWeight:700,color:C.ink,marginBottom:10}}>+ Aggiungi articoli al preventivo</div>
+            <RicercaProdottiInline onSeleziona={(riga)=>aggiungiRiga(selezionato.id, riga)} righeEsistenti={selezionato.righe} ruolo={ruolo} catalog={catalog} sessione={sessione}/>
+          </div>
+        )}
+
+        <div style={S.eyebrow}>Articoli ({selezionato.righe.length})</div>
+        {selezionato.righe.length===0 && (
+          <div style={{fontSize:12.5,color:"#9AA3AB",padding:"10px 0"}}>Nessun articolo — usa la ricerca qui sopra per aggiungerne.</div>
+        )}
+        {selezionato.righe.map(r=>(
+          <div key={r.cod} style={{...S.card,cursor:"default",display:"flex",justifyContent:"space-between",alignItems:"center",gap:10,...(r.sottoMargine?{borderColor:C.warn,background:"rgba(217,164,65,0.05)"}:{})}}>
+            <div style={{minWidth:0}}>
+              <div style={{display:"flex",gap:5,alignItems:"center",flexWrap:"wrap"}}>
+                <Tag tone="steel">{r.mar}</Tag>
+                {r.sottoMargine && <Tag tone="warn">margine basso</Tag>}
+              </div>
+              <div style={{fontWeight:600,fontSize:13,marginTop:4}}>{r.nome}</div>
+              <div className="tnum" style={{fontSize:11,color:"#9AA3AB",marginTop:2}}>€{r.netto.toFixed(2)} × {r.qty||1}</div>
+            </div>
+            <div style={{display:"flex",alignItems:"center",gap:8,flexShrink:0}}>
+              <span className="tnum" style={{fontWeight:700,fontFamily:F_MONO,fontSize:14}}>€{(r.netto*(r.qty||1)).toFixed(2)}</span>
+              {editable && <button onClick={()=>eliminaRiga(selezionato.id,r.cod)} style={{background:"none",border:"none",fontSize:16,color:"#9AA3AB",cursor:"pointer"}}>✕</button>}
+            </div>
+          </div>
+        ))}
+
+        <div style={{display:"flex",justifyContent:"space-between",padding:"14px 0",borderTop:`1px solid ${C.paperLine}`,marginTop:8}}>
+          <span style={{fontWeight:600,fontSize:14}}>Totale</span>
+          <span className="tnum" style={{fontWeight:700,fontSize:18,fontFamily:F_MONO,color:C.ink}}>€{selezionato.val.toFixed(2)}</span>
         </div>
 
         {/* Finanziamento / Noleggio — rata calcolata automaticamente in base
@@ -2308,36 +2382,6 @@ function Preventivi({cart,setCart,preventivi,setPreventivi,setOrdini,setArea,ruo
             <div style={{fontSize:12.5,color:"#9AA3AB"}}>Nessuno</div>
           )}
         </div>
-
-        <div style={S.eyebrow}>Articoli ({selezionato.righe.length})</div>
-        {selezionato.righe.length===0 && (
-          <div style={{fontSize:12.5,color:"#9AA3AB",padding:"10px 0"}}>Nessun articolo — usa la ricerca qui sotto per aggiungerne.</div>
-        )}
-        {selezionato.righe.map(r=>(
-          <div key={r.cod} style={{...S.card,cursor:"default",display:"flex",justifyContent:"space-between",alignItems:"center",gap:10,...(r.sottoMargine?{borderColor:C.warn,background:"rgba(217,164,65,0.05)"}:{})}}>
-            <div style={{minWidth:0}}>
-              <div style={{display:"flex",gap:5,alignItems:"center",flexWrap:"wrap"}}>
-                <Tag tone="steel">{r.mar}</Tag>
-                {r.sottoMargine && <Tag tone="warn">margine basso</Tag>}
-              </div>
-              <div style={{fontWeight:600,fontSize:13,marginTop:4}}>{r.nome}</div>
-              <div className="tnum" style={{fontSize:11,color:"#9AA3AB",marginTop:2}}>€{r.netto.toFixed(2)} × {r.qty||1}</div>
-            </div>
-            <div style={{display:"flex",alignItems:"center",gap:8,flexShrink:0}}>
-              <span className="tnum" style={{fontWeight:700,fontFamily:F_MONO,fontSize:14}}>€{(r.netto*(r.qty||1)).toFixed(2)}</span>
-              {editable && <button onClick={()=>eliminaRiga(selezionato.id,r.cod)} style={{background:"none",border:"none",fontSize:16,color:"#9AA3AB",cursor:"pointer"}}>✕</button>}
-            </div>
-          </div>
-        ))}
-
-        <div style={{display:"flex",justifyContent:"space-between",padding:"14px 0",borderTop:`1px solid ${C.paperLine}`,marginTop:8}}>
-          <span style={{fontWeight:600,fontSize:14}}>Totale</span>
-          <span className="tnum" style={{fontWeight:700,fontSize:18,fontFamily:F_MONO,color:C.ink}}>€{selezionato.val.toFixed(2)}</span>
-        </div>
-
-        {editable && (
-          <RicercaProdottiInline onSeleziona={(riga)=>aggiungiRiga(selezionato.id, riga)} righeEsistenti={selezionato.righe} ruolo={ruolo} catalog={catalog} sessione={sessione}/>
-        )}
 
         {/* Azioni di stato */}
         <div style={{display:"flex",flexDirection:"column",gap:8,marginTop:6}}>
