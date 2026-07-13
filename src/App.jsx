@@ -1841,7 +1841,7 @@ function generaPreventivoPDF(righe, total, meta={}){
   /* ── Copertina ── */
   .cover{text-align:center;align-items:center;padding-top:0}
   .cover-spacer{flex:1}
-  .cover-logo{width:58mm;margin-top:4mm}
+  .cover-logo{width:58mm;margin-top:4mm;position:relative;left:-3mm}
   .cover-cliente{font-size:28px;font-weight:700;margin-bottom:8px}
   .cover-referente{font-size:15px;font-style:italic;color:#3A4248}
   .cover-chevron{width:52mm}
@@ -1873,7 +1873,7 @@ function generaPreventivoPDF(righe, total, meta={}){
   .prodotto-nome{font-weight:600}
   .prodotto-codice{font-family:monospace;font-size:9.5px;color:#9AA3AB;margin-top:2px}
   .cella-descr{width:40%}
-  .prodotto-img{width:100%;max-width:140px;height:100px;border:1px solid #E3E5EA;border-radius:6px;background:#FAFAFA;display:flex;align-items:center;justify-content:center;overflow:hidden;margin-top:8px}
+  .prodotto-img{width:100%;max-width:140px;height:100px;border-radius:6px;display:flex;align-items:center;justify-content:center;overflow:hidden;margin-top:8px}
   .prodotto-img img{max-width:100%;max-height:100%;object-fit:contain}
   .caratteristiche-testo{font-size:9.5px;color:#7C879E;line-height:1.5;margin-top:6px}
   .descr-testo{font-size:10.5px;color:#5B6770;line-height:1.5}
@@ -1904,6 +1904,7 @@ function generaPreventivoPDF(righe, total, meta={}){
   .firma-linee div{width:45%;border-top:1px solid #232323;padding-top:4px}
 </style></head><body>
 
+${meta.includi_copertina!==false ? `
 <div class="pagina cover">
   <img class="cover-logo" src="${LOGO_TELOS_TECH}" alt="Telos Tech"/>
   <div class="cover-spacer"></div>
@@ -1919,7 +1920,7 @@ function generaPreventivoPDF(righe, total, meta={}){
   <img class="cover-strip" src="${LOGO_STRISCIA_MARCHI}" alt=""/>
   <div class="cover-contatti">TELOS SPA - Reparto Telos Tech<span>Via Aosta, 5 - 10078 Venaria Reale (TO)</span><span>Tel. 0114242932 - E-Mail: attrezzatura@telosgroup.it</span></div>
 </div>
-
+` : ""}
 <div class="pagina">
   <div class="corpo-contenuto">
     <div class="hd-content">
@@ -2674,6 +2675,17 @@ function Preventivi({cart,setCart,preventivi,setPreventivi,setOrdini,setArea,ruo
               <div style={{fontSize:13,whiteSpace:"pre-line"}}>{selezionato.note || "—"}</div>
             )}
           </div>
+
+          <label style={{display:"flex",alignItems:"center",gap:8,marginTop:14,cursor:editable?"pointer":"default",fontSize:13}}>
+            <input
+              type="checkbox"
+              checked={selezionato.includi_copertina!==false}
+              disabled={!editable}
+              onChange={e=>aggiorna(selezionato.id,{includi_copertina:e.target.checked})}
+              style={{width:16,height:16,accentColor:C.ink}}
+            />
+            Includi la pagina di copertina nel PDF
+          </label>
         </div>
 
         {/* Aggiungi articoli — resa ben visibile: è l'azione più frequente
@@ -2814,6 +2826,7 @@ function Preventivi({cart,setCart,preventivi,setPreventivi,setOrdini,setArea,ruo
               finanziamento_rata: selezionato.finanziamento_rata,
               finanziamento_spese_contratto: selezionato.finanziamento_spese_contratto,
               finanziamento_riscatto: selezionato.finanziamento_riscatto,
+              includi_copertina: selezionato.includi_copertina,
             });
           }} style={{...S.btnAccent,padding:"14px",fontSize:14,fontWeight:700,background:C.cyan,color:C.inkDeep}}>
             📄 Genera preventivo PDF
