@@ -1923,6 +1923,8 @@ function SchedaProdottoSelezione({p, ruolo, giaPresente, onConferma, onClose}){
 function Preventivi({cart,setCart,preventivi,setPreventivi,setOrdini,setArea,ruolo,catalog,sessione}){
   const [view,setView]=useState("lista"); // lista | nuovo | dettaglio
   const [selId,setSelId]=useState(null);
+  const [confermaEliminazione,setConfermaEliminazione]=useState(false);
+  useEffect(()=>{ setConfermaEliminazione(false); },[selId]);
   const [erroreSync,setErroreSync]=useState("");
   const [utentiTelos,setUtentiTelos]=useState(null); // null=non caricato, [] o [...]
   const [erroreUtentiTelos,setErroreUtentiTelos]=useState("");
@@ -2059,14 +2061,16 @@ function Preventivi({cart,setCart,preventivi,setPreventivi,setOrdini,setArea,ruo
   }
   // Elimina un preventivo intero (non una singola riga). Bloccato per quelli
   // già trasformati in ordine: cancellarli lascerebbe l'ordine collegato
-  // orfano di riferimento. Aggiornamento ottimistico con rollback se la
-  // cancellazione sul server fallisce, per non far credere all'utente che
-  // sia sparito quando in realtà è ancora lì.
+  // orfano di riferimento. La conferma avviene nell'interfaccia (due passaggi
+  // espliciti), non con il popup del browser — troppo facile da cliccare via
+  // senza leggere. Aggiornamento ottimistico con rollback se la cancellazione
+  // sul server fallisce, per non far credere all'utente che sia sparito
+  // quando in realtà è ancora lì.
   async function eliminaPreventivo(id){
     const p = preventivi.find(x=>x.id===id);
     if(!p || p.stato==="Convertito in ordine") return;
-    if(!window.confirm(`Eliminare il preventivo ${codicePreventivo(p)}${p.cliente?` (${p.cliente})`:""}? L'operazione non è reversibile.`)) return;
     setErroreSync("");
+    setConfermaEliminazione(false);
     setPreventivi(prev=>prev.filter(x=>x.id!==id));
     setSelId(null);
     setView("lista");
@@ -2131,14 +2135,7 @@ function Preventivi({cart,setCart,preventivi,setPreventivi,setOrdini,setArea,ruo
 
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:6}}>
           <div className="tnum" style={{fontFamily:F_MONO,fontSize:12,color:"#9AA3AB"}}>{codicePreventivo(selezionato)}</div>
-          <div style={{display:"flex",alignItems:"center",gap:8}}>
-            <Tag tone={inAttesaApprovazione?"warn":(STATO_COLORE[selezionato.stato]||"steel")}>{statoVisibile}</Tag>
-            {editable && (
-              <button onClick={()=>eliminaPreventivo(selezionato.id)} title="Elimina preventivo" style={{background:"none",border:"none",color:C.danger,cursor:"pointer",fontSize:15,padding:0}}>
-                🗑
-              </button>
-            )}
-          </div>
+          <Tag tone={inAttesaApprovazione?"warn":(STATO_COLORE[selezionato.stato]||"steel")}>{statoVisibile}</Tag>
         </div>
 
         {editable ? (
@@ -2380,6 +2377,31 @@ function Preventivi({cart,setCart,preventivi,setPreventivi,setOrdini,setArea,ruo
             📄 Genera preventivo PDF
           </button>
         </div>
+
+        {editable && (
+          <div style={{marginTop:28,paddingTop:20,borderTop:`1px solid ${C.paperLine}`}}>
+            {!confermaEliminazione ? (
+              <button onClick={()=>setConfermaEliminazione(true)} style={{width:"100%",padding:"14px",background:C.danger,color:"#fff",border:"none",borderRadius:9,fontSize:14,fontWeight:700,cursor:"pointer"}}>
+                🗑 Elimina preventivo
+              </button>
+            ) : (
+              <div style={{background:"rgba(200,75,58,0.08)",border:`1px solid ${C.danger}`,borderRadius:9,padding:16}}>
+                <div style={{fontSize:13.5,fontWeight:700,color:C.danger,marginBottom:6}}>Confermi l'eliminazione definitiva?</div>
+                <div style={{fontSize:12.5,color:C.steel,marginBottom:14}}>
+                  Il preventivo {codicePreventivo(selezionato)}{selezionato.cliente?` (${selezionato.cliente})`:""} verrà cancellato per sempre. L'operazione non è reversibile.
+                </div>
+                <div style={{display:"flex",gap:10}}>
+                  <button onClick={()=>eliminaPreventivo(selezionato.id)} style={{flex:1,padding:"12px",background:C.danger,color:"#fff",border:"none",borderRadius:8,fontSize:13.5,fontWeight:700,cursor:"pointer"}}>
+                    Sì, elimina definitivamente
+                  </button>
+                  <button onClick={()=>setConfermaEliminazione(false)} style={{flex:1,padding:"12px",background:"#fff",color:C.steel,border:`1px solid ${C.paperLine}`,borderRadius:8,fontSize:13.5,fontWeight:600,cursor:"pointer"}}>
+                    Annulla
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
       </div>
     );
   }
@@ -2395,33 +2417,34 @@ function ListaPreventivi({preventivi,onApri,onNuovo}){
     : preventivi;
   return (
     <div>
-      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
-        <div style={S.eyebrow}>Preventivi</div>
-        <button onClick={onNuovo} style={{...S.btnAccent,padding:"7px 14px",fontSize:12}}>+ Nuovo preventivo</button>
-      </div>
+      <div style={S.eyebrow}>Preventivi</div>
 
-      {preventivi.length>0 && (
-        <div style={{position:"relative",marginBottom:12}}>
-          <input
-            value={filtro}
-            onChange={e=>setFiltro(e.target.value)}
-            placeholder="Filtra per cliente…"
-            style={{...S.inp,paddingRight:filtro?34:12}}
-          />
-          {filtro && (
-            <button
-              onClick={()=>setFiltro("")}
-              style={{position:"absolute",right:8,top:"50%",transform:"translateY(-50%)",border:"none",background:"none",cursor:"pointer",color:"#9AA3AB",fontSize:16,lineHeight:1}}
-              title="Pulisci filtro"
-            >×</button>
-          )}
-          {q && (
-            <div style={{fontSize:11,color:"#9AA3AB",marginTop:6,fontFamily:F_MONO}}>
-              {lista.length} su {preventivi.length} preventiv{preventivi.length===1?"o":"i"}
-            </div>
-          )}
-        </div>
-      )}
+      <div style={{display:"flex",alignItems:"flex-start",gap:20,marginTop:10,marginBottom:14,flexWrap:"wrap"}}>
+        <button onClick={onNuovo} style={{...S.btnAccent,padding:"14px 24px",fontSize:14.5,fontWeight:700,flexShrink:0}}>+ Nuovo preventivo</button>
+
+        {preventivi.length>0 && (
+          <div style={{position:"relative",flex:"1 1 260px",minWidth:220}}>
+            <input
+              value={filtro}
+              onChange={e=>setFiltro(e.target.value)}
+              placeholder="🔍 Cerca preventivo per cliente…"
+              style={{...S.inp,padding:"13px 16px",fontSize:14,paddingRight:filtro?38:16}}
+            />
+            {filtro && (
+              <button
+                onClick={()=>setFiltro("")}
+                style={{position:"absolute",right:10,top:"50%",transform:"translateY(-50%)",border:"none",background:"none",cursor:"pointer",color:"#9AA3AB",fontSize:18,lineHeight:1}}
+                title="Pulisci filtro"
+              >×</button>
+            )}
+            {q && (
+              <div style={{fontSize:11,color:"#9AA3AB",marginTop:6,fontFamily:F_MONO}}>
+                {lista.length} su {preventivi.length} preventiv{preventivi.length===1?"o":"i"}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
 
       {preventivi.length===0 && (
         <div style={{textAlign:"center",padding:"2.5rem 1rem",color:"#9AA3AB"}}>
