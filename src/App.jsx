@@ -1925,6 +1925,7 @@ function Preventivi({cart,setCart,preventivi,setPreventivi,setOrdini,setArea,ruo
   const [selId,setSelId]=useState(null);
   const [erroreSync,setErroreSync]=useState("");
   const [utentiTelos,setUtentiTelos]=useState(null); // null=non caricato, [] o [...]
+  const [erroreUtentiTelos,setErroreUtentiTelos]=useState("");
   const total=cart.reduce((s,p)=>s+p.netto,0);
   const accessToken = trovaAccessToken(sessione);
 
@@ -1934,7 +1935,7 @@ function Preventivi({cart,setCart,preventivi,setPreventivi,setOrdini,setArea,ruo
     if(!puoModificarePrezzoLiberamente(ruolo) || utentiTelos!==null) return;
     chiamaUtentiInfo(accessToken)
       .then(d=>setUtentiTelos(d?.utenti ?? []))
-      .catch(()=>setUtentiTelos([]));
+      .catch(err=>{ setUtentiTelos([]); setErroreUtentiTelos(err.message); });
   },[ruolo]);
 
   function totaleRighe(righe){
@@ -2186,12 +2187,20 @@ function Preventivi({cart,setCart,preventivi,setPreventivi,setOrdini,setArea,ruo
             <div style={{flex:"1 1 200px"}}>
               <div style={{fontSize:11,fontFamily:F_MONO,color:"#9AA3AB",textTransform:"uppercase",letterSpacing:"0.05em",marginBottom:4}}>Referente Telos</div>
               {editable && puoModificarePrezzoLiberamente(ruolo) ? (
-                <select value={selezionato.referente_telos||""} onChange={e=>aggiorna(selezionato.id,{referente_telos:e.target.value})} style={S.inp}>
-                  {selezionato.referente_telos && !(utentiTelos||[]).some(u=>u.nome===selezionato.referente_telos) && (
-                    <option value={selezionato.referente_telos}>{selezionato.referente_telos}</option>
+                <>
+                  <select value={selezionato.referente_telos||""} onChange={e=>aggiorna(selezionato.id,{referente_telos:e.target.value})} style={S.inp}>
+                    {selezionato.referente_telos && !(utentiTelos||[]).some(u=>u.nome===selezionato.referente_telos) && (
+                      <option value={selezionato.referente_telos}>{selezionato.referente_telos}</option>
+                    )}
+                    {(utentiTelos||[]).map(u=>(<option key={u.id} value={u.nome}>{u.nome}</option>))}
+                  </select>
+                  {erroreUtentiTelos && (
+                    <div style={{fontSize:11,color:C.danger,marginTop:4}}>⚠ Elenco utenti non caricato: {erroreUtentiTelos}</div>
                   )}
-                  {(utentiTelos||[]).map(u=>(<option key={u.id} value={u.nome}>{u.nome}</option>))}
-                </select>
+                  {!erroreUtentiTelos && utentiTelos && utentiTelos.length===0 && (
+                    <div style={{fontSize:11,color:"#9AA3AB",marginTop:4}}>Nessun altro utente trovato.</div>
+                  )}
+                </>
               ) : (
                 <div style={{fontSize:13,fontWeight:600}}>{selezionato.referente_telos || "—"}</div>
               )}
