@@ -153,6 +153,7 @@ const MOTIVI_SALTO = {
 // ogni ricarica di pagina creerebbe ID duplicati tra utenti diversi) — arriva
 // dal campo "progressivo" assegnato dal database (bigserial, sempre univoco).
 function codicePreventivo(p){
+  if(p?.id==="__nuovo__") return "Nuovo (non salvato)";
   return p?.progressivo ? `PRV-${String(p.progressivo).padStart(4,"0")}` : (p?.id || "—");
 }
 function codiceOrdine(p){
@@ -1986,13 +1987,15 @@ function Preventivi({cart,setCart,preventivi,setPreventivi,setOrdini,setArea,ruo
     return p.stato;
   }
 
-  // Crea il preventivo su Supabase (il database assegna id e progressivo),
-  // poi lo aggiunge in cima alla lista locale con quanto restituito dal server.
-  async function creaPreventivo(righe){
-    setErroreSync("");
+  const [bozzaNonSalvata,setBozzaNonSalvata]=useState(null); // preventivo nuovo non ancora persistito (id="__nuovo__")
+  function trovaPreventivo(id){
+    return id==="__nuovo__" ? bozzaNonSalvata : preventivi.find(p=>p.id===id);
+  }
+  function nuovoOggettoLocale(righeIniziali){
     const oggi = new Date().toISOString().slice(0,10);
-    const nuovo = {
-      cliente:"", stato:"Bozza", approvato:false, righe, val: totaleRighe(righe),
+    return {
+      id:"__nuovo__",
+      cliente:"", stato:"Bozza", approvato:false, righe:righeIniziali, val: totaleRighe(righeIniziali),
       scadenza: aggiungiGiorniLavorativi(oggi, 20),
       pagamento_modalita: "USUALE CODIFICATA",
       pagamento_dettagli: "",
@@ -2000,26 +2003,39 @@ function Preventivi({cart,setCart,preventivi,setPreventivi,setOrdini,setArea,ruo
       creato_da_nome: sessione?.nome || "",
       note: "",
     };
+  }
+  // Salva davvero su Supabase una bozza locale che ha appena raggiunto i
+  // requisiti minimi (cliente + almeno un articolo) — prima di allora il
+  // preventivo esiste solo in memoria, per non riempire il database di righe
+  // vuote ogni volta che qualcuno clicca "Nuovo preventivo" e poi ci ripensa.
+  async function persistiBozza(datiLocali){
+    setErroreSync("");
+    const { id, ...payload } = datiLocali;
     try{
-      const [salvato] = await sbAuth("POST","preventivi","",nuovo,accessToken);
+      const [salvato] = await sbAuth("POST","preventivi","",payload,accessToken);
       setPreventivi(prev=>[salvato,...prev]);
+      setBozzaNonSalvata(null);
       setSelId(salvato.id);
-      setView("dettagli-edit");
     }catch(err){
       setErroreSync("Creazione non riuscita: "+err.message);
+      setBozzaNonSalvata(datiLocali); // resta locale, l'utente può ritentare modificando qualcosa
     }
   }
   function creaDaCart(){
     if(cart.length===0) return;
     const righe = cart.map(p=>({cod:p.cod, mar:p.mar, nome:p.nome||p.desc, netto:p.netto, listino:p.listino, qty:1, sottoMargine:false}));
-    creaPreventivo(righe);
+    setBozzaNonSalvata(nuovoOggettoLocale(righe));
     setCart([]);
+    setSelId("__nuovo__");
+    setView("dettagli-edit");
   }
   function creaVuoto(){
-    creaPreventivo([]);
+    setBozzaNonSalvata(nuovoOggettoLocale([]));
+    setSelId("__nuovo__");
+    setView("dettagli-edit");
   }
 
-  const selezionato = preventivi.find(p=>p.id===selId);
+  const selezionato = trovaPreventivo(selId);
 
   // La bozza locale si inizializza solo quando si apre un preventivo diverso
   // (dipende da selId, non da selezionato) — altrimenti un aggiornamento dal
@@ -2047,6 +2063,19 @@ function Preventivi({cart,setCart,preventivi,setPreventivi,setOrdini,setArea,ruo
   // resta con la modifica locale ma compare un avviso — non annulliamo per
   // non far perdere all'utente quanto appena scritto.
   async function aggiorna(id, patch){
+    // Bozza non ancora salvata: resta tutto in memoria finché non ha almeno
+    // un cliente e un articolo — a quel punto si salva da sola su Supabase.
+    if(id==="__nuovo__"){
+      if(!bozzaNonSalvata) return;
+      const righe = patch.righe || bozzaNonSalvata.righe;
+      const aggiornato = { ...bozzaNonSalvata, ...patch, val: totaleRighe(righe) };
+      if(aggiornato.cliente && aggiornato.righe.length>0){
+        persistiBozza(aggiornato);
+      } else {
+        setBozzaNonSalvata(aggiornato);
+      }
+      return;
+    }
     const corrente = preventivi.find(p=>p.id===id);
     if(!corrente) return;
     const righe = patch.righe || corrente.righe;
@@ -2073,7 +2102,7 @@ function Preventivi({cart,setCart,preventivi,setPreventivi,setOrdini,setArea,ruo
     }
   }
   function eliminaRiga(id, cod){
-    const p = preventivi.find(x=>x.id===id);
+    const p = trovaPreventivo(id);
     if(!p) return;
     aggiorna(id, { righe: p.righe.filter(r=>r.cod!==cod) });
   }
@@ -2085,7 +2114,7 @@ function Preventivi({cart,setCart,preventivi,setPreventivi,setOrdini,setArea,ruo
   // volta sola per nota, e resta comunque modificabile/rimovibile a mano
   // come qualsiasi altro testo in quel campo.
   function aggiungiRiga(id, riga){
-    const p = preventivi.find(x=>x.id===id);
+    const p = trovaPreventivo(id);
     if(!p) return;
     const esiste = p.righe.some(r=>r.cod===riga.cod);
     const righe = esiste ? p.righe.map(r=>r.cod===riga.cod ? riga : r) : [...p.righe, riga];
@@ -2150,10 +2179,17 @@ function Preventivi({cart,setCart,preventivi,setPreventivi,setOrdini,setArea,ruo
   // sul server fallisce, per non far credere all'utente che sia sparito
   // quando in realtà è ancora lì.
   async function eliminaPreventivo(id){
+    setConfermaEliminazione(false);
+    if(id==="__nuovo__"){
+      // mai salvata su Supabase: basta scartare la bozza locale
+      setBozzaNonSalvata(null);
+      setSelId(null);
+      setView("lista");
+      return;
+    }
     const p = preventivi.find(x=>x.id===id);
     if(!p || p.stato==="Convertito in ordine") return;
     setErroreSync("");
-    setConfermaEliminazione(false);
     setPreventivi(prev=>prev.filter(x=>x.id!==id));
     setSelId(null);
     setView("lista");
@@ -2212,7 +2248,13 @@ function Preventivi({cart,setCart,preventivi,setPreventivi,setOrdini,setArea,ruo
 
     return (
       <div>
-        <button onClick={()=>setView("lista")} style={{...S.btnS,marginBottom:14}}>← Tutti i preventivi</button>
+        <button onClick={()=>{ if(selezionato?.id==="__nuovo__") setBozzaNonSalvata(null); setView("lista"); }} style={{...S.btnS,marginBottom:14}}>← Tutti i preventivi</button>
+
+        {selezionato.id==="__nuovo__" && (
+          <div style={{fontSize:12,color:"#8a6418",background:"rgba(217,164,65,0.14)",borderRadius:6,padding:"9px 11px",marginBottom:14}}>
+            ⓘ Non ancora salvato — seleziona un cliente e aggiungi almeno un articolo per salvarlo automaticamente.
+          </div>
+        )}
 
         {erroreSync && <div style={{fontSize:12,color:C.danger,background:"rgba(200,75,58,0.08)",borderRadius:6,padding:"9px 11px",marginBottom:14}}>⚠ {erroreSync}</div>}
 
