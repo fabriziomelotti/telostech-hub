@@ -141,6 +141,12 @@ const DEMO_INTERVENTI = [
 // Stati possibili di un preventivo, in ordine di avanzamento del ciclo di vita
 const STATI_PREVENTIVO = ["Bozza","Inviato"];
 const STATO_COLORE = { "Bozza":"steel", "Inviato":"warn", "Convertito in ordine":"primary", "Saltato":"danger" };
+const MOTIVI_SALTO = {
+  prezzo_alto: "Prezzo alto",
+  concorrente: "Scelta concorrente",
+  rimandata: "Vendita rimandata",
+  altro: "Altro",
+};
 
 // Il codice "PRV-0001" mostrato in giro non è più generato lato client (con
 // preventivi condivisi su Supabase, un contatore locale che riparte da 100 ad
@@ -1653,7 +1659,27 @@ function generaPreventivoPDF(righe, total, meta={}){
   </div>
 </div>
 
-<script>setTimeout(()=>window.print(),500)</script>
+<script>
+(function(){
+  // Aspetta che tutte le immagini (loghi, foto prodotto) siano davvero
+  // caricate prima di stampare — con un timeout fisso, alla primissima
+  // apertura (prima che il browser avesse le immagini in cache) la stampa
+  // partiva prima che i loghi finissero di caricare, e restavano bianchi.
+  var stampato = false;
+  function stampaUnaVolta(){ if(stampato) return; stampato = true; window.print(); }
+  var imgs = Array.prototype.slice.call(document.images);
+  var rimanenti = imgs.filter(function(im){ return !im.complete; }).length;
+  if(rimanenti===0){ setTimeout(stampaUnaVolta, 150); }
+  else {
+    imgs.forEach(function(im){
+      if(im.complete) return;
+      im.addEventListener('load', function(){ rimanenti--; if(rimanenti<=0) stampaUnaVolta(); });
+      im.addEventListener('error', function(){ rimanenti--; if(rimanenti<=0) stampaUnaVolta(); });
+    });
+  }
+  setTimeout(stampaUnaVolta, 4000); // rete di sicurezza se qualcosa si blocca
+})();
+</script>
 </body></html>`;
   w.document.write(html);
   w.document.close();
@@ -1927,10 +1953,12 @@ function Preventivi({cart,setCart,preventivi,setPreventivi,setOrdini,setArea,ruo
   const [selId,setSelId]=useState(null);
   const [confermaEliminazione,setConfermaEliminazione]=useState(false);
   const [confermaSalto,setConfermaSalto]=useState(false);
-  const [motivoSalto,setMotivoSalto]=useState("");
+  const [tipoMotivoSalto,setTipoMotivoSalto]=useState(""); // prezzo_alto | concorrente | rimandata | altro
+  const [dettaglioMotivoSalto,setDettaglioMotivoSalto]=useState(""); // nome concorrente, o testo libero per "altro"
+  const [promemoriaRecupero,setPromemoriaRecupero]=useState("");
   const [bozza,setBozza]=useState(null); // scadenza/referente/pagamento in modifica locale, salvati solo al click su "Salva"
   const [bozzaSalvata,setBozzaSalvata]=useState(false); // conferma temporanea dopo il salvataggio
-  useEffect(()=>{ setConfermaEliminazione(false); setConfermaSalto(false); setMotivoSalto(""); setBozzaSalvata(false); },[selId]);
+  useEffect(()=>{ setConfermaEliminazione(false); setConfermaSalto(false); setTipoMotivoSalto(""); setDettaglioMotivoSalto(""); setPromemoriaRecupero(""); setBozzaSalvata(false); },[selId]);
   const [erroreSync,setErroreSync]=useState("");
   const [utentiTelos,setUtentiTelos]=useState(null); // null=non caricato, [] o [...]
   const [erroreUtentiTelos,setErroreUtentiTelos]=useState("");
@@ -2093,13 +2121,32 @@ function Preventivi({cart,setCart,preventivi,setPreventivi,setOrdini,setArea,ruo
       setErroreSync("Conversione in ordine non riuscita: "+err.message);
     }
   }
-  // Chiude un preventivo per trattativa saltata, con motivazione obbligatoria.
-  // Usa lo stesso "aggiorna" centralizzato (ottimistico + sync su Supabase).
-  function segnaSaltato(id, motivo){
-    if(!motivo.trim()) return;
-    aggiorna(id, { stato:"Saltato", motivo_saltato: motivo.trim() });
+  // Chiude un preventivo per trattativa saltata, con motivazione strutturata.
+  // "motivo_saltato" resta come testo riassuntivo leggibile ovunque (PDF,
+  // vista admin), mentre i campi strutturati permettono di raggruppare/
+  // confrontare i casi (es. tutte le "scelta concorrente" con un nome preciso).
+  function motivoValido(){
+    if(!tipoMotivoSalto) return false;
+    if(tipoMotivoSalto==="concorrente") return dettaglioMotivoSalto.trim().length>0;
+    if(tipoMotivoSalto==="rimandata") return !!promemoriaRecupero;
+    if(tipoMotivoSalto==="altro") return dettaglioMotivoSalto.trim().length>0;
+    return true; // prezzo_alto non richiede dettagli aggiuntivi
+  }
+  function segnaSaltato(id){
+    if(!motivoValido()) return;
+    let motivoTesto = MOTIVI_SALTO[tipoMotivoSalto];
+    if(tipoMotivoSalto==="concorrente") motivoTesto += `: ${dettaglioMotivoSalto.trim()}`;
+    if(tipoMotivoSalto==="altro") motivoTesto = dettaglioMotivoSalto.trim();
+    if(tipoMotivoSalto==="rimandata") motivoTesto += ` — promemoria per il ${new Date(promemoriaRecupero).toLocaleDateString("it-IT")}`;
+    aggiorna(id, {
+      stato:"Saltato",
+      motivo_saltato: motivoTesto,
+      motivo_saltato_tipo: tipoMotivoSalto,
+      motivo_saltato_dettaglio: dettaglioMotivoSalto.trim() || null,
+      promemoria_recupero: tipoMotivoSalto==="rimandata" ? promemoriaRecupero : null,
+    });
     setConfermaSalto(false);
-    setMotivoSalto("");
+    setTipoMotivoSalto(""); setDettaglioMotivoSalto(""); setPromemoriaRecupero("");
   }
   // Elimina un preventivo intero (non una singola riga). Bloccato per quelli
   // già trasformati in ordine: cancellarli lascerebbe l'ordine collegato
@@ -2274,16 +2321,6 @@ function Preventivi({cart,setCart,preventivi,setPreventivi,setOrdini,setArea,ruo
               <div style={{fontSize:13,whiteSpace:"pre-line"}}>{selezionato.note || "—"}</div>
             )}
           </div>
-
-          {editable && (
-            <div style={{marginTop:14,paddingTop:12,borderTop:`1px solid ${C.paperLine}`,display:"flex",alignItems:"center",gap:12}}>
-              <button onClick={salvaBozza} disabled={!modificheNonSalvate} style={{...S.btnAccent,padding:"11px 20px",fontSize:13,fontWeight:700,opacity:modificheNonSalvate?1:0.4,cursor:modificheNonSalvate?"pointer":"default"}}>
-                💾 Salva
-              </button>
-              {bozzaSalvata && <span style={{fontSize:12.5,color:C.ok,fontWeight:600}}>✓ Salvato</span>}
-              {!bozzaSalvata && modificheNonSalvate && <span style={{fontSize:12,color:"#9AA3AB"}}>Modifiche non salvate</span>}
-            </div>
-          )}
         </div>
 
         {/* Aggiungi articoli — resa ben visibile: è l'azione più frequente
@@ -2385,6 +2422,15 @@ function Preventivi({cart,setCart,preventivi,setPreventivi,setOrdini,setArea,ruo
 
         {/* Azioni di stato */}
         <div style={{display:"flex",flexDirection:"column",gap:8,marginTop:6}}>
+          {editable && (
+            <div style={{display:"flex",alignItems:"center",gap:12}}>
+              <button onClick={salvaBozza} disabled={!modificheNonSalvate} style={{...S.btnAccent,flex:1,padding:"12px",fontWeight:700,opacity:modificheNonSalvate?1:0.4,cursor:modificheNonSalvate?"pointer":"default"}}>
+                💾 Salva
+              </button>
+              {bozzaSalvata && <span style={{fontSize:12.5,color:C.ok,fontWeight:600,flexShrink:0}}>✓ Salvato</span>}
+              {!bozzaSalvata && modificheNonSalvate && <span style={{fontSize:12,color:"#9AA3AB",flexShrink:0}}>Non salvato</span>}
+            </div>
+          )}
           {puoApprovare && (
             <button onClick={()=>aggiorna(selezionato.id,{approvato:true})} style={{...S.btnAccent,padding:"12px",background:C.ok,color:"#fff"}}>
               ✓ Approva sconto e procedi
@@ -2397,20 +2443,6 @@ function Preventivi({cart,setCart,preventivi,setPreventivi,setOrdini,setArea,ruo
           )}
           {selezionato.stato==="Bozza" && inAttesaApprovazione && !puoApprovare && (
             <button disabled style={{...S.btnAccent,padding:"12px",opacity:0.4}}>In attesa di approvazione</button>
-          )}
-          {selezionato.stato==="Inviato" && (
-            <button onClick={()=>convertiInOrdine(selezionato)} style={{...S.btnAccent,padding:"13px",background:C.ink,color:"#fff",fontSize:14}}>
-              ⬡ Converti in ordine
-            </button>
-          )}
-          {selezionato.stato==="Convertito in ordine" && (
-            <button onClick={()=>setArea("ordini")} style={{...S.btnP,padding:"12px"}}>Vedi l'ordine →</button>
-          )}
-          {selezionato.stato==="Saltato" && selezionato.motivo_saltato && (
-            <div style={{fontSize:12.5,color:C.steel,background:"rgba(200,75,58,0.06)",border:`1px solid ${C.paperLine}`,borderRadius:8,padding:"11px 13px"}}>
-              <div style={{fontWeight:600,color:C.danger,marginBottom:3}}>Trattativa saltata</div>
-              {selezionato.motivo_saltato}
-            </div>
           )}
           <button onClick={()=>{
             const righeArricchite = selezionato.righe.map(r=>{
@@ -2431,9 +2463,23 @@ function Preventivi({cart,setCart,preventivi,setPreventivi,setOrdini,setArea,ruo
               finanziamento_spese_contratto: selezionato.finanziamento_spese_contratto,
               finanziamento_riscatto: selezionato.finanziamento_riscatto,
             });
-          }} style={{...S.btnS,padding:"11px"}}>
+          }} style={{...S.btnAccent,padding:"14px",fontSize:14,fontWeight:700,background:C.cyan,color:C.inkDeep}}>
             📄 Genera preventivo PDF
           </button>
+          {selezionato.stato==="Inviato" && (
+            <button onClick={()=>convertiInOrdine(selezionato)} style={{...S.btnAccent,padding:"13px",background:C.ink,color:"#fff",fontSize:14}}>
+              ⬡ Converti in ordine
+            </button>
+          )}
+          {selezionato.stato==="Convertito in ordine" && (
+            <button onClick={()=>setArea("ordini")} style={{...S.btnP,padding:"12px"}}>Vedi l'ordine →</button>
+          )}
+          {selezionato.stato==="Saltato" && selezionato.motivo_saltato && (
+            <div style={{fontSize:12.5,color:C.steel,background:"rgba(200,75,58,0.06)",border:`1px solid ${C.paperLine}`,borderRadius:8,padding:"11px 13px"}}>
+              <div style={{fontWeight:600,color:C.danger,marginBottom:3}}>Trattativa saltata</div>
+              {selezionato.motivo_saltato}
+            </div>
+          )}
         </div>
 
         {editable && (
@@ -2444,20 +2490,60 @@ function Preventivi({cart,setCart,preventivi,setPreventivi,setOrdini,setArea,ruo
               </button>
             ) : (
               <div style={{background:C.paper,border:`1px solid ${C.paperLine}`,borderRadius:9,padding:16}}>
-                <div style={{fontSize:13.5,fontWeight:700,marginBottom:8}}>Perché la trattativa è saltata?</div>
-                <textarea
-                  value={motivoSalto}
-                  onChange={e=>setMotivoSalto(e.target.value)}
-                  rows={3}
-                  placeholder="Es. prezzo troppo alto, ha scelto un concorrente, progetto rimandato…"
-                  style={{...S.inp,resize:"vertical",fontFamily:F_BODY,marginBottom:12}}
-                  autoFocus
-                />
+                <div style={{fontSize:13.5,fontWeight:700,marginBottom:10}}>Perché la trattativa è saltata?</div>
+
+                <div style={{display:"flex",flexDirection:"column",gap:7,marginBottom:12}}>
+                  {Object.entries(MOTIVI_SALTO).map(([v,lbl])=>{
+                    const on = tipoMotivoSalto===v;
+                    return (
+                      <button key={v} onClick={()=>setTipoMotivoSalto(v)} style={{
+                        display:"flex",alignItems:"center",gap:9,textAlign:"left",width:"100%",
+                        border:`1px solid ${on?C.ink:C.paperLine}`, borderRadius:8, padding:"10px 12px",
+                        fontSize:13, cursor:"pointer", fontWeight:on?600:400,
+                        background:on?C.ink:"#fff", color:on?"#fff":"#3A4248",
+                      }}>
+                        <span style={{width:14,height:14,borderRadius:7,border:`1.5px solid ${on?"#fff":"#9AA3AB"}`,flexShrink:0,display:"flex",alignItems:"center",justifyContent:"center"}}>
+                          {on && <span style={{width:6,height:6,borderRadius:3,background:"#fff"}}/>}
+                        </span>
+                        {lbl}
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {tipoMotivoSalto==="concorrente" && (
+                  <input
+                    value={dettaglioMotivoSalto}
+                    onChange={e=>setDettaglioMotivoSalto(e.target.value)}
+                    placeholder="Nome del concorrente…"
+                    style={{...S.inp,marginBottom:12}}
+                    autoFocus
+                  />
+                )}
+                {tipoMotivoSalto==="rimandata" && (
+                  <div style={{marginBottom:12}}>
+                    <label style={{fontSize:11,fontFamily:F_MONO,color:"#9AA3AB",textTransform:"uppercase",letterSpacing:"0.05em",display:"block",marginBottom:4}}>
+                      Promemoria per richiamare il cliente
+                    </label>
+                    <input type="date" value={promemoriaRecupero} onChange={e=>setPromemoriaRecupero(e.target.value)} style={S.inp}/>
+                  </div>
+                )}
+                {tipoMotivoSalto==="altro" && (
+                  <textarea
+                    value={dettaglioMotivoSalto}
+                    onChange={e=>setDettaglioMotivoSalto(e.target.value)}
+                    rows={3}
+                    placeholder="Descrivi il motivo…"
+                    style={{...S.inp,resize:"vertical",fontFamily:F_BODY,marginBottom:12}}
+                    autoFocus
+                  />
+                )}
+
                 <div style={{display:"flex",gap:10}}>
-                  <button onClick={()=>segnaSaltato(selezionato.id,motivoSalto)} disabled={!motivoSalto.trim()} style={{flex:1,padding:"12px",background:motivoSalto.trim()?C.ink:"#c8c8c8",color:"#fff",border:"none",borderRadius:8,fontSize:13.5,fontWeight:700,cursor:motivoSalto.trim()?"pointer":"default"}}>
+                  <button onClick={()=>segnaSaltato(selezionato.id)} disabled={!motivoValido()} style={{flex:1,padding:"12px",background:motivoValido()?C.ink:"#c8c8c8",color:"#fff",border:"none",borderRadius:8,fontSize:13.5,fontWeight:700,cursor:motivoValido()?"pointer":"default"}}>
                     Conferma chiusura
                   </button>
-                  <button onClick={()=>{setConfermaSalto(false); setMotivoSalto("");}} style={{flex:1,padding:"12px",background:"#fff",color:C.steel,border:`1px solid ${C.paperLine}`,borderRadius:8,fontSize:13.5,fontWeight:600,cursor:"pointer"}}>
+                  <button onClick={()=>{setConfermaSalto(false); setTipoMotivoSalto(""); setDettaglioMotivoSalto(""); setPromemoriaRecupero("");}} style={{flex:1,padding:"12px",background:"#fff",color:C.steel,border:`1px solid ${C.paperLine}`,borderRadius:8,fontSize:13.5,fontWeight:600,cursor:"pointer"}}>
                     Annulla
                   </button>
                 </div>
@@ -2505,11 +2591,16 @@ function ListaPreventivi({preventivi,onApri,onNuovo,sessione}){
   const daCompletare = filtra(preventivi.filter(p=>p.stato==="Bozza"));
   const daGestire = filtra(preventivi.filter(p=>p.stato==="Inviato"));
   const inOrdine = filtra(preventivi.filter(p=>p.stato==="Convertito in ordine"));
-  // Solo i propri preventivi saltati, in fondo a tutto il resto — quelli di
-  // tutto il team si vedono nell'area dedicata "Saltati" (responsabile/admin)
-  const mieiSaltati = filtra(preventivi.filter(p=>p.stato==="Saltato" && p.creato_da_nome===sessione?.nome));
+  // Trattative "vendita rimandata" con un promemoria impostato: categoria a
+  // parte, più visibile, invece che perse in mezzo ai saltati definitivi.
+  const daRecuperare = filtra(preventivi.filter(p=>p.stato==="Saltato" && p.motivo_saltato_tipo==="rimandata" && p.promemoria_recupero))
+    .sort((a,b)=>new Date(a.promemoria_recupero)-new Date(b.promemoria_recupero));
+  // Solo i propri preventivi saltati (esclusi quelli da recuperare, già sopra),
+  // in fondo a tutto il resto — quelli di tutto il team si vedono nell'area
+  // dedicata "Saltati" (responsabile/admin)
+  const mieiSaltati = filtra(preventivi.filter(p=>p.stato==="Saltato" && p.creato_da_nome===sessione?.nome && p.motivo_saltato_tipo!=="rimandata"));
 
-  const totaleVisibile = daCompletare.length+daGestire.length+inOrdine.length+mieiSaltati.length;
+  const totaleVisibile = daCompletare.length+daGestire.length+inOrdine.length+daRecuperare.length+mieiSaltati.length;
 
   function rigaPreventivo(p){
     return (
@@ -2522,6 +2613,26 @@ function ListaPreventivi({preventivi,onApri,onNuovo,sessione}){
         <div style={{textAlign:"right",flexShrink:0}}>
           <div className="tnum" style={{fontWeight:700,fontSize:14,fontFamily:F_MONO}}>€{p.val.toLocaleString("it-IT")}</div>
           <Tag tone={STATO_COLORE[p.stato]||"steel"} style={{marginTop:5}}>{p.stato}</Tag>
+        </div>
+      </div>
+    );
+  }
+  function rigaRecupero(p){
+    const data = new Date(p.promemoria_recupero);
+    const oggi = new Date(); oggi.setHours(0,0,0,0);
+    const scaduto = data < oggi;
+    return (
+      <div key={p.id} onClick={()=>onApri(p.id)} style={{...S.card,display:"flex",justifyContent:"space-between",alignItems:"center",gap:10,borderLeft:`3px solid ${scaduto?C.danger:C.warn}`}}>
+        <div style={{minWidth:0}}>
+          <div className="tnum" style={{fontSize:10.5,color:"#9AA3AB",fontFamily:F_MONO}}>{codicePreventivo(p)}</div>
+          <div style={{fontWeight:600,fontSize:13.5,marginTop:2}}>{p.cliente || "Cliente non specificato"}</div>
+          <div style={{fontSize:11.5,color:scaduto?C.danger:"#8A929A",marginTop:1,fontWeight:scaduto?600:400}}>
+            {scaduto?"⚠ Richiamo scaduto il ":"Richiamare il "}{data.toLocaleDateString("it-IT")}
+          </div>
+        </div>
+        <div style={{textAlign:"right",flexShrink:0}}>
+          <div className="tnum" style={{fontWeight:700,fontSize:14,fontFamily:F_MONO}}>€{p.val.toLocaleString("it-IT")}</div>
+          <Tag tone={scaduto?"danger":"warn"} style={{marginTop:5}}>Da recuperare</Tag>
         </div>
       </div>
     );
@@ -2577,6 +2688,12 @@ function ListaPreventivi({preventivi,onApri,onNuovo,sessione}){
       {sezione("Da completare", daCompletare)}
       {sezione("Da gestire", daGestire)}
       {sezione("In ordine", inOrdine)}
+      {daRecuperare.length>0 && (
+        <div style={{marginBottom:24}}>
+          <div style={{...S.eyebrow,marginBottom:8}}>Trattativa da recuperare ({daRecuperare.length})</div>
+          {daRecuperare.map(rigaRecupero)}
+        </div>
+      )}
       {sezione("I tuoi preventivi saltati", mieiSaltati)}
     </div>
   );
@@ -2590,6 +2707,14 @@ function PreventiviSaltati({preventivi}){
   const saltati = preventivi.filter(p=>p.stato==="Saltato")
     .sort((a,b)=>new Date(b.aggiornato_il||0)-new Date(a.aggiornato_il||0));
   const totalePerso = saltati.reduce((s,p)=>s+(p.val||0),0);
+
+  // Riepilogo per categoria — il punto di partenza per individuare pattern
+  // ricorrenti (troppi "prezzo alto"? sempre lo stesso concorrente?)
+  const perCategoria = {};
+  saltati.forEach(p=>{
+    const k = p.motivo_saltato_tipo || "non_specificato";
+    perCategoria[k] = (perCategoria[k]||0)+1;
+  });
 
   return (
     <div>
@@ -2605,16 +2730,32 @@ function PreventiviSaltati({preventivi}){
         </div>
       ) : (
         <>
-          <div style={{...S.card,cursor:"default",marginBottom:18,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+          <div style={{...S.card,cursor:"default",marginBottom:12,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
             <div style={{fontSize:12.5,color:C.steel}}>Totale trattative saltate</div>
             <div className="tnum" style={{fontFamily:F_MONO,fontWeight:700,fontSize:16,color:C.danger}}>{saltati.length} · €{totalePerso.toLocaleString("it-IT")}</div>
           </div>
+
+          <div style={{...S.card,cursor:"default",marginBottom:18}}>
+            <div style={{fontSize:11,fontFamily:F_MONO,color:"#9AA3AB",textTransform:"uppercase",letterSpacing:"0.05em",marginBottom:10}}>Per categoria</div>
+            <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+              {Object.entries(perCategoria).sort((a,b)=>b[1]-a[1]).map(([k,n])=>(
+                <div key={k} style={{display:"flex",alignItems:"center",gap:7,background:C.paper,border:`1px solid ${C.paperLine}`,borderRadius:7,padding:"7px 12px"}}>
+                  <span style={{fontSize:12.5,fontWeight:600}}>{MOTIVI_SALTO[k] || "Non specificato"}</span>
+                  <span className="tnum" style={{fontFamily:F_MONO,fontSize:12,color:C.steel}}>{n}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+
           {saltati.map(p=>(
             <div key={p.id} style={{...S.card,cursor:"default"}}>
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:10,marginBottom:8}}>
                 <div style={{minWidth:0}}>
-                  <div className="tnum" style={{fontSize:10.5,color:"#9AA3AB",fontFamily:F_MONO}}>{codicePreventivo(p)}</div>
-                  <div style={{fontWeight:600,fontSize:14,marginTop:2}}>{p.cliente || "Cliente non specificato"}</div>
+                  <div style={{display:"flex",alignItems:"center",gap:7,flexWrap:"wrap"}}>
+                    <div className="tnum" style={{fontSize:10.5,color:"#9AA3AB",fontFamily:F_MONO}}>{codicePreventivo(p)}</div>
+                    {p.motivo_saltato_tipo && <Tag tone="danger">{MOTIVI_SALTO[p.motivo_saltato_tipo]}</Tag>}
+                  </div>
+                  <div style={{fontWeight:600,fontSize:14,marginTop:3}}>{p.cliente || "Cliente non specificato"}</div>
                   <div style={{fontSize:11.5,color:"#8A929A",marginTop:1}}>
                     {p.creato_da_nome ? `Gestito da ${p.creato_da_nome}` : "Operatore non indicato"}
                     {p.righe?.length ? ` · ${p.righe.length} articol${p.righe.length===1?"o":"i"}` : ""}
@@ -2676,7 +2817,23 @@ function Ordini({ordini,setOrdini,sessione}){
 <table><thead><tr><th>Articolo</th><th>Codice</th><th style="text-align:center">Qtà</th><th style="text-align:right">Totale</th></tr></thead><tbody>${righe}</tbody></table>
 <div class="tot">Totale: €${o.val.toFixed(2)}</div>
 <div class="footer">Telos Tech S.r.l. · Documento generato il ${new Date().toLocaleDateString("it-IT")}</div>
-<script>setTimeout(()=>window.print(),400)</script>
+<script>
+(function(){
+  var stampato = false;
+  function stampaUnaVolta(){ if(stampato) return; stampato = true; window.print(); }
+  var imgs = Array.prototype.slice.call(document.images);
+  var rimanenti = imgs.filter(function(im){ return !im.complete; }).length;
+  if(rimanenti===0){ setTimeout(stampaUnaVolta, 150); }
+  else {
+    imgs.forEach(function(im){
+      if(im.complete) return;
+      im.addEventListener('load', function(){ rimanenti--; if(rimanenti<=0) stampaUnaVolta(); });
+      im.addEventListener('error', function(){ rimanenti--; if(rimanenti<=0) stampaUnaVolta(); });
+    });
+  }
+  setTimeout(stampaUnaVolta, 4000);
+})();
+</script>
 </body></html>`;
     w.document.write(html); w.document.close();
   }
