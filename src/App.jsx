@@ -2423,6 +2423,21 @@ function Preventivi({cart,setCart,preventivi,setPreventivi,setOrdini,setArea,ruo
     if(!p) return;
     aggiorna(id, { righe: p.righe.filter(r=>r.cod!==cod) });
   }
+  // Modifica quantità o prezzo netto di una riga già presente, senza doverla
+  // rimuovere e ricercare il prodotto da capo. Ricalcola anche il margine
+  // (una modifica al netto potrebbe far scendere o rientrare dalla soglia
+  // minima), e resta comunque soggetta ad approvazione se serve.
+  function modificaRiga(id, cod, campo, valore){
+    const p = trovaPreventivo(id);
+    if(!p) return;
+    const righe = p.righe.map(r=>{
+      if(r.cod!==cod) return r;
+      const aggiornata = { ...r, [campo]: valore };
+      aggiornata.sottoMargine = rigaSottoMargine(aggiornata);
+      return aggiornata;
+    });
+    aggiorna(id, { righe, approvato:false });
+  }
   // Aggiunge un articolo, oppure ne aggiorna qty/netto se è già presente
   // (così riaprire la scheda di un prodotto già in preventivo permette di
   // correggere la quantità senza creare una riga duplicata). Se il prodotto
@@ -2709,7 +2724,26 @@ function Preventivi({cart,setCart,preventivi,setPreventivi,setOrdini,setArea,ruo
                 {r.sottoMargine && <Tag tone="warn">margine basso</Tag>}
               </div>
               <div style={{fontWeight:600,fontSize:13,marginTop:4}}>{r.nome}</div>
-              <div className="tnum" style={{fontSize:11,color:"#9AA3AB",marginTop:2}}>€{r.netto.toFixed(2)} × {r.qty||1}</div>
+              {editable ? (
+                <div style={{display:"flex",alignItems:"center",gap:5,marginTop:6}}>
+                  <input
+                    type="number" min="1" step="1" value={r.qty||1}
+                    onChange={e=>modificaRiga(selezionato.id, r.cod, "qty", Math.max(1, parseInt(e.target.value,10)||1))}
+                    onClick={e=>e.stopPropagation()}
+                    style={{width:46,padding:"5px 6px",fontSize:12,fontFamily:F_MONO,border:`1px solid ${C.paperLine}`,borderRadius:5,textAlign:"center"}}
+                  />
+                  <span style={{fontSize:11,color:"#9AA3AB"}}>×  €</span>
+                  <input
+                    type="number" min="0" step="0.01" value={r.netto}
+                    onChange={e=>modificaRiga(selezionato.id, r.cod, "netto", Math.max(0, parseFloat(e.target.value)||0))}
+                    onClick={e=>e.stopPropagation()}
+                    style={{width:84,padding:"5px 6px",fontSize:12,fontFamily:F_MONO,border:`1px solid ${C.paperLine}`,borderRadius:5,textAlign:"right"}}
+                  />
+                  <span style={{fontSize:10.5,color:"#9AA3AB"}}>cad.</span>
+                </div>
+              ) : (
+                <div className="tnum" style={{fontSize:11,color:"#9AA3AB",marginTop:2}}>€{r.netto.toFixed(2)} × {r.qty||1}</div>
+              )}
             </div>
             <div style={{display:"flex",alignItems:"center",gap:8,flexShrink:0}}>
               <span className="tnum" style={{fontWeight:700,fontFamily:F_MONO,fontSize:14}}>€{(r.netto*(r.qty||1)).toFixed(2)}</span>
