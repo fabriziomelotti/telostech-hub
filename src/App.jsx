@@ -2035,12 +2035,6 @@ function Preventivi({cart,setCart,preventivi,setPreventivi,setOrdini,setArea,ruo
     });
   },[selId]);
 
-  const modificheNonSalvate = bozza && selezionato && (
-    bozza.scadenza !== (selezionato.scadenza||"") ||
-    bozza.referente_telos !== (selezionato.referente_telos||"") ||
-    bozza.pagamento_modalita !== (selezionato.pagamento_modalita||"USUALE CODIFICATA") ||
-    bozza.pagamento_dettagli !== (selezionato.pagamento_dettagli||"")
-  );
   function salvaBozza(){
     if(!bozza || !selezionato) return;
     aggiorna(selezionato.id, { ...bozza });
@@ -2424,11 +2418,10 @@ function Preventivi({cart,setCart,preventivi,setPreventivi,setOrdini,setArea,ruo
         <div style={{display:"flex",flexDirection:"column",gap:8,marginTop:6}}>
           {editable && (
             <div style={{display:"flex",alignItems:"center",gap:12}}>
-              <button onClick={salvaBozza} disabled={!modificheNonSalvate} style={{...S.btnAccent,flex:1,padding:"12px",fontWeight:700,opacity:modificheNonSalvate?1:0.4,cursor:modificheNonSalvate?"pointer":"default"}}>
+              <button onClick={salvaBozza} disabled={!bozza} style={{...S.btnAccent,flex:1,padding:"12px",fontWeight:700,opacity:bozza?1:0.4,cursor:bozza?"pointer":"default"}}>
                 💾 Salva
               </button>
               {bozzaSalvata && <span style={{fontSize:12.5,color:C.ok,fontWeight:600,flexShrink:0}}>✓ Salvato</span>}
-              {!bozzaSalvata && modificheNonSalvate && <span style={{fontSize:12,color:"#9AA3AB",flexShrink:0}}>Non salvato</span>}
             </div>
           )}
           {puoApprovare && (
