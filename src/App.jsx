@@ -364,6 +364,9 @@ export default function App(){
   const [cart, setCart] = useState([]);
   const [preventivi, setPreventivi] = useState([]);
   const [ordini, setOrdini] = useState([]);
+  const [attrezzature, setAttrezzature] = useState([]);
+  const [interventi, setInterventi] = useState([]);
+  const [interventoDaCompletare, setInterventoDaCompletare] = useState(null);
   const [msgs, setMsgs] = useState([]);
   const [msgInput, setMsgInput] = useState("");
   const [aiTyping, setAiTyping] = useState(false);
@@ -436,6 +439,12 @@ export default function App(){
     sbGetAuth("ordini", "select=*&order=creato_il.desc&limit=500", accessToken)
       .then(dati => setOrdini(dati || []))
       .catch(err => console.warn("Ordini non raggiungibili:", err.message));
+    sbGetAuth("attrezzature", "select=*&order=creato_il.desc&limit=1000", accessToken)
+      .then(dati => setAttrezzature(dati || []))
+      .catch(err => console.warn("Attrezzature non raggiungibili:", err.message));
+    sbGetAuth("interventi", "select=*&order=data_pianificata.desc.nullslast,creato_il.desc&limit=1000", accessToken)
+      .then(dati => setInterventi(dati || []))
+      .catch(err => console.warn("Interventi non raggiungibili:", err.message));
   },[role]);
 
   // permessi/nav dal ruolo, ma nome reale dalla sessione
@@ -559,14 +568,14 @@ export default function App(){
         </div>
 
         <div style={S.content}>
-          {area==="home" && <Home r={r} role={role} setArea={setArea} isMobile={isMobile} preventivi={preventivi}/>}
+          {area==="home" && <Home r={r} role={role} setArea={setArea} isMobile={isMobile} preventivi={preventivi} interventi={interventi}/>}
           {area==="ai" && <AIChat msgs={msgs} msgInput={msgInput} setMsgInput={setMsgInput} sendMsg={sendMsg} aiTyping={aiTyping}/>}
           {area==="prodotti" && <Prodotti cart={cart} setCart={setCart} catalog={catalog} catalogLoading={catalogLoading} sessione={sessione} ruolo={role} setCatalog={setCatalog} setArea={setArea}/>}
-          {area==="clienti" && <Clienti sessione={sessione} preventivi={preventivi} ordini={ordini}/>}
+          {area==="clienti" && <Clienti sessione={sessione} preventivi={preventivi} ordini={ordini} attrezzature={attrezzature} setAttrezzature={setAttrezzature} interventi={interventi} setInterventi={setInterventi} catalog={catalog} ruolo={role}/>}
           {area==="preventivi" && <Preventivi cart={cart} setCart={setCart} preventivi={preventivi} setPreventivi={setPreventivi} setOrdini={setOrdini} setArea={setArea} ruolo={role} catalog={catalog} sessione={sessione}/>}
           {area==="ordini" && <Ordini ordini={ordini} setOrdini={setOrdini} sessione={sessione}/>}
-          {area==="interventi" && <Interventi/>}
-          {area==="rapporti" && <RapportoDemo/>}
+          {area==="interventi" && <Interventi interventi={interventi} setInterventi={setInterventi} sessione={sessione} setArea={setArea} setInterventoDaCompletare={setInterventoDaCompletare}/>}
+          {area==="rapporti" && <RapportoDemo sessione={sessione} interventi={interventi} setInterventi={setInterventi} interventoDaCompletare={interventoDaCompletare} setInterventoDaCompletare={setInterventoDaCompletare}/>}
           {area==="analytics" && RUOLI_APPROVATORI.includes(role) && <CondizioniAcquisto/>}
           {area==="analytics" && !RUOLI_APPROVATORI.includes(role) && <Placeholder area={area} setArea={setArea}/>}
           {area==="saltati" && RUOLI_APPROVATORI.includes(role) && <PreventiviSaltati preventivi={preventivi}/>}
@@ -623,11 +632,13 @@ export default function App(){
 
 // ─── LOGIN ──────────────────────────────────────────────────────────────────────
 // ─── HOME ───────────────────────────────────────────────────────────────────────
-function Home({r,role,setArea,isMobile,preventivi}){
+function Home({r,role,setArea,isMobile,preventivi,interventi}){
   const isT=role==="tecnico";
   const ora = new Date();
   const saluto = ora.getHours()<12?"Buongiorno":ora.getHours()<18?"Buon pomeriggio":"Buonasera";
   const dataFmt = ora.toLocaleDateString("it-IT",{weekday:"short",day:"numeric",month:"short"}).toUpperCase();
+  const interventiPianificati = (interventi||[]).filter(i=>i.stato==="Pianificato")
+    .sort((a,b)=>new Date(a.data_pianificata||"9999-12-31")-new Date(b.data_pianificata||"9999-12-31"));
 
   return (
     <div>
@@ -644,15 +655,19 @@ function Home({r,role,setArea,isMobile,preventivi}){
 
       {/* Da gestire */}
       <div style={S.eyebrow}>Da gestire</div>
-      {isT?DEMO_INTERVENTI.slice(0,2).map(i=>(
-        <div key={i.id} onClick={()=>setArea("interventi")} style={{...S.card,borderLeft:`3px solid ${i.p==="alta"?C.danger:C.warn}`}}>
+      {isT?(interventiPianificati.length>0 ? interventiPianificati.slice(0,2).map(i=>(
+        <div key={i.id} onClick={()=>setArea("interventi")} style={{...S.card,borderLeft:`3px solid ${i.priorita==="alta"?C.danger:C.warn}`}}>
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:10}}>
             <div style={{minWidth:0}}>
-              <div style={{fontWeight:600,fontSize:13.5}}>{i.nome}</div>
-              <div style={{fontSize:11.5,color:"#8A929A",marginTop:2}}>{i.cliente}</div>
+              <div style={{fontWeight:600,fontSize:13.5}}>{TIPO_LABELS[i.tipo]||i.tipo}</div>
+              <div style={{fontSize:11.5,color:"#8A929A",marginTop:2}}>{i.cliente_nome || "Cliente non specificato"}</div>
             </div>
-            <span style={{fontFamily:F_MONO,fontSize:10.5,color:"#8A929A",flexShrink:0}}>{i.data}</span>
+            {i.data_pianificata && <span style={{fontFamily:F_MONO,fontSize:10.5,color:"#8A929A",flexShrink:0}}>{new Date(i.data_pianificata).toLocaleDateString("it-IT")}</span>}
           </div>
+        </div>
+      )) : (
+        <div onClick={()=>setArea("interventi")} style={{...S.card,cursor:"pointer"}}>
+          <div style={{fontSize:12.5,color:"#9AA3AB"}}>Nessun intervento pianificato</div>
         </div>
       )):(preventivi.length>0 ? preventivi.slice(0,2).map(p=>(
         <div key={p.id} onClick={()=>setArea("preventivi")} style={{...S.card,borderLeft:`3px solid ${p.stato==="Inviato"?C.warn:C.steel}`}}>
@@ -1384,7 +1399,7 @@ function SchedaProdotto({p, isIn, onToggleCart, onClose, ruolo, onModifica}){
 // richiede una sessione autenticata.
 const CAMPI_RICERCA_CLIENTI = ["codice","ragione_sociale","rag_sociale_agg","localita","provincia","partita_iva","codice_fiscale","mail","telefono"];
 
-function Clienti({sessione, preventivi, ordini}){
+function Clienti({sessione, preventivi, ordini, attrezzature, setAttrezzature, interventi, setInterventi, catalog, ruolo}){
   const accessToken = trovaAccessToken(sessione);
   const [q,setQ] = useState("");
   const [risultati,setRisultati] = useState([]);
@@ -1414,7 +1429,9 @@ function Clienti({sessione, preventivi, ordini}){
   },[q]);
 
   if(selezionato){
-    return <ClienteDettaglio cliente={selezionato} onIndietro={()=>setSelezionato(null)} preventivi={preventivi} ordini={ordini}/>;
+    return <ClienteDettaglio cliente={selezionato} onIndietro={()=>setSelezionato(null)} preventivi={preventivi} ordini={ordini}
+      attrezzature={attrezzature} setAttrezzature={setAttrezzature} interventi={interventi} setInterventi={setInterventi}
+      catalog={catalog} ruolo={ruolo} sessione={sessione}/>;
   }
 
   return (
@@ -1452,10 +1469,97 @@ function Clienti({sessione, preventivi, ordini}){
   );
 }
 
-function ClienteDettaglio({cliente, onIndietro, preventivi, ordini}){
+function ClienteDettaglio({cliente, onIndietro, preventivi, ordini, attrezzature, setAttrezzature, interventi, setInterventi, catalog, ruolo, sessione}){
+  const accessToken = trovaAccessToken(sessione);
   const [tab,setTab] = useState("dati");
+  const [erroreLocale,setErroreLocale] = useState("");
   const preventiviCliente = (preventivi||[]).filter(p=>p.cliente_codice===cliente.codice);
   const ordiniCliente = (ordini||[]).filter(o=>o.cliente_codice===cliente.codice);
+  const attrezzatureCliente = (attrezzature||[]).filter(a=>a.cliente_codice===cliente.codice);
+  const interventiCliente = (interventi||[]).filter(i=>i.cliente_codice===cliente.codice);
+
+  // ── Form: aggiungi attrezzatura ──
+  const [formAttrezzaturaAperto,setFormAttrezzaturaAperto] = useState(false);
+  const [qProdotto,setQProdotto] = useState("");
+  const [prodottoScelto,setProdottoScelto] = useState(null);
+  const [nomeLibero,setNomeLibero] = useState("");
+  const [marchioLibero,setMarchioLibero] = useState("");
+  const [numeroSerie,setNumeroSerie] = useState("");
+  const [dataInstallazione,setDataInstallazione] = useState("");
+  const [noteAttrezzatura,setNoteAttrezzatura] = useState("");
+  const [salvandoAttrezzatura,setSalvandoAttrezzatura] = useState(false);
+
+  const risultatiProdotto = useMemo(()=>{
+    if(!qProdotto.trim() || !catalog) return [];
+    const qq = qProdotto.trim().toLowerCase();
+    return catalog.filter(p=>
+      (p.nome||"").toLowerCase().includes(qq) || (p.cod||"").toLowerCase().includes(qq)
+    ).slice(0,8);
+  },[qProdotto,catalog]);
+
+  function resetFormAttrezzatura(){
+    setFormAttrezzaturaAperto(false); setQProdotto(""); setProdottoScelto(null);
+    setNomeLibero(""); setMarchioLibero(""); setNumeroSerie(""); setDataInstallazione(""); setNoteAttrezzatura("");
+  }
+  async function salvaAttrezzatura(){
+    const nome = prodottoScelto ? prodottoScelto.nome : nomeLibero.trim();
+    const marchio = prodottoScelto ? prodottoScelto.mar : marchioLibero.trim();
+    if(!nome || !numeroSerie.trim()) return;
+    setSalvandoAttrezzatura(true); setErroreLocale("");
+    try{
+      const payload = {
+        cliente_codice: cliente.codice,
+        prodotto_cod: prodottoScelto?.cod || null,
+        nome_prodotto: nome,
+        marchio: marchio || null,
+        numero_serie: numeroSerie.trim(),
+        data_installazione: dataInstallazione || null,
+        note: noteAttrezzatura.trim() || null,
+        creato_da_nome: sessione?.nome || null,
+      };
+      const [salvato] = await sbAuth("POST","attrezzature","",payload,accessToken);
+      setAttrezzature(prev=>[salvato,...prev]);
+      resetFormAttrezzatura();
+    }catch(err){
+      setErroreLocale("Salvataggio non riuscito: "+err.message);
+    }
+    setSalvandoAttrezzatura(false);
+  }
+
+  // ── Form: pianifica intervento ──
+  const [formInterventoAperto,setFormInterventoAperto] = useState(false);
+  const [tipoIntervento,setTipoIntervento] = useState("");
+  const [dataIntervento,setDataIntervento] = useState("");
+  const [prioritaIntervento,setPrioritaIntervento] = useState("media");
+  const [noteIntervento,setNoteIntervento] = useState("");
+  const [salvandoIntervento,setSalvandoIntervento] = useState(false);
+
+  function resetFormIntervento(){
+    setFormInterventoAperto(false); setTipoIntervento(""); setDataIntervento("");
+    setPrioritaIntervento("media"); setNoteIntervento("");
+  }
+  async function salvaIntervento(){
+    if(!tipoIntervento) return;
+    setSalvandoIntervento(true); setErroreLocale("");
+    try{
+      const payload = {
+        cliente_codice: cliente.codice,
+        cliente_nome: cliente.ragione_sociale,
+        tipo: tipoIntervento,
+        priorita: prioritaIntervento,
+        stato: "Pianificato",
+        data_pianificata: dataIntervento || null,
+        note: noteIntervento.trim() || null,
+        creato_da_nome: sessione?.nome || null,
+      };
+      const [salvato] = await sbAuth("POST","interventi","",payload,accessToken);
+      setInterventi(prev=>[salvato,...prev]);
+      resetFormIntervento();
+    }catch(err){
+      setErroreLocale("Salvataggio non riuscito: "+err.message);
+    }
+    setSalvandoIntervento(false);
+  }
 
   return (
     <div>
@@ -1467,8 +1571,10 @@ function ClienteDettaglio({cliente, onIndietro, preventivi, ordini}){
         <div className="tnum" style={{fontSize:11.5,color:"#9AA3AB",fontFamily:F_MONO,marginTop:6}}>COD {cliente.codice}</div>
       </div>
 
+      {erroreLocale && <div style={{fontSize:12,color:C.danger,background:"rgba(200,75,58,0.08)",borderRadius:6,padding:"9px 11px",marginBottom:14}}>⚠ {erroreLocale}</div>}
+
       <div style={{display:"flex",borderBottom:`1px solid ${C.paperLine}`,marginBottom:18,flexWrap:"wrap"}}>
-        {[["dati","Dati"],["preventivi",`Preventivi (${preventiviCliente.length})`],["ordini",`Ordini (${ordiniCliente.length})`],["interventi","Interventi"],["attrezzature","Attrezzature"]].map(([id,lbl])=>(
+        {[["dati","Dati"],["preventivi",`Preventivi (${preventiviCliente.length})`],["ordini",`Ordini (${ordiniCliente.length})`],["interventi",`Interventi (${interventiCliente.length})`],["attrezzature",`Attrezzature (${attrezzatureCliente.length})`]].map(([id,lbl])=>(
           <button key={id} onClick={()=>setTab(id)} style={{
             background:"none",border:"none",borderBottom:`2px solid ${tab===id?C.ink:"transparent"}`,
             padding:"8px 14px",fontSize:12.5,cursor:"pointer",
@@ -1530,13 +1636,113 @@ function ClienteDettaglio({cliente, onIndietro, preventivi, ordini}){
       )}
 
       {tab==="interventi" && (
-        <div style={{textAlign:"center",padding:"2rem 1rem",color:"#9AA3AB",fontSize:13,lineHeight:1.6}}>
-          Gli interventi non sono ancora collegati a un archivio reale — questa sezione è pronta ma in attesa dei dati.
+        <div>
+          {!formInterventoAperto ? (
+            <button onClick={()=>setFormInterventoAperto(true)} style={{...S.btnAccent,width:"100%",padding:"12px",marginBottom:16,fontWeight:700}}>
+              + Pianifica intervento
+            </button>
+          ) : (
+            <div style={{...S.card,cursor:"default",marginBottom:16}}>
+              <div style={{fontSize:13.5,fontWeight:700,marginBottom:10}}>Nuovo intervento</div>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:10}}>
+                {Object.keys(TIPO_LABELS).map(t=>(
+                  <button key={t} onClick={()=>setTipoIntervento(t)} style={{
+                    border:`1px solid ${tipoIntervento===t?C.ink:C.paperLine}`,borderRadius:8,padding:"10px 8px",fontSize:12.5,cursor:"pointer",
+                    background:tipoIntervento===t?C.ink:"#fff",color:tipoIntervento===t?"#fff":"#5B6770",fontWeight:tipoIntervento===t?600:500
+                  }}>{TIPO_LABELS[t]}</button>
+                ))}
+              </div>
+              <div style={{display:"flex",gap:8,marginBottom:10}}>
+                <input type="date" value={dataIntervento} onChange={e=>setDataIntervento(e.target.value)} style={{...S.inp,flex:1}}/>
+                <select value={prioritaIntervento} onChange={e=>setPrioritaIntervento(e.target.value)} style={{...S.inp,flex:1}}>
+                  <option value="bassa">Priorità bassa</option>
+                  <option value="media">Priorità media</option>
+                  <option value="alta">Priorità alta</option>
+                </select>
+              </div>
+              <textarea value={noteIntervento} onChange={e=>setNoteIntervento(e.target.value)} rows={2} placeholder="Note (opzionale)" style={{...S.inp,resize:"vertical",fontFamily:F_BODY,marginBottom:12}}/>
+              <div style={{display:"flex",gap:8}}>
+                <button onClick={salvaIntervento} disabled={!tipoIntervento||salvandoIntervento} style={{flex:1,padding:"11px",background:tipoIntervento?C.ink:"#c8c8c8",color:"#fff",border:"none",borderRadius:8,fontSize:13,fontWeight:700,cursor:tipoIntervento?"pointer":"default"}}>
+                  {salvandoIntervento?"Salvo…":"Salva"}
+                </button>
+                <button onClick={resetFormIntervento} style={{flex:1,padding:"11px",background:"#fff",color:C.steel,border:`1px solid ${C.paperLine}`,borderRadius:8,fontSize:13,fontWeight:600,cursor:"pointer"}}>Annulla</button>
+              </div>
+            </div>
+          )}
+
+          {interventiCliente.length===0 ? (
+            <div style={{textAlign:"center",padding:"1.5rem 1rem",color:"#9AA3AB",fontSize:13}}>Nessun intervento registrato per questo cliente.</div>
+          ) : interventiCliente.map(i=>(
+            <div key={i.id} style={{...S.card,cursor:"default"}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:10}}>
+                <div style={{minWidth:0}}>
+                  <div style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap",marginBottom:4}}>
+                    <Tag tone="primary">{TIPO_LABELS[i.tipo]||i.tipo}</Tag>
+                    {i.data_pianificata && <span className="tnum" style={{fontSize:10.5,color:"#9AA3AB",fontFamily:F_MONO}}>{new Date(i.data_pianificata).toLocaleDateString("it-IT")}</span>}
+                  </div>
+                  {i.note && <div style={{fontSize:12.5,color:C.charcoal}}>{i.note}</div>}
+                  {i.creato_da_nome && <div style={{fontSize:11,color:"#8A929A",marginTop:3}}>Da {i.creato_da_nome}</div>}
+                </div>
+                <Tag tone={i.stato==="Completato"?"ok":i.priorita==="alta"?"danger":i.priorita==="media"?"warn":"steel"}>{i.stato==="Completato"?"Completato":i.priorita}</Tag>
+              </div>
+            </div>
+          ))}
         </div>
       )}
+
       {tab==="attrezzature" && (
-        <div style={{textAlign:"center",padding:"2rem 1rem",color:"#9AA3AB",fontSize:13,lineHeight:1.6}}>
-          Le attrezzature installate presso il cliente non sono ancora collegate a un archivio reale — questa sezione è pronta ma in attesa dei dati.
+        <div>
+          {!formAttrezzaturaAperto ? (
+            <button onClick={()=>setFormAttrezzaturaAperto(true)} style={{...S.btnAccent,width:"100%",padding:"12px",marginBottom:16,fontWeight:700}}>
+              + Registra attrezzatura
+            </button>
+          ) : (
+            <div style={{...S.card,cursor:"default",marginBottom:16}}>
+              <div style={{fontSize:13.5,fontWeight:700,marginBottom:10}}>Nuova attrezzatura installata</div>
+
+              {!prodottoScelto ? (
+                <>
+                  <input value={qProdotto} onChange={e=>setQProdotto(e.target.value)} placeholder="Cerca nel catalogo per nome o codice…" style={{...S.inp,marginBottom:8}}/>
+                  {risultatiProdotto.map(p=>(
+                    <div key={p.cod} onClick={()=>{setProdottoScelto(p); setQProdotto("");}} style={{padding:"8px 10px",border:`1px solid ${C.paperLine}`,borderRadius:7,marginBottom:5,cursor:"pointer",fontSize:12.5}}>
+                      <strong>{p.nome}</strong> <span style={{color:"#9AA3AB",fontFamily:F_MONO,fontSize:11}}>{p.cod}</span>
+                    </div>
+                  ))}
+                  <div style={{fontSize:11,color:"#9AA3AB",margin:"6px 0"}}>oppure, se non è a catalogo:</div>
+                  <input value={nomeLibero} onChange={e=>setNomeLibero(e.target.value)} placeholder="Nome prodotto" style={{...S.inp,marginBottom:8}}/>
+                  <input value={marchioLibero} onChange={e=>setMarchioLibero(e.target.value)} placeholder="Marca (opzionale)" style={{...S.inp,marginBottom:8}}/>
+                </>
+              ) : (
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",background:C.paper,borderRadius:7,padding:"8px 10px",marginBottom:10}}>
+                  <span style={{fontSize:12.5,fontWeight:600}}>{prodottoScelto.nome}</span>
+                  <button onClick={()=>setProdottoScelto(null)} style={{background:"none",border:"none",color:"#9AA3AB",cursor:"pointer",fontSize:14}}>✕</button>
+                </div>
+              )}
+
+              <input value={numeroSerie} onChange={e=>setNumeroSerie(e.target.value)} placeholder="Numero di serie *" style={{...S.inp,marginBottom:8,fontFamily:F_MONO}}/>
+              <input type="date" value={dataInstallazione} onChange={e=>setDataInstallazione(e.target.value)} style={{...S.inp,marginBottom:8}}/>
+              <textarea value={noteAttrezzatura} onChange={e=>setNoteAttrezzatura(e.target.value)} rows={2} placeholder="Note (opzionale)" style={{...S.inp,resize:"vertical",fontFamily:F_BODY,marginBottom:12}}/>
+
+              <div style={{display:"flex",gap:8}}>
+                <button onClick={salvaAttrezzatura} disabled={(!prodottoScelto && !nomeLibero.trim())||!numeroSerie.trim()||salvandoAttrezzatura} style={{flex:1,padding:"11px",background:((prodottoScelto||nomeLibero.trim())&&numeroSerie.trim())?C.ink:"#c8c8c8",color:"#fff",border:"none",borderRadius:8,fontSize:13,fontWeight:700,cursor:"pointer"}}>
+                  {salvandoAttrezzatura?"Salvo…":"Salva"}
+                </button>
+                <button onClick={resetFormAttrezzatura} style={{flex:1,padding:"11px",background:"#fff",color:C.steel,border:`1px solid ${C.paperLine}`,borderRadius:8,fontSize:13,fontWeight:600,cursor:"pointer"}}>Annulla</button>
+              </div>
+            </div>
+          )}
+
+          {attrezzatureCliente.length===0 ? (
+            <div style={{textAlign:"center",padding:"1.5rem 1rem",color:"#9AA3AB",fontSize:13}}>Nessuna attrezzatura registrata per questo cliente.</div>
+          ) : attrezzatureCliente.map(a=>(
+            <div key={a.id} style={{...S.card,cursor:"default"}}>
+              {a.marchio && <Tag tone="steel">{a.marchio}</Tag>}
+              <div style={{fontWeight:600,fontSize:13.5,marginTop:6}}>{a.nome_prodotto}</div>
+              <div className="tnum" style={{fontSize:11,color:"#9AA3AB",fontFamily:F_MONO,marginTop:3}}>S/N {a.numero_serie}</div>
+              {a.data_installazione && <div style={{fontSize:11.5,color:"#8A929A",marginTop:3}}>Installata il {new Date(a.data_installazione).toLocaleDateString("it-IT")}</div>}
+              {a.note && <div style={{fontSize:12,color:C.charcoal,marginTop:5}}>{a.note}</div>}
+            </div>
+          ))}
         </div>
       )}
     </div>
@@ -3049,43 +3255,112 @@ function Ordini({ordini,setOrdini,sessione}){
 }
 
 // ─── INTERVENTI ───────────────────────────────────────────────────────────────
-function Interventi(){
+function Interventi({interventi, setInterventi, sessione, setArea, setInterventoDaCompletare}){
+  const pianificati = (interventi||[]).filter(i=>i.stato==="Pianificato")
+    .sort((a,b)=>new Date(a.data_pianificata||"9999-12-31")-new Date(b.data_pianificata||"9999-12-31"));
+  const completati = (interventi||[]).filter(i=>i.stato==="Completato")
+    .sort((a,b)=>new Date(b.completato_il||0)-new Date(a.completato_il||0)).slice(0,15);
+
+  function riga(i){
+    const oggi = new Date(); oggi.setHours(0,0,0,0);
+    const scaduto = i.stato==="Pianificato" && i.data_pianificata && new Date(i.data_pianificata) < oggi;
+    return (
+      <div key={i.id} style={{...S.card,...(scaduto?{borderColor:C.danger}:{})}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:10}}>
+          <div style={{minWidth:0}}>
+            <div style={{display:"flex",gap:6,marginBottom:5,alignItems:"center",flexWrap:"wrap"}}>
+              <Tag tone="primary">{TIPO_LABELS[i.tipo]||i.tipo}</Tag>
+              {i.data_pianificata && <span className="tnum" style={{fontSize:10.5,color:scaduto?C.danger:"#9AA3AB",fontFamily:F_MONO,fontWeight:scaduto?700:400}}>{new Date(i.data_pianificata).toLocaleDateString("it-IT")}</span>}
+            </div>
+            <div style={{fontWeight:600,fontSize:13.5}}>{i.cliente_nome || "Cliente non specificato"}</div>
+            {i.note && <div style={{fontSize:11.5,color:"#8A929A",marginTop:2}}>{i.note}</div>}
+          </div>
+          <Tag tone={i.stato==="Completato"?"ok":i.priorita==="alta"?"danger":i.priorita==="media"?"warn":"steel"}>{i.stato==="Completato"?"✓ completato":i.priorita}</Tag>
+        </div>
+        {i.stato==="Pianificato" && (
+          <button onClick={()=>{setInterventoDaCompletare(i); setArea("rapporti");}} style={{...S.btnS,marginTop:10,padding:"7px 12px",fontSize:12}}>
+            Compila rapporto e completa →
+          </button>
+        )}
+      </div>
+    );
+  }
+
   return (
     <div>
-      <div style={S.eyebrow}>Pianificati</div>
-      {DEMO_INTERVENTI.map(i=>(
-        <div key={i.id} style={S.card}>
-          <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:10}}>
-            <div style={{minWidth:0}}>
-              <div style={{display:"flex",gap:6,marginBottom:5,alignItems:"center"}}>
-                <Tag tone="primary">{i.tipo}</Tag>
-                <span className="tnum" style={{fontSize:10.5,color:"#9AA3AB",fontFamily:F_MONO}}>{i.data}</span>
-              </div>
-              <div style={{fontWeight:600,fontSize:13.5}}>{i.nome}</div>
-              <div style={{fontSize:11.5,color:"#8A929A",marginTop:2}}>{i.cliente} · {i.prod}</div>
-            </div>
-            <Tag tone={i.p==="alta"?"danger":i.p==="media"?"warn":"ok"}>{i.p}</Tag>
-          </div>
-        </div>
-      ))}
+      <div style={S.eyebrow}>Pianificati ({pianificati.length})</div>
+      {pianificati.length===0 ? (
+        <div style={{fontSize:12.5,color:"#9AA3AB",padding:"8px 0",marginBottom:18}}>Nessun intervento pianificato — puoi crearne uno dalla scheda di un cliente.</div>
+      ) : pianificati.map(riga)}
+
+      {completati.length>0 && (
+        <>
+          <div style={{...S.eyebrow,marginTop:22}}>Completati di recente</div>
+          {completati.map(riga)}
+        </>
+      )}
     </div>
   );
 }
 
 // ─── RAPPORTO TECNICO ─────────────────────────────────────────────────────────
-function RapportoDemo(){
-  const [step,setStep]=useState("dettagli");
-  const [tipo,setTipo]=useState("");
-  const [cliente,setCliente]=useState("");
-  const [checklist,setChecklist]=useState([]);
+function RapportoDemo({sessione, interventi, setInterventi, interventoDaCompletare, setInterventoDaCompletare}){
+  const accessToken = trovaAccessToken(sessione);
+  // Se si arriva da "Compila rapporto" su un intervento già pianificato, si
+  // salta la scelta cliente/tipo (già noti) e si va dritti alla checklist.
+  const daCompletare = interventoDaCompletare;
+  const [step,setStep]=useState(daCompletare ? "checklist" : "dettagli");
+  const [tipo,setTipo]=useState(daCompletare?.tipo || "");
+  const [clienteSel,setClienteSel]=useState(daCompletare ? {codice:daCompletare.cliente_codice, ragione_sociale:daCompletare.cliente_nome} : null);
+  const [checklist,setChecklist]=useState(daCompletare ? (CHECKLIST_TEMPLATES[daCompletare.tipo]||[]).map(v=>({voce:v,fatto:false})) : []);
+  const [note,setNote]=useState("");
+  const [salvando,setSalvando]=useState(false);
+  const [errore,setErrore]=useState("");
 
   function setTipoIntervento(t){ setTipo(t); setChecklist((CHECKLIST_TEMPLATES[t]||[]).map(v=>({voce:v,fatto:false}))); }
   function toggle(i){setChecklist(prev=>prev.map((c,idx)=>idx===i?{...c,fatto:!c.fatto}:c));}
 
+  function resetTutto(){
+    setStep("dettagli"); setTipo(""); setClienteSel(null); setChecklist([]); setNote(""); setErrore("");
+    setInterventoDaCompletare(null);
+  }
+
+  async function salvaRapporto(){
+    setSalvando(true); setErrore("");
+    const payloadComune = {
+      tipo, checklist, note: note.trim() || null,
+      stato: "Completato", completato_il: new Date().toISOString(),
+    };
+    try{
+      if(daCompletare){
+        // completa un intervento già pianificato: aggiorna lo stesso record
+        await sbAuth("PATCH","interventi",`id=eq.${daCompletare.id}`,payloadComune,accessToken);
+        setInterventi(prev=>prev.map(i=>i.id===daCompletare.id?{...i,...payloadComune}:i));
+      } else {
+        // rapporto nuovo, non legato a un intervento pianificato in precedenza
+        const payload = {
+          ...payloadComune,
+          cliente_codice: clienteSel?.codice || null,
+          cliente_nome: clienteSel?.ragione_sociale || "",
+          priorita: "media",
+          creato_da_nome: sessione?.nome || null,
+        };
+        const [salvato] = await sbAuth("POST","interventi","",payload,accessToken);
+        setInterventi(prev=>[salvato,...prev]);
+      }
+      setStep("fatto");
+    }catch(err){
+      setErrore("Salvataggio non riuscito: "+err.message);
+    }
+    setSalvando(false);
+  }
+
   if(step==="dettagli") return (
     <div>
       <div style={{fontFamily:F_DISPLAY,fontSize:18,fontWeight:600,marginBottom:16}}>NUOVO RAPPORTO</div>
-      <input value={cliente} onChange={e=>setCliente(e.target.value)} placeholder="Nome cliente" style={{...S.inp,marginBottom:14}}/>
+      <div style={{marginBottom:14}}>
+        <SelezioneCliente clienteSelezionato={clienteSel} onSeleziona={setClienteSel} sessione={sessione}/>
+      </div>
       <div style={S.eyebrow}>Tipo intervento</div>
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:18}}>
         {Object.keys(TIPO_LABELS).map(t=>(
@@ -3095,22 +3370,25 @@ function RapportoDemo(){
           }}>{TIPO_LABELS[t]}</button>
         ))}
       </div>
-      <button onClick={()=>setStep("checklist")} disabled={!cliente||!tipo} style={{...S.btnAccent,opacity:(!cliente||!tipo)?0.4:1,width:"100%",padding:"13px"}}>Continua</button>
+      <button onClick={()=>setStep("checklist")} disabled={!clienteSel||!tipo} style={{...S.btnAccent,opacity:(!clienteSel||!tipo)?0.4:1,width:"100%",padding:"13px"}}>Continua</button>
     </div>
   );
 
   if(step==="checklist") return (
     <div>
-      <div style={{fontFamily:F_DISPLAY,fontSize:18,fontWeight:600,marginBottom:16}}>CHECKLIST · {TIPO_LABELS[tipo].toUpperCase()}</div>
+      <div style={{fontFamily:F_DISPLAY,fontSize:18,fontWeight:600,marginBottom:4}}>CHECKLIST · {TIPO_LABELS[tipo]?.toUpperCase()}</div>
+      <div style={{fontSize:12.5,color:C.steel,marginBottom:16}}>{clienteSel?.ragione_sociale}</div>
+      {errore && <div style={{fontSize:12,color:C.danger,background:"rgba(200,75,58,0.08)",borderRadius:6,padding:"9px 11px",marginBottom:14}}>⚠ {errore}</div>}
       {checklist.map((c,i)=>(
         <label key={i} style={{display:"flex",gap:10,padding:"11px 0",borderBottom:`1px solid ${C.paperLine}`,cursor:"pointer",fontSize:13.5,alignItems:"center"}}>
           <input type="checkbox" checked={c.fatto} onChange={()=>toggle(i)} style={{width:17,height:17,accentColor:C.ink}}/>
           <span style={{color:c.fatto?C.charcoal:"#5B6770"}}>{c.voce}</span>
         </label>
       ))}
+      <textarea value={note} onChange={e=>setNote(e.target.value)} rows={3} placeholder="Note sull'intervento (opzionale)" style={{...S.inp,resize:"vertical",fontFamily:F_BODY,marginTop:14}}/>
       <div style={{display:"flex",gap:8,marginTop:18}}>
-        <button onClick={()=>setStep("dettagli")} style={S.btnS}>← Indietro</button>
-        <button onClick={()=>setStep("fatto")} style={{...S.btnAccent,flex:1}}>✓ Salva rapporto</button>
+        {!daCompletare && <button onClick={()=>setStep("dettagli")} style={S.btnS}>← Indietro</button>}
+        <button onClick={salvaRapporto} disabled={salvando} style={{...S.btnAccent,flex:1,opacity:salvando?0.6:1}}>{salvando?"Salvo…":"✓ Salva rapporto"}</button>
       </div>
     </div>
   );
@@ -3119,8 +3397,8 @@ function RapportoDemo(){
     <div style={{textAlign:"center",padding:"3.5rem 1rem"}}>
       <div style={{width:54,height:54,borderRadius:10,background:C.ok,color:"#fff",fontSize:26,display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto 16px"}}>✓</div>
       <div style={{fontFamily:F_DISPLAY,fontSize:18,fontWeight:600,marginBottom:6}}>RAPPORTO SALVATO</div>
-      <div style={{fontSize:13,color:"#8A929A",marginBottom:20}}>Registrato per {cliente}</div>
-      <button onClick={()=>{setStep("dettagli");setTipo("");setCliente("");setChecklist([]);}} style={S.btnP}>+ Nuovo rapporto</button>
+      <div style={{fontSize:13,color:"#8A929A",marginBottom:20}}>Registrato per {clienteSel?.ragione_sociale}</div>
+      <button onClick={resetTutto} style={S.btnP}>+ Nuovo rapporto</button>
     </div>
   );
 }
