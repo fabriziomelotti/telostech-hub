@@ -2192,7 +2192,10 @@ function Preventivi({cart,setCart,preventivi,setPreventivi,setOrdini,setArea,ruo
                     {selezionato.referente_telos && !(utentiTelos||[]).some(u=>u.nome===selezionato.referente_telos) && (
                       <option value={selezionato.referente_telos}>{selezionato.referente_telos}</option>
                     )}
-                    {(utentiTelos||[]).map(u=>(<option key={u.id} value={u.nome}>{u.nome}</option>))}
+                    {(utentiTelos||[]).map(u=>{
+                      const nomeCompleto = [u.nome, u.cognome].filter(Boolean).join(" ");
+                      return <option key={u.id} value={nomeCompleto}>{nomeCompleto}</option>;
+                    })}
                   </select>
                   {erroreUtentiTelos && (
                     <div style={{fontSize:11,color:C.danger,marginTop:4}}>⚠ Elenco utenti non caricato: {erroreUtentiTelos}</div>
