@@ -109,15 +109,15 @@ const RUOLI = {
   tecnico: {label:"Tecnico", initials:"LR", nome:"Luca Rossi",
     nav:["home","ai","interventi","rapporti","clienti","prodotti"]},
   responsabile: {label:"Responsabile", initials:"GF", nome:"Giovanni Ferri",
-    nav:["home","ai","prodotti","clienti","preventivi","ordini","interventi","rapporti","analytics"]},
+    nav:["home","ai","prodotti","clienti","preventivi","ordini","interventi","rapporti","analytics","saltati"]},
   admin: {label:"Admin", initials:"AM", nome:"Amministratore",
-    nav:["home","ai","prodotti","clienti","preventivi","ordini","interventi","rapporti","analytics","admin"]},
+    nav:["home","ai","prodotti","clienti","preventivi","ordini","interventi","rapporti","analytics","saltati","admin"]},
 };
 const NAV_META = {
   home:{icon:"⌂",label:"Dashboard"}, ai:{icon:"✦",label:"Assistente"}, prodotti:{icon:"▣",label:"Catalogo"},
   clienti:{icon:"◉",label:"Clienti"}, preventivi:{icon:"▤",label:"Preventivi"}, ordini:{icon:"⬡",label:"Ordini"},
   interventi:{icon:"⚒",label:"Interventi"}, rapporti:{icon:"☑",label:"Rapporto"}, analytics:{icon:"◈",label:"Condizioni"},
-  admin:{icon:"⚙",label:"Admin"},
+  saltati:{icon:"⊘",label:"Saltati"}, admin:{icon:"⚙",label:"Admin"},
 };
 function navMobile(nav){ return nav.slice(0,4).concat(nav.length>4?["more"]:[]); }
 
@@ -139,8 +139,8 @@ const DEMO_INTERVENTI = [
   {id:3,nome:"Sopralluogo cabina verniciatura",cliente:"Carrozzeria Ferrari",tipo:"Sopralluogo",data:"04 LUG",p:"bassa",tec:"L. Rossi",prod:"—"},
 ];
 // Stati possibili di un preventivo, in ordine di avanzamento del ciclo di vita
-const STATI_PREVENTIVO = ["Bozza","Inviato","Confermato"];
-const STATO_COLORE = { "Bozza":"steel", "Inviato":"warn", "Confermato":"ok", "Convertito in ordine":"primary" };
+const STATI_PREVENTIVO = ["Bozza","Inviato"];
+const STATO_COLORE = { "Bozza":"steel", "Inviato":"warn", "Convertito in ordine":"primary", "Saltato":"danger" };
 
 // Il codice "PRV-0001" mostrato in giro non è più generato lato client (con
 // preventivi condivisi su Supabase, un contatore locale che riparte da 100 ad
@@ -562,6 +562,8 @@ export default function App(){
           {area==="rapporti" && <RapportoDemo/>}
           {area==="analytics" && RUOLI_APPROVATORI.includes(role) && <CondizioniAcquisto/>}
           {area==="analytics" && !RUOLI_APPROVATORI.includes(role) && <Placeholder area={area} setArea={setArea}/>}
+          {area==="saltati" && RUOLI_APPROVATORI.includes(role) && <PreventiviSaltati preventivi={preventivi}/>}
+          {area==="saltati" && !RUOLI_APPROVATORI.includes(role) && <Placeholder area={area} setArea={setArea}/>}
           {area==="admin" && <PannelloAdmin setCatalog={setCatalog} ruolo={role} sessione={sessione}/>}
         </div>
 
@@ -1924,7 +1926,9 @@ function Preventivi({cart,setCart,preventivi,setPreventivi,setOrdini,setArea,ruo
   const [view,setView]=useState("lista"); // lista | nuovo | dettaglio
   const [selId,setSelId]=useState(null);
   const [confermaEliminazione,setConfermaEliminazione]=useState(false);
-  useEffect(()=>{ setConfermaEliminazione(false); },[selId]);
+  const [confermaSalto,setConfermaSalto]=useState(false);
+  const [motivoSalto,setMotivoSalto]=useState("");
+  useEffect(()=>{ setConfermaEliminazione(false); setConfermaSalto(false); setMotivoSalto(""); },[selId]);
   const [erroreSync,setErroreSync]=useState("");
   const [utentiTelos,setUtentiTelos]=useState(null); // null=non caricato, [] o [...]
   const [erroreUtentiTelos,setErroreUtentiTelos]=useState("");
@@ -1946,7 +1950,7 @@ function Preventivi({cart,setCart,preventivi,setPreventivi,setOrdini,setArea,ruo
   // Se almeno una riga è sotto soglia di margine e il preventivo non è ancora
   // stato esplicitamente approvato, lo stato visibile diventa "In attesa di approvazione"
   function statoConApprovazione(p){
-    if(p.stato==="Convertito in ordine") return p.stato;
+    if(["Convertito in ordine","Saltato"].includes(p.stato)) return p.stato;
     const haRigaSottoMargine = (p.righe||[]).some(r=>r.sottoMargine);
     if(haRigaSottoMargine && !p.approvato) return "In attesa di approvazione";
     return p.stato;
@@ -1963,6 +1967,7 @@ function Preventivi({cart,setCart,preventivi,setPreventivi,setOrdini,setArea,ruo
       pagamento_modalita: "USUALE CODIFICATA",
       pagamento_dettagli: "",
       referente_telos: sessione?.nome || "",
+      creato_da_nome: sessione?.nome || "",
       note: "",
     };
     try{
@@ -2059,6 +2064,14 @@ function Preventivi({cart,setCart,preventivi,setPreventivi,setOrdini,setArea,ruo
       setErroreSync("Conversione in ordine non riuscita: "+err.message);
     }
   }
+  // Chiude un preventivo per trattativa saltata, con motivazione obbligatoria.
+  // Usa lo stesso "aggiorna" centralizzato (ottimistico + sync su Supabase).
+  function segnaSaltato(id, motivo){
+    if(!motivo.trim()) return;
+    aggiorna(id, { stato:"Saltato", motivo_saltato: motivo.trim() });
+    setConfermaSalto(false);
+    setMotivoSalto("");
+  }
   // Elimina un preventivo intero (non una singola riga). Bloccato per quelli
   // già trasformati in ordine: cancellarli lascerebbe l'ordine collegato
   // orfano di riferimento. La conferma avviene nell'interfaccia (due passaggi
@@ -2104,7 +2117,7 @@ function Preventivi({cart,setCart,preventivi,setPreventivi,setOrdini,setArea,ruo
             <button onClick={()=>setCart([])} style={S.btnS}>Svuota</button>
           </div>
         </div>
-        <ListaPreventivi preventivi={preventivi} onApri={(id)=>{setSelId(id);setView("dettaglio");}} onNuovo={creaVuoto}/>
+        <ListaPreventivi preventivi={preventivi} onApri={(id)=>{setSelId(id);setView("dettaglio");}} onNuovo={creaVuoto} sessione={sessione}/>
       </div>
     );
   }
@@ -2113,16 +2126,16 @@ function Preventivi({cart,setCart,preventivi,setPreventivi,setOrdini,setArea,ruo
   if(view==="lista"){
     return (<>
       {erroreSync && <div style={{fontSize:12,color:C.danger,background:"rgba(200,75,58,0.08)",borderRadius:6,padding:"9px 11px",marginBottom:14}}>⚠ {erroreSync}</div>}
-      <ListaPreventivi preventivi={preventivi} onApri={(id)=>{setSelId(id);setView("dettaglio");}} onNuovo={creaVuoto}/>
+      <ListaPreventivi preventivi={preventivi} onApri={(id)=>{setSelId(id);setView("dettaglio");}} onNuovo={creaVuoto} sessione={sessione}/>
     </>);
   }
 
   // ── VISTA: DETTAGLIO (sola lettura con azioni di stato) o EDIT (bozza modificabile) ──
   if((view==="dettaglio"||view==="dettagli-edit") && selezionato){
-    // Modificabile (cliente, articoli) finché non è stato trasformato in un
-    // ordine vero — non solo in Bozza. Una volta convertito, il preventivo
-    // resta storico/di sola lettura perché l'ordine lo referenzia.
-    const editable = selezionato.stato!=="Convertito in ordine";
+    // Modificabile finché non è stato trasformato in un ordine vero o chiuso
+    // per trattativa saltata — in entrambi i casi il preventivo resta
+    // storico/di sola lettura.
+    const editable = !["Convertito in ordine","Saltato"].includes(selezionato.stato);
     const statoVisibile = statoConApprovazione(selezionato);
     const inAttesaApprovazione = statoVisibile==="In attesa di approvazione";
     const puoApprovare = inAttesaApprovazione && puoModificarePrezzoLiberamente(ruolo);
@@ -2342,17 +2355,18 @@ function Preventivi({cart,setCart,preventivi,setPreventivi,setOrdini,setArea,ruo
             <button disabled style={{...S.btnAccent,padding:"12px",opacity:0.4}}>In attesa di approvazione</button>
           )}
           {selezionato.stato==="Inviato" && (
-            <button onClick={()=>aggiorna(selezionato.id,{stato:"Confermato"})} style={{...S.btnAccent,padding:"12px",background:C.ok,color:"#fff"}}>
-              ✓ Segna come confermato dal cliente
-            </button>
-          )}
-          {selezionato.stato==="Confermato" && (
             <button onClick={()=>convertiInOrdine(selezionato)} style={{...S.btnAccent,padding:"13px",background:C.ink,color:"#fff",fontSize:14}}>
               ⬡ Converti in ordine
             </button>
           )}
           {selezionato.stato==="Convertito in ordine" && (
             <button onClick={()=>setArea("ordini")} style={{...S.btnP,padding:"12px"}}>Vedi l'ordine →</button>
+          )}
+          {selezionato.stato==="Saltato" && selezionato.motivo_saltato && (
+            <div style={{fontSize:12.5,color:C.steel,background:"rgba(200,75,58,0.06)",border:`1px solid ${C.paperLine}`,borderRadius:8,padding:"11px 13px"}}>
+              <div style={{fontWeight:600,color:C.danger,marginBottom:3}}>Trattativa saltata</div>
+              {selezionato.motivo_saltato}
+            </div>
           )}
           <button onClick={()=>{
             const righeArricchite = selezionato.righe.map(r=>{
@@ -2379,7 +2393,37 @@ function Preventivi({cart,setCart,preventivi,setPreventivi,setOrdini,setArea,ruo
         </div>
 
         {editable && (
-          <div style={{marginTop:28,paddingTop:20,borderTop:`1px solid ${C.paperLine}`}}>
+          <div style={{marginTop:20}}>
+            {!confermaSalto ? (
+              <button onClick={()=>setConfermaSalto(true)} style={{width:"100%",padding:"12px",background:"#fff",color:C.steel,border:`1px solid ${C.paperLine}`,borderRadius:9,fontSize:13,fontWeight:600,cursor:"pointer"}}>
+                ⊘ Chiudi per trattativa saltata
+              </button>
+            ) : (
+              <div style={{background:C.paper,border:`1px solid ${C.paperLine}`,borderRadius:9,padding:16}}>
+                <div style={{fontSize:13.5,fontWeight:700,marginBottom:8}}>Perché la trattativa è saltata?</div>
+                <textarea
+                  value={motivoSalto}
+                  onChange={e=>setMotivoSalto(e.target.value)}
+                  rows={3}
+                  placeholder="Es. prezzo troppo alto, ha scelto un concorrente, progetto rimandato…"
+                  style={{...S.inp,resize:"vertical",fontFamily:F_BODY,marginBottom:12}}
+                  autoFocus
+                />
+                <div style={{display:"flex",gap:10}}>
+                  <button onClick={()=>segnaSaltato(selezionato.id,motivoSalto)} disabled={!motivoSalto.trim()} style={{flex:1,padding:"12px",background:motivoSalto.trim()?C.ink:"#c8c8c8",color:"#fff",border:"none",borderRadius:8,fontSize:13.5,fontWeight:700,cursor:motivoSalto.trim()?"pointer":"default"}}>
+                    Conferma chiusura
+                  </button>
+                  <button onClick={()=>{setConfermaSalto(false); setMotivoSalto("");}} style={{flex:1,padding:"12px",background:"#fff",color:C.steel,border:`1px solid ${C.paperLine}`,borderRadius:8,fontSize:13.5,fontWeight:600,cursor:"pointer"}}>
+                    Annulla
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {editable && (
+          <div style={{marginTop:20,paddingTop:20,borderTop:`1px solid ${C.paperLine}`}}>
             {!confermaEliminazione ? (
               <button onClick={()=>setConfermaEliminazione(true)} style={{width:"100%",padding:"14px",background:C.danger,color:"#fff",border:"none",borderRadius:9,fontSize:14,fontWeight:700,cursor:"pointer"}}>
                 🗑 Elimina preventivo
@@ -2409,17 +2453,50 @@ function Preventivi({cart,setCart,preventivi,setPreventivi,setOrdini,setArea,ruo
   return null;
 }
 
-function ListaPreventivi({preventivi,onApri,onNuovo}){
+function ListaPreventivi({preventivi,onApri,onNuovo,sessione}){
   const [filtro,setFiltro]=useState("");
   const q=filtro.trim().toLowerCase();
-  const lista = q
-    ? preventivi.filter(p=>(p.cliente||"").toLowerCase().includes(q))
-    : preventivi;
+  const filtra = arr => q ? arr.filter(p=>(p.cliente||"").toLowerCase().includes(q)) : arr;
+
+  const daCompletare = filtra(preventivi.filter(p=>p.stato==="Bozza"));
+  const daGestire = filtra(preventivi.filter(p=>p.stato==="Inviato"));
+  const inOrdine = filtra(preventivi.filter(p=>p.stato==="Convertito in ordine"));
+  // Solo i propri preventivi saltati, in fondo a tutto il resto — quelli di
+  // tutto il team si vedono nell'area dedicata "Saltati" (responsabile/admin)
+  const mieiSaltati = filtra(preventivi.filter(p=>p.stato==="Saltato" && p.creato_da_nome===sessione?.nome));
+
+  const totaleVisibile = daCompletare.length+daGestire.length+inOrdine.length+mieiSaltati.length;
+
+  function rigaPreventivo(p){
+    return (
+      <div key={p.id} onClick={()=>onApri(p.id)} style={{...S.card,display:"flex",justifyContent:"space-between",alignItems:"center",gap:10}}>
+        <div style={{minWidth:0}}>
+          <div className="tnum" style={{fontSize:10.5,color:"#9AA3AB",fontFamily:F_MONO}}>{codicePreventivo(p)}</div>
+          <div style={{fontWeight:600,fontSize:13.5,marginTop:2}}>{p.cliente || "Cliente non specificato"}</div>
+          <div style={{fontSize:11.5,color:"#8A929A",marginTop:1}}>{p.righe.length} articol{p.righe.length===1?"o":"i"}</div>
+        </div>
+        <div style={{textAlign:"right",flexShrink:0}}>
+          <div className="tnum" style={{fontWeight:700,fontSize:14,fontFamily:F_MONO}}>€{p.val.toLocaleString("it-IT")}</div>
+          <Tag tone={STATO_COLORE[p.stato]||"steel"} style={{marginTop:5}}>{p.stato}</Tag>
+        </div>
+      </div>
+    );
+  }
+  function sezione(titolo, elenco){
+    if(elenco.length===0) return null;
+    return (
+      <div style={{marginBottom:24}}>
+        <div style={{...S.eyebrow,marginBottom:8}}>{titolo} ({elenco.length})</div>
+        {elenco.map(rigaPreventivo)}
+      </div>
+    );
+  }
+
   return (
     <div>
       <div style={S.eyebrow}>Preventivi</div>
 
-      <div style={{display:"flex",alignItems:"flex-start",gap:20,marginTop:10,marginBottom:14,flexWrap:"wrap"}}>
+      <div style={{display:"flex",alignItems:"flex-start",gap:20,marginTop:10,marginBottom:22,flexWrap:"wrap"}}>
         <button onClick={onNuovo} style={{...S.btnAccent,padding:"14px 24px",fontSize:14.5,fontWeight:700,flexShrink:0}}>+ Nuovo preventivo</button>
 
         {preventivi.length>0 && (
@@ -2437,11 +2514,6 @@ function ListaPreventivi({preventivi,onApri,onNuovo}){
                 title="Pulisci filtro"
               >×</button>
             )}
-            {q && (
-              <div style={{fontSize:11,color:"#9AA3AB",marginTop:6,fontFamily:F_MONO}}>
-                {lista.length} su {preventivi.length} preventiv{preventivi.length===1?"o":"i"}
-              </div>
-            )}
           </div>
         )}
       </div>
@@ -2452,24 +2524,69 @@ function ListaPreventivi({preventivi,onApri,onNuovo}){
           <div style={{fontSize:13}}>Nessun preventivo creato</div>
         </div>
       )}
-      {preventivi.length>0 && lista.length===0 && (
+      {preventivi.length>0 && totaleVisibile===0 && (
         <div style={{textAlign:"center",padding:"2rem 1rem",color:"#9AA3AB",fontSize:13}}>
-          Nessun preventivo per «{filtro}»
+          {q ? `Nessun preventivo per «${filtro}»` : "Nessun preventivo in queste categorie."}
         </div>
       )}
-      {lista.map(p=>(
-        <div key={p.id} onClick={()=>onApri(p.id)} style={{...S.card,display:"flex",justifyContent:"space-between",alignItems:"center",gap:10}}>
-          <div style={{minWidth:0}}>
-            <div className="tnum" style={{fontSize:10.5,color:"#9AA3AB",fontFamily:F_MONO}}>{codicePreventivo(p)}</div>
-            <div style={{fontWeight:600,fontSize:13.5,marginTop:2}}>{p.cliente || "Cliente non specificato"}</div>
-            <div style={{fontSize:11.5,color:"#8A929A",marginTop:1}}>{p.righe.length} articol{p.righe.length===1?"o":"i"}</div>
-          </div>
-          <div style={{textAlign:"right",flexShrink:0}}>
-            <div className="tnum" style={{fontWeight:700,fontSize:14,fontFamily:F_MONO}}>€{p.val.toLocaleString("it-IT")}</div>
-            <Tag tone={STATO_COLORE[p.stato]||"steel"} style={{marginTop:5}}>{p.stato}</Tag>
-          </div>
+
+      {sezione("Da completare", daCompletare)}
+      {sezione("Da gestire", daGestire)}
+      {sezione("In ordine", inOrdine)}
+      {sezione("I tuoi preventivi saltati", mieiSaltati)}
+    </div>
+  );
+}
+
+// ─── PREVENTIVI SALTATI (responsabile/admin) ──────────────────────────────────
+// Vista dedicata con tutte le trattative saltate di tutto il team, motivazione
+// inclusa — pensata per essere confrontata (anche dall'assistente AI, quando
+// collegato) per individuare pattern ricorrenti e correggere prezzi/approccio.
+function PreventiviSaltati({preventivi}){
+  const saltati = preventivi.filter(p=>p.stato==="Saltato")
+    .sort((a,b)=>new Date(b.aggiornato_il||0)-new Date(a.aggiornato_il||0));
+  const totalePerso = saltati.reduce((s,p)=>s+(p.val||0),0);
+
+  return (
+    <div>
+      <div style={S.eyebrow}>Preventivi saltati — tutto il team</div>
+      <div style={{fontSize:12.5,color:"#5B6770",marginBottom:18,lineHeight:1.6}}>
+        Trattative chiuse senza esito, con la motivazione indicata da chi le ha gestite. Utile per individuare pattern ricorrenti (prezzo, concorrenza, tempistiche) e correggere l'approccio commerciale.
+      </div>
+
+      {saltati.length===0 ? (
+        <div style={{textAlign:"center",padding:"2.5rem 1rem",color:"#9AA3AB"}}>
+          <div style={{fontSize:28,marginBottom:8}}>⊘</div>
+          <div style={{fontSize:13}}>Nessuna trattativa saltata al momento.</div>
         </div>
-      ))}
+      ) : (
+        <>
+          <div style={{...S.card,cursor:"default",marginBottom:18,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+            <div style={{fontSize:12.5,color:C.steel}}>Totale trattative saltate</div>
+            <div className="tnum" style={{fontFamily:F_MONO,fontWeight:700,fontSize:16,color:C.danger}}>{saltati.length} · €{totalePerso.toLocaleString("it-IT")}</div>
+          </div>
+          {saltati.map(p=>(
+            <div key={p.id} style={{...S.card,cursor:"default"}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:10,marginBottom:8}}>
+                <div style={{minWidth:0}}>
+                  <div className="tnum" style={{fontSize:10.5,color:"#9AA3AB",fontFamily:F_MONO}}>{codicePreventivo(p)}</div>
+                  <div style={{fontWeight:600,fontSize:14,marginTop:2}}>{p.cliente || "Cliente non specificato"}</div>
+                  <div style={{fontSize:11.5,color:"#8A929A",marginTop:1}}>
+                    {p.creato_da_nome ? `Gestito da ${p.creato_da_nome}` : "Operatore non indicato"}
+                    {p.righe?.length ? ` · ${p.righe.length} articol${p.righe.length===1?"o":"i"}` : ""}
+                  </div>
+                </div>
+                <div className="tnum" style={{fontWeight:700,fontSize:14,fontFamily:F_MONO,flexShrink:0}}>€{(p.val||0).toLocaleString("it-IT")}</div>
+              </div>
+              {p.motivo_saltato && (
+                <div style={{fontSize:12.5,color:C.charcoal,background:"rgba(200,75,58,0.06)",borderRadius:7,padding:"9px 11px",lineHeight:1.5}}>
+                  {p.motivo_saltato}
+                </div>
+              )}
+            </div>
+          ))}
+        </>
+      )}
     </div>
   );
 }
