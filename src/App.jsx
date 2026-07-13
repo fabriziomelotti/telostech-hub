@@ -562,7 +562,7 @@ export default function App(){
           {area==="home" && <Home r={r} role={role} setArea={setArea} isMobile={isMobile} preventivi={preventivi}/>}
           {area==="ai" && <AIChat msgs={msgs} msgInput={msgInput} setMsgInput={setMsgInput} sendMsg={sendMsg} aiTyping={aiTyping}/>}
           {area==="prodotti" && <Prodotti cart={cart} setCart={setCart} catalog={catalog} catalogLoading={catalogLoading} sessione={sessione} ruolo={role} setCatalog={setCatalog} setArea={setArea}/>}
-          {area==="clienti" && <Clienti/>}
+          {area==="clienti" && <Clienti sessione={sessione} preventivi={preventivi} ordini={ordini}/>}
           {area==="preventivi" && <Preventivi cart={cart} setCart={setCart} preventivi={preventivi} setPreventivi={setPreventivi} setOrdini={setOrdini} setArea={setArea} ruolo={role} catalog={catalog} sessione={sessione}/>}
           {area==="ordini" && <Ordini ordini={ordini} setOrdini={setOrdini} sessione={sessione}/>}
           {area==="interventi" && <Interventi/>}
@@ -1379,56 +1379,166 @@ function SchedaProdotto({p, isIn, onToggleCart, onClose, ruolo, onModifica}){
 }
 
 // ─── CLIENTI ──────────────────────────────────────────────────────────────────
-function Clienti(){
-  const [mode,setMode]=useState("cliente"); const [q,setQ]=useState(""); const [sel,setSel]=useState(null);
-  const results = useMemo(()=>{
-    if(!q.trim()) return [];
-    if(mode==="cliente") return DEMO_CLIENTI.filter(c=>c.ragione_sociale.toLowerCase().includes(q.toLowerCase()));
-    const all=Object.entries(DEMO_PROD_INSTALLATI).flatMap(([cid,l])=>l.map(p=>({...p,cliente_id:cid,cliente_nome:DEMO_CLIENTI.find(c=>c.id===cid)?.ragione_sociale})));
-    return all.filter(p=>p.numero_serie.toLowerCase().includes(q.toLowerCase()));
-  },[q,mode]);
+// Stessa ricerca già usata in Preventivi (SelezioneCliente): wildcard OR su
+// più campi, con il token di sessione reale perché la RLS di "clienti"
+// richiede una sessione autenticata.
+const CAMPI_RICERCA_CLIENTI = ["codice","ragione_sociale","rag_sociale_agg","localita","provincia","partita_iva","codice_fiscale","mail","telefono"];
 
-  if(sel) return (
-    <div>
-      <button onClick={()=>setSel(null)} style={{...S.btnS,marginBottom:12}}>← Indietro</button>
-      <div style={{...S.card,cursor:"default"}}>
-        <div style={{fontFamily:F_DISPLAY,fontSize:18,fontWeight:600}}>{sel.ragione_sociale}</div>
-        <div style={{fontSize:12,color:"#8A929A",marginTop:3}}>{sel.citta} ({sel.provincia}) · {sel.telefono}</div>
-      </div>
-      <div style={{...S.eyebrow,marginTop:18}}>Prodotti installati</div>
-      {(DEMO_PROD_INSTALLATI[sel.id]||[]).map(p=>(
-        <div key={p.id} style={{...S.card,cursor:"default"}}>
-          <Tag tone="steel">{p.marchio}</Tag>
-          <div style={{fontWeight:600,fontSize:13.5,marginTop:6}}>{p.nome}</div>
-          <div className="tnum" style={{fontSize:11,color:"#9AA3AB",fontFamily:F_MONO,marginTop:3}}>S/N {p.numero_serie}</div>
-        </div>
-      ))}
-      {(DEMO_PROD_INSTALLATI[sel.id]||[]).length===0&&<div style={{fontSize:12,color:"#9AA3AB"}}>Nessun prodotto registrato</div>}
-    </div>
-  );
+function Clienti({sessione, preventivi, ordini}){
+  const accessToken = trovaAccessToken(sessione);
+  const [q,setQ] = useState("");
+  const [risultati,setRisultati] = useState([]);
+  const [caricando,setCaricando] = useState(false);
+  const [errore,setErrore] = useState("");
+  const [selezionato,setSelezionato] = useState(null);
+  const timer = useRef(null);
+
+  useEffect(()=>{
+    clearTimeout(timer.current);
+    if(!q.trim()){ setRisultati([]); setErrore(""); return; }
+    timer.current = setTimeout(async ()=>{
+      setCaricando(true); setErrore("");
+      try{
+        const safe = q.trim().replace(/[,()]/g,"");
+        const pattern = "*"+encodeURIComponent(safe)+"*"; // * non va MAI url-encodato
+        const orExpr = CAMPI_RICERCA_CLIENTI.map(c=>`${c}.ilike.${pattern}`).join(",");
+        const params = `select=codice,ragione_sociale,rag_sociale_agg,indirizzo,localita,provincia,cap,partita_iva,codice_fiscale,telefono,mail,filiale&or=(${orExpr})&limit=30`;
+        const dati = await sbGetAuth("clienti", params, accessToken);
+        setRisultati(dati||[]);
+      }catch(err){
+        setErrore(err.message); setRisultati([]);
+      }
+      setCaricando(false);
+    }, 350);
+    return ()=>clearTimeout(timer.current);
+  },[q]);
+
+  if(selezionato){
+    return <ClienteDettaglio cliente={selezionato} onIndietro={()=>setSelezionato(null)} preventivi={preventivi} ordini={ordini}/>;
+  }
 
   return (
     <div>
-      <div style={{display:"flex",gap:6,marginBottom:12}}>
-        <button onClick={()=>{setMode("cliente");setQ("");}} style={{...S.btnS,...(mode==="cliente"?{background:C.ink,color:"#fff",borderColor:C.ink}:{})}}>◉ Per cliente</button>
-        <button onClick={()=>{setMode("serie");setQ("");}} style={{...S.btnS,...(mode==="serie"?{background:C.ink,color:"#fff",borderColor:C.ink}:{})}}># Per numero serie</button>
+      <div style={S.eyebrow}>Clienti</div>
+      <input
+        value={q} onChange={e=>setQ(e.target.value)}
+        placeholder="🔍 Cerca per ragione sociale, città, P.IVA, codice fiscale…"
+        style={{...S.inp,padding:"13px 16px",fontSize:14,marginTop:10,marginBottom:14}}
+        autoFocus
+      />
+
+      {errore && <div style={{fontSize:12,color:C.danger,background:"rgba(200,75,58,0.08)",borderRadius:6,padding:"9px 11px",marginBottom:14}}>⚠ {errore}</div>}
+      {caricando && <div style={{fontSize:12.5,color:"#8A929A",padding:"8px 0"}}>Ricerca in corso…</div>}
+      {!caricando && q.trim() && !errore && risultati.length===0 && (
+        <div style={{textAlign:"center",padding:"2rem 1rem",color:"#9AA3AB",fontSize:13}}>Nessun cliente trovato per «{q}»</div>
+      )}
+      {!q.trim() && (
+        <div style={{textAlign:"center",padding:"2.5rem 1rem",color:"#9AA3AB"}}>
+          <div style={{fontSize:28,marginBottom:8}}>◉</div>
+          <div style={{fontSize:13}}>Cerca un cliente per vedere i suoi dati, preventivi, ordini e attrezzature</div>
+        </div>
+      )}
+      {risultati.map(c=>(
+        <div key={c.codice} onClick={()=>setSelezionato(c)} style={S.card}>
+          <div style={{fontWeight:600,fontSize:13.5}}>{c.ragione_sociale}</div>
+          {c.rag_sociale_agg && <div style={{fontSize:12,color:C.steel,marginTop:1}}>{c.rag_sociale_agg}</div>}
+          <div style={{fontSize:11.5,color:"#8A929A",marginTop:3}}>
+            {[c.localita, c.provincia && `(${c.provincia})`].filter(Boolean).join(" ")}
+            {c.partita_iva && <span className="tnum" style={{fontFamily:F_MONO,marginLeft:8}}>P.IVA {c.partita_iva}</span>}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function ClienteDettaglio({cliente, onIndietro, preventivi, ordini}){
+  const [tab,setTab] = useState("dati");
+  const preventiviCliente = (preventivi||[]).filter(p=>p.cliente_codice===cliente.codice);
+  const ordiniCliente = (ordini||[]).filter(o=>o.cliente_codice===cliente.codice);
+
+  return (
+    <div>
+      <button onClick={onIndietro} style={{...S.btnS,marginBottom:14}}>← Tutti i clienti</button>
+
+      <div style={{...S.card,cursor:"default",marginBottom:16}}>
+        <div style={{fontFamily:F_DISPLAY,fontSize:19,fontWeight:600}}>{cliente.ragione_sociale}</div>
+        {cliente.rag_sociale_agg && <div style={{fontSize:13,color:C.steel,marginTop:2}}>{cliente.rag_sociale_agg}</div>}
+        <div className="tnum" style={{fontSize:11.5,color:"#9AA3AB",fontFamily:F_MONO,marginTop:6}}>COD {cliente.codice}</div>
       </div>
-      <input value={q} onChange={e=>setQ(e.target.value)} placeholder={mode==="cliente"?"Cerca cliente…":"Cerca numero di serie…"} style={{...S.inp,fontFamily:mode==="serie"?F_MONO:F_BODY}}/>
-      <div style={{marginTop:12}}>
-        {mode==="cliente"?results.map(c=>(
-          <div key={c.id} onClick={()=>setSel(c)} style={S.card}>
-            <div style={{fontWeight:600,fontSize:13.5}}>{c.ragione_sociale}</div>
-            <div style={{fontSize:11.5,color:"#8A929A",marginTop:2}}>{c.citta}</div>
-          </div>
-        )):results.map(p=>(
-          <div key={p.id} onClick={()=>setSel(DEMO_CLIENTI.find(c=>c.id===p.cliente_id))} style={S.card}>
-            <Tag tone="steel">{p.marchio}</Tag>
-            <div style={{fontWeight:600,fontSize:13.5,marginTop:6}}>{p.nome}</div>
-            <div className="tnum" style={{fontSize:11,color:"#9AA3AB",fontFamily:F_MONO,marginTop:3}}>S/N {p.numero_serie}</div>
-            <div style={{fontSize:12,color:C.ink,marginTop:6,fontWeight:600}}>◉ {p.cliente_nome}</div>
-          </div>
+
+      <div style={{display:"flex",borderBottom:`1px solid ${C.paperLine}`,marginBottom:18,flexWrap:"wrap"}}>
+        {[["dati","Dati"],["preventivi",`Preventivi (${preventiviCliente.length})`],["ordini",`Ordini (${ordiniCliente.length})`],["interventi","Interventi"],["attrezzature","Attrezzature"]].map(([id,lbl])=>(
+          <button key={id} onClick={()=>setTab(id)} style={{
+            background:"none",border:"none",borderBottom:`2px solid ${tab===id?C.ink:"transparent"}`,
+            padding:"8px 14px",fontSize:12.5,cursor:"pointer",
+            color:tab===id?C.ink:C.steel,fontWeight:tab===id?600:400,
+          }}>{lbl}</button>
         ))}
       </div>
+
+      {tab==="dati" && (
+        <div style={{display:"flex",flexDirection:"column",gap:1}}>
+          {[
+            ["Indirizzo", [cliente.indirizzo, cliente.cap, cliente.localita, cliente.provincia && `(${cliente.provincia})`].filter(Boolean).join(" ")],
+            ["Telefono", cliente.telefono],
+            ["E-mail", cliente.mail],
+            ["Partita IVA", cliente.partita_iva],
+            ["Codice fiscale", cliente.codice_fiscale],
+            ["Filiale di riferimento", cliente.filiale],
+          ].filter(([,v])=>v).map(([lbl,v])=>(
+            <div key={lbl} style={{display:"flex",justifyContent:"space-between",padding:"10px 4px",borderBottom:`1px solid ${C.paperLine}`,fontSize:13}}>
+              <span style={{color:C.steel}}>{lbl}</span>
+              <span style={{fontWeight:600,textAlign:"right"}}>{v}</span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {tab==="preventivi" && (
+        preventiviCliente.length===0 ? (
+          <div style={{textAlign:"center",padding:"2rem 1rem",color:"#9AA3AB",fontSize:13}}>Nessun preventivo per questo cliente.</div>
+        ) : preventiviCliente.map(p=>(
+          <div key={p.id} style={{...S.card,cursor:"default",display:"flex",justifyContent:"space-between",alignItems:"center",gap:10}}>
+            <div style={{minWidth:0}}>
+              <div className="tnum" style={{fontSize:10.5,color:"#9AA3AB",fontFamily:F_MONO}}>{codicePreventivo(p)}</div>
+              <div style={{fontSize:11.5,color:"#8A929A",marginTop:1}}>{(p.righe||[]).length} articoli</div>
+            </div>
+            <div style={{textAlign:"right",flexShrink:0}}>
+              <div className="tnum" style={{fontWeight:700,fontSize:14,fontFamily:F_MONO}}>€{(p.val||0).toLocaleString("it-IT")}</div>
+              <Tag tone={STATO_COLORE[p.stato]||"steel"} style={{marginTop:5}}>{p.stato}</Tag>
+            </div>
+          </div>
+        ))
+      )}
+
+      {tab==="ordini" && (
+        ordiniCliente.length===0 ? (
+          <div style={{textAlign:"center",padding:"2rem 1rem",color:"#9AA3AB",fontSize:13}}>Nessun ordine per questo cliente.</div>
+        ) : ordiniCliente.map(o=>(
+          <div key={o.id} style={{...S.card,cursor:"default",display:"flex",justifyContent:"space-between",alignItems:"center",gap:10}}>
+            <div style={{minWidth:0}}>
+              <div className="tnum" style={{fontSize:10.5,color:"#9AA3AB",fontFamily:F_MONO}}>{codiceOrdine(o)}</div>
+              <div style={{fontSize:11.5,color:"#8A929A",marginTop:1}}>{(o.righe||[]).length} articoli</div>
+            </div>
+            <div style={{textAlign:"right",flexShrink:0}}>
+              <div className="tnum" style={{fontWeight:700,fontSize:14,fontFamily:F_MONO}}>€{(o.val||0).toLocaleString("it-IT")}</div>
+              <Tag tone={o.stato==="Da evadere"?"warn":"ok"} style={{marginTop:5}}>{o.stato}</Tag>
+            </div>
+          </div>
+        ))
+      )}
+
+      {tab==="interventi" && (
+        <div style={{textAlign:"center",padding:"2rem 1rem",color:"#9AA3AB",fontSize:13,lineHeight:1.6}}>
+          Gli interventi non sono ancora collegati a un archivio reale — questa sezione è pronta ma in attesa dei dati.
+        </div>
+      )}
+      {tab==="attrezzature" && (
+        <div style={{textAlign:"center",padding:"2rem 1rem",color:"#9AA3AB",fontSize:13,lineHeight:1.6}}>
+          Le attrezzature installate presso il cliente non sono ancora collegate a un archivio reale — questa sezione è pronta ma in attesa dei dati.
+        </div>
+      )}
     </div>
   );
 }
@@ -2131,6 +2241,7 @@ function Preventivi({cart,setCart,preventivi,setPreventivi,setOrdini,setArea,ruo
       preventivo_id: p.id,
       preventivo_progressivo: p.progressivo,
       cliente: p.cliente,
+      cliente_codice: p.cliente_codice || null,
       righe: p.righe,
       val: p.val,
       stato: "Da evadere",
