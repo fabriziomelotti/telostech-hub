@@ -1001,6 +1001,23 @@ async function searchSemantica(query, catalog, accessToken){
 // categoria assegnata, visibile solo a responsabile/admin (vedi CompletaCategoria).
 const DA_COMPLETARE = "__DA_COMPLETARE__";
 
+// Campi che consideriamo "da completare" su un prodotto: categoria, tipologia,
+// marca, settore o listino mancanti/non validi. Usata sia per il conteggio
+// mostrato nella voce virtuale DA COMPLETARE sia per i filtri e i badge nel
+// pannello CompletaCategoria. Un listino pari a 0 è trattato come mancante
+// (nel catalogo Telos non esistono prodotti a listino zero, quindi è quasi
+// certamente un dato non ancora inserito).
+function campiProdottoMancanti(p){
+  const mancanti=[];
+  if(!p.cat || String(p.cat).trim()==="") mancanti.push("cat");
+  if(!p.tip || String(p.tip).trim()==="") mancanti.push("tip");
+  if(!p.mar || String(p.mar).trim()==="") mancanti.push("mar");
+  if(!p.settori || String(p.settori).trim()==="") mancanti.push("settori");
+  if(!p.listino || Number(p.listino)<=0) mancanti.push("listino");
+  return mancanti;
+}
+const ETICHETTA_CAMPO = {cat:"Categoria", tip:"Tipologia", mar:"Marca", settori:"Settore", listino:"Listino"};
+
 function Prodotti({cart,setCart,catalog:catProp,catalogLoading,sessione,ruolo,setCatalog,setArea}){
   const CATS = catProp || CATALOG;
   const accessToken = trovaAccessToken(sessione);
@@ -1012,7 +1029,7 @@ function Prodotti({cart,setCart,catalog:catProp,catalogLoading,sessione,ruolo,se
   // Prodotti senza categoria assegnata (import/inserimento incompleto) e i
   // settori distinti già presenti nel catalogo, usati dal pannello di
   // completamento in blocco "DA COMPLETARE" (solo responsabile/admin).
-  const prodottiDaCompletare = useMemo(()=>CATS.filter(p=>!p.cat || String(p.cat).trim()===""),[CATS]);
+  const prodottiDaCompletare = useMemo(()=>CATS.filter(p=>campiProdottoMancanti(p).length>0),[CATS]);
   const settoriCatalogo = useMemo(()=>{
     const conteggi=new Map();
     for(const p of CATS){
@@ -1335,6 +1352,7 @@ function CompletaCategoria({ prodotti, categorieEsistenti, tipologieEsistenti, m
   const accessToken = trovaAccessToken(sessione);
 
   const [filtroTesto,setFiltroTesto]=useState("");
+  const [filtriCampo,setFiltriCampo]=useState(()=>new Set()); // sottoinsieme di cat/tip/mar/settori/listino
   const [selezionati,setSelezionati]=useState(()=>new Set());
   const [categoria,setCategoria]=useState("");
   const [tipologia,setTipologia]=useState("");
@@ -1345,15 +1363,25 @@ function CompletaCategoria({ prodotti, categorieEsistenti, tipologieEsistenti, m
   const [stato,setStato]=useState("idle"); // idle | salvo | fatto | errore
   const [msg,setMsg]=useState("");
 
+  function toggleFiltroCampo(chiave){
+    setFiltriCampo(prev=>{
+      const next=new Set(prev);
+      if(next.has(chiave)) next.delete(chiave); else next.add(chiave);
+      return next;
+    });
+  }
+
   const elencoFiltrato = useMemo(()=>{
     const f=filtroTesto.trim().toLowerCase();
-    if(!f) return prodotti;
-    return prodotti.filter(p=>
-      (p.nome||"").toLowerCase().includes(f) ||
-      (p.cod||"").toLowerCase().includes(f) ||
-      (p.mar||"").toLowerCase().includes(f)
-    );
-  },[prodotti,filtroTesto]);
+    return prodotti.filter(p=>{
+      if(f && !((p.nome||"").toLowerCase().includes(f) || (p.cod||"").toLowerCase().includes(f) || (p.mar||"").toLowerCase().includes(f))) return false;
+      if(filtriCampo.size>0){
+        const mancanti=campiProdottoMancanti(p);
+        if(!mancanti.some(c=>filtriCampo.has(c))) return false;
+      }
+      return true;
+    });
+  },[prodotti,filtroTesto,filtriCampo]);
 
   function toggleSel(cod){
     setSelezionati(prev=>{
@@ -1386,13 +1414,19 @@ function CompletaCategoria({ prodotti, categorieEsistenti, tipologieEsistenti, m
 
   const settoriNuoviLista = settoreNuovo.split(",").map(s=>s.trim()).filter(Boolean);
   const settoriFinaliAnteprima = [...settoriSelezionati, ...settoriNuoviLista];
-  const pronto = selezionati.size>0 && categoria.trim().length>0;
+  // Nessun campo è più obbligatorio in sé: basta che ci sia almeno un
+  // prodotto selezionato e almeno un campo compilato (i campi lasciati
+  // vuoti non vengono toccati) — utile perché ora la lista include anche
+  // prodotti a cui manca solo la marca o solo il listino, non solo la categoria.
+  const almenoUnCampo = categoria.trim() || tipologia.trim() || marca.trim() || settoriFinaliAnteprima.length>0;
+  const pronto = selezionati.size>0 && almenoUnCampo;
 
   async function eseguiApplicazione(){
     setStato("salvo"); setMsg("Aggiornamento in corso…");
     try{
       const settoriFinali = [...new Set(settoriFinaliAnteprima)].join(",");
-      const campi = { categoria: categoria.trim() };
+      const campi = {};
+      if(categoria.trim()) campi.categoria = categoria.trim();
       if(tipologia.trim()) campi.tipologia = tipologia.trim();
       if(marca.trim()) campi.marchio = marca.trim();
       if(settoriFinali) campi.settori = settoriFinali;
@@ -1417,36 +1451,63 @@ function CompletaCategoria({ prodotti, categorieEsistenti, tipologieEsistenti, m
     return (
       <div style={{textAlign:"center",padding:"2.5rem 1rem",color:C.ok}}>
         <div style={{fontSize:28,marginBottom:8}}>✓</div>
-        <div style={{fontSize:13.5,fontWeight:600}}>Tutti i prodotti hanno una categoria assegnata.</div>
+        <div style={{fontSize:13.5,fontWeight:600}}>Tutti i prodotti sono completi.</div>
       </div>
     );
   }
 
+  const CHIAVI_FILTRO = ["cat","tip","mar","settori","listino"];
+
   return (
     <div>
       <div style={{fontSize:12.5,color:C.steel,marginBottom:12,lineHeight:1.6}}>
-        Questi {prodotti.length} prodotti non hanno ancora una categoria. Seleziona quelli simili
-        (stessa famiglia di prodotto) e assegna categoria, tipologia, marca e settore in un colpo solo
-        — più veloce che completarli uno per uno.
+        Questi {prodotti.length} prodotti hanno almeno un campo mancante tra categoria, tipologia,
+        marca, settore o listino. Usa i filtri qui sotto per isolare un tipo di mancanza, seleziona
+        i prodotti simili e compila solo i campi che vuoi assegnare in blocco — quelli lasciati vuoti
+        non vengono toccati.
+      </div>
+
+      <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:10}}>
+        {CHIAVI_FILTRO.map(chiave=>{
+          const n = prodotti.filter(p=>campiProdottoMancanti(p).includes(chiave)).length;
+          if(n===0) return null;
+          const attivo = filtriCampo.has(chiave);
+          return (
+            <span key={chiave} onClick={()=>toggleFiltroCampo(chiave)} style={{fontSize:11.5,fontFamily:F_MONO,padding:"5px 10px",borderRadius:20,border:`1px solid ${attivo?C.warn:C.paperLine}`,background:attivo?C.warn:"#fff",color:attivo?"#fff":"#5B6770",cursor:"pointer"}}>
+              Manca {ETICHETTA_CAMPO[chiave].toLowerCase()} ({n})
+            </span>
+          );
+        })}
+        {filtriCampo.size>0 && (
+          <span onClick={()=>setFiltriCampo(new Set())} style={{fontSize:11.5,fontFamily:F_MONO,padding:"5px 10px",color:"#9AA3AB",cursor:"pointer"}}>✕ azzera filtri</span>
+        )}
       </div>
 
       <div style={{display:"flex",gap:8,marginBottom:10,flexWrap:"wrap",alignItems:"center"}}>
         <input value={filtroTesto} onChange={e=>setFiltroTesto(e.target.value)} placeholder="Filtra per nome, codice o marca…" style={{...S.inp,flex:"1 1 200px"}}/>
-        <button onClick={selezionaTuttiVisibili} style={S.btnS}>Seleziona tutti {filtroTesto?`(${elencoFiltrato.length})`:""}</button>
+        <button onClick={selezionaTuttiVisibili} style={S.btnS}>Seleziona tutti {(filtroTesto||filtriCampo.size>0)?`(${elencoFiltrato.length})`:""}</button>
         <button onClick={deselezionaTuttiVisibili} style={S.btnS}>Deseleziona</button>
       </div>
       <div style={{fontSize:11.5,fontFamily:F_MONO,color:"#9AA3AB",marginBottom:10}} className="tnum">{selezionati.size} selezionati su {prodotti.length}</div>
 
       <div style={{maxHeight:340,overflowY:"auto",border:`1px solid ${C.paperLine}`,borderRadius:8,marginBottom:16}}>
-        {elencoFiltrato.map(p=>(
-          <div key={p.cod} onClick={()=>toggleSel(p.cod)} style={{display:"flex",alignItems:"center",gap:10,padding:"9px 12px",borderBottom:`1px solid ${C.paperLine}`,cursor:"pointer",background:selezionati.has(p.cod)?"rgba(87,206,202,0.10)":"#fff"}}>
-            <input type="checkbox" checked={selezionati.has(p.cod)} onChange={()=>toggleSel(p.cod)} onClick={e=>e.stopPropagation()} style={{flexShrink:0,width:16,height:16}}/>
-            <div style={{flex:1,minWidth:0}}>
-              <div style={{fontSize:13,fontWeight:600,lineHeight:1.3}}>{p.nome||p.desc}</div>
-              <div className="tnum" style={{fontSize:10.5,color:"#9AA3AB",fontFamily:F_MONO,marginTop:2}}>{p.cod}{p.mar?` · ${p.mar}`:""}{p.tip?` · ${p.tip}`:""}</div>
+        {elencoFiltrato.map(p=>{
+          const mancanti = campiProdottoMancanti(p);
+          return (
+            <div key={p.cod} onClick={()=>toggleSel(p.cod)} style={{display:"flex",alignItems:"center",gap:10,padding:"9px 12px",borderBottom:`1px solid ${C.paperLine}`,cursor:"pointer",background:selezionati.has(p.cod)?"rgba(87,206,202,0.10)":"#fff"}}>
+              <input type="checkbox" checked={selezionati.has(p.cod)} onChange={()=>toggleSel(p.cod)} onClick={e=>e.stopPropagation()} style={{flexShrink:0,width:16,height:16}}/>
+              <div style={{flex:1,minWidth:0}}>
+                <div style={{fontSize:13,fontWeight:600,lineHeight:1.3}}>{p.nome||p.desc}</div>
+                <div className="tnum" style={{fontSize:10.5,color:"#9AA3AB",fontFamily:F_MONO,marginTop:2}}>{p.cod}{p.mar?` · ${p.mar}`:""}{p.tip?` · ${p.tip}`:""}</div>
+                <div style={{display:"flex",flexWrap:"wrap",gap:4,marginTop:5}}>
+                  {mancanti.map(c=>(
+                    <span key={c} style={{fontSize:9.5,fontFamily:F_MONO,padding:"2px 6px",borderRadius:10,background:"rgba(217,164,65,0.16)",color:"#8a6418"}}>{ETICHETTA_CAMPO[c]}</span>
+                  ))}
+                </div>
+              </div>
             </div>
-          </div>
-        ))}
+          );
+        })}
         {elencoFiltrato.length===0 && (
           <div style={{padding:"16px 12px",fontSize:12.5,color:C.steel,textAlign:"center"}}>Nessun prodotto corrisponde al filtro.</div>
         )}
@@ -1454,24 +1515,25 @@ function CompletaCategoria({ prodotti, categorieEsistenti, tipologieEsistenti, m
 
       <div style={{...S.card,cursor:"default",border:`1px solid ${C.warn}`,background:"rgba(217,164,65,0.05)"}}>
         <div style={S.eyebrow}>Assegna ai {selezionati.size} selezionati</div>
-        <div style={{display:"flex",flexDirection:"column",gap:10,marginTop:8}}>
+        <div style={{fontSize:11.5,color:C.steel,marginTop:2,marginBottom:8}}>Lascia vuoto un campo per non modificarlo su questo gruppo.</div>
+        <div style={{display:"flex",flexDirection:"column",gap:10}}>
           <div>
-            <label style={{fontSize:11,fontFamily:F_MONO,color:"#9AA3AB",textTransform:"uppercase",letterSpacing:"0.05em",display:"block",marginBottom:4}}>Categoria *</label>
+            <label style={{fontSize:11,fontFamily:F_MONO,color:"#9AA3AB",textTransform:"uppercase",letterSpacing:"0.05em",display:"block",marginBottom:4}}>Categoria</label>
             <input value={categoria} onChange={e=>setCategoria(e.target.value)} placeholder="es. BATTERY" style={S.inp} list="da-completare-categorie"/>
             <datalist id="da-completare-categorie">{categorieEsistenti.map(c=>(<option key={c} value={c}/>))}</datalist>
           </div>
           <div>
-            <label style={{fontSize:11,fontFamily:F_MONO,color:"#9AA3AB",textTransform:"uppercase",letterSpacing:"0.05em",display:"block",marginBottom:4}}>Tipologia (opzionale)</label>
+            <label style={{fontSize:11,fontFamily:F_MONO,color:"#9AA3AB",textTransform:"uppercase",letterSpacing:"0.05em",display:"block",marginBottom:4}}>Tipologia</label>
             <input value={tipologia} onChange={e=>setTipologia(e.target.value)} placeholder="es. TESTER BATTERIE" style={S.inp} list="da-completare-tipologie"/>
             <datalist id="da-completare-tipologie">{tipologieEsistenti.map(t=>(<option key={t} value={t}/>))}</datalist>
           </div>
           <div>
-            <label style={{fontSize:11,fontFamily:F_MONO,color:"#9AA3AB",textTransform:"uppercase",letterSpacing:"0.05em",display:"block",marginBottom:4}}>Marca (opzionale)</label>
+            <label style={{fontSize:11,fontFamily:F_MONO,color:"#9AA3AB",textTransform:"uppercase",letterSpacing:"0.05em",display:"block",marginBottom:4}}>Marca</label>
             <input value={marca} onChange={e=>setMarca(e.target.value)} placeholder="es. BOSCH" style={S.inp} list="da-completare-marche"/>
             <datalist id="da-completare-marche">{marchiEsistenti.map(m=>(<option key={m} value={m}/>))}</datalist>
           </div>
           <div>
-            <label style={{fontSize:11,fontFamily:F_MONO,color:"#9AA3AB",textTransform:"uppercase",letterSpacing:"0.05em",display:"block",marginBottom:4}}>Settore (opzionale)</label>
+            <label style={{fontSize:11,fontFamily:F_MONO,color:"#9AA3AB",textTransform:"uppercase",letterSpacing:"0.05em",display:"block",marginBottom:4}}>Settore</label>
             {settoriEsistenti.length>0 && (
               <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:6}}>
                 {settoriEsistenti.map(s=>(
@@ -1481,6 +1543,11 @@ function CompletaCategoria({ prodotti, categorieEsistenti, tipologieEsistenti, m
             )}
             <input value={settoreNuovo} onChange={e=>setSettoreNuovo(e.target.value)} placeholder="Aggiungi nuovo settore (o più, separati da virgola)" style={S.inp}/>
           </div>
+        </div>
+
+        <div style={{fontSize:11,color:"#9AA3AB",marginTop:10}}>
+          Il listino (prezzo) non è assegnabile in blocco — è specifico per prodotto, va completato
+          singolarmente da "✎ Modifica" sulla scheda prodotto.
         </div>
 
         <button onClick={()=>setConfermaAperta(true)} disabled={!pronto} style={{...S.btnAccent,width:"100%",marginTop:14,opacity:pronto?1:0.4}}>
@@ -1494,7 +1561,8 @@ function CompletaCategoria({ prodotti, categorieEsistenti, tipologieEsistenti, m
           <div style={{background:"#fff",borderRadius:12,padding:20,maxWidth:420,width:"100%"}}>
             <div style={{fontSize:14,fontWeight:600,marginBottom:8}}>Confermi l'assegnazione?</div>
             <div style={{fontSize:12.5,color:C.steel,marginBottom:14,lineHeight:1.6}}>
-              Stai per aggiornare <strong>{selezionati.size} prodotti</strong> con: Categoria "<strong>{categoria.trim()}</strong>"
+              Stai per aggiornare <strong>{selezionati.size} prodotti</strong> con:
+              {categoria.trim() && <> Categoria "<strong>{categoria.trim()}</strong>"</>}
               {tipologia.trim() && <>, Tipologia "<strong>{tipologia.trim()}</strong>"</>}
               {marca.trim() && <>, Marca "<strong>{marca.trim()}</strong>"</>}
               {settoriFinaliAnteprima.length>0 && <>, Settore "<strong>{[...new Set(settoriFinaliAnteprima)].join(", ")}</strong>"</>}.
