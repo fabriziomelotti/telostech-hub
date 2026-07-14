@@ -996,6 +996,11 @@ async function searchSemantica(query, catalog, accessToken){
 }
 
 // ─── CATALOGO PRODOTTI ────────────────────────────────────────────────────────
+// Chiave interna (non un valore reale di p.cat) usata per la voce virtuale
+// "DA COMPLETARE" nel livello 1 di navigazione — raccoglie i prodotti senza
+// categoria assegnata, visibile solo a responsabile/admin (vedi CompletaCategoria).
+const DA_COMPLETARE = "__DA_COMPLETARE__";
+
 function Prodotti({cart,setCart,catalog:catProp,catalogLoading,sessione,ruolo,setCatalog,setArea}){
   const CATS = catProp || CATALOG;
   const accessToken = trovaAccessToken(sessione);
@@ -1004,6 +1009,18 @@ function Prodotti({cart,setCart,catalog:catProp,catalogLoading,sessione,ruolo,se
   const categorieCatalogo = useMemo(()=>[...new Set(CATS.map(p=>p.cat).filter(Boolean))].sort(),[CATS]);
   const tipologieCatalogo = useMemo(()=>[...new Set(CATS.map(p=>p.tip).filter(Boolean))].sort(),[CATS]);
   const marchiCatalogo = useMemo(()=>[...new Set(CATS.map(p=>p.mar).filter(Boolean))].sort(),[CATS]);
+  // Prodotti senza categoria assegnata (import/inserimento incompleto) e i
+  // settori distinti già presenti nel catalogo, usati dal pannello di
+  // completamento in blocco "DA COMPLETARE" (solo responsabile/admin).
+  const prodottiDaCompletare = useMemo(()=>CATS.filter(p=>!p.cat || String(p.cat).trim()===""),[CATS]);
+  const settoriCatalogo = useMemo(()=>{
+    const conteggi=new Map();
+    for(const p of CATS){
+      for(const s of String(p.settori||"").split(",").map(s=>s.trim()).filter(Boolean)) conteggi.set(s,true);
+    }
+    return [...conteggi.keys()].sort();
+  },[CATS]);
+  const puoCompletareCategorie = ruolo==="admin" || ruolo==="responsabile";
   const [aiResults,setAiResults]=useState(null);
   const [aiSearching,setAiSearching]=useState(false);
 
@@ -1099,7 +1116,7 @@ function Prodotti({cart,setCart,catalog:catProp,catalogLoading,sessione,ruolo,se
 
   // sottoinsieme corrente in base ai livelli selezionati
   let liv1 = CATS;
-  let dopoCat = selCat ? liv1.filter(p=>p.cat===selCat) : null;
+  let dopoCat = (selCat && selCat!==DA_COMPLETARE) ? liv1.filter(p=>p.cat===selCat) : null;
   const settoriDisponibili = dopoCat ? opzioniSettore(dopoCat) : [];
   const settoreAttivo = settoriDisponibili.length>0; // il livello esiste solo se ci sono dati
   let dopoSettore = dopoCat
@@ -1150,7 +1167,7 @@ function Prodotti({cart,setCart,catalog:catProp,catalogLoading,sessione,ruolo,se
   function Breadcrumb(){
     const parti=[];
     parti.push({label:"Tutte le categorie", onClick:resetNav});
-    if(selCat) parti.push({label:selCat, onClick:()=>{setSelSettore(null);setSelTip(null);setSelMar(null);}});
+    if(selCat) parti.push({label:selCat===DA_COMPLETARE?"Da completare":selCat, onClick:()=>{setSelSettore(null);setSelTip(null);setSelMar(null);}});
     if(selSettore) parti.push({label:selSettore, onClick:()=>{setSelTip(null);setSelMar(null);}});
     if(selTip) parti.push({label:selTip, onClick:()=>setSelMar(null)});
     if(selMar) parti.push({label:selMar, onClick:()=>{}});
@@ -1212,7 +1229,29 @@ function Prodotti({cart,setCart,catalog:catProp,catalogLoading,sessione,ruolo,se
         {!selCat && (<>
           <div style={{...S.eyebrow,display:"flex",justifyContent:"space-between"}}><span>Categorie</span><span className="tnum">{CATS.length} articoli</span></div>
           {opzioni(CATS,"cat").map(([nome,n])=>VoceNav(nome,n,()=>setSelCat(nome)))}
+          {puoCompletareCategorie && prodottiDaCompletare.length>0 && (
+            <div onClick={()=>setSelCat(DA_COMPLETARE)} style={{...S.card,cursor:"pointer",display:"flex",justifyContent:"space-between",alignItems:"center",gap:10,borderColor:C.warn,background:"rgba(217,164,65,0.08)"}}>
+              <span style={{fontWeight:600,fontSize:13.5,color:"#8a6418",display:"flex",alignItems:"center",gap:6}}>
+                <span>⚠</span> DA COMPLETARE
+              </span>
+              <span className="tnum" style={{fontSize:11,color:"#8a6418",fontFamily:F_MONO,flexShrink:0}}>{prodottiDaCompletare.length} ›</span>
+            </div>
+          )}
         </>)}
+
+        {/* Categoria virtuale: prodotti senza categoria, completamento in blocco */}
+        {selCat===DA_COMPLETARE && puoCompletareCategorie && (
+          <CompletaCategoria
+            prodotti={prodottiDaCompletare}
+            categorieEsistenti={categorieCatalogo}
+            tipologieEsistenti={tipologieCatalogo}
+            marchiEsistenti={marchiCatalogo}
+            settoriEsistenti={settoriCatalogo}
+            ruolo={ruolo}
+            sessione={sessione}
+            onFatto={()=>{ if(setCatalog) caricaCatalogo(CATALOG).then(d=>setCatalog(d)); }}
+          />
+        )}
 
         {/* Livello 2: settore (solo se i dati lo prevedono) */}
         {selCat && settoreAttivo && !selSettore && (<>
@@ -1279,6 +1318,194 @@ function Prodotti({cart,setCart,catalog:catProp,catalogLoading,sessione,ruolo,se
             if(setCatalog) caricaCatalogo(CATALOG).then(d=>setCatalog(d));
           }}
         />
+      )}
+    </div>
+  );
+}
+
+// ─── COMPLETA CATEGORIA (prodotti senza categoria, assegnazione in blocco) ────
+// Componente in cima al modulo (non annidato in Prodotti): ha stato proprio
+// (selezione, campi del form) che andrebbe perso a ogni render del genitore
+// se fosse una funzione locale — stesso principio già seguito per
+// SchedaProdotto/EditaProdotto. Visibile solo a responsabile/admin, la
+// scrittura passa dalla Edge Function catalog-admin (azione
+// "bulkAssegnaCategoria", autorizzata anche per il ruolo responsabile).
+function CompletaCategoria({ prodotti, categorieEsistenti, tipologieEsistenti, marchiEsistenti, settoriEsistenti, ruolo, sessione, onFatto }){
+  if(ruolo!=="admin" && ruolo!=="responsabile") return null;
+  const accessToken = trovaAccessToken(sessione);
+
+  const [filtroTesto,setFiltroTesto]=useState("");
+  const [selezionati,setSelezionati]=useState(()=>new Set());
+  const [categoria,setCategoria]=useState("");
+  const [tipologia,setTipologia]=useState("");
+  const [marca,setMarca]=useState("");
+  const [settoriSelezionati,setSettoriSelezionati]=useState(()=>new Set());
+  const [settoreNuovo,setSettoreNuovo]=useState("");
+  const [confermaAperta,setConfermaAperta]=useState(false);
+  const [stato,setStato]=useState("idle"); // idle | salvo | fatto | errore
+  const [msg,setMsg]=useState("");
+
+  const elencoFiltrato = useMemo(()=>{
+    const f=filtroTesto.trim().toLowerCase();
+    if(!f) return prodotti;
+    return prodotti.filter(p=>
+      (p.nome||"").toLowerCase().includes(f) ||
+      (p.cod||"").toLowerCase().includes(f) ||
+      (p.mar||"").toLowerCase().includes(f)
+    );
+  },[prodotti,filtroTesto]);
+
+  function toggleSel(cod){
+    setSelezionati(prev=>{
+      const next=new Set(prev);
+      if(next.has(cod)) next.delete(cod); else next.add(cod);
+      return next;
+    });
+  }
+  function selezionaTuttiVisibili(){
+    setSelezionati(prev=>{
+      const next=new Set(prev);
+      elencoFiltrato.forEach(p=>next.add(p.cod));
+      return next;
+    });
+  }
+  function deselezionaTuttiVisibili(){
+    setSelezionati(prev=>{
+      const next=new Set(prev);
+      elencoFiltrato.forEach(p=>next.delete(p.cod));
+      return next;
+    });
+  }
+  function toggleSettore(nome){
+    setSettoriSelezionati(prev=>{
+      const next=new Set(prev);
+      if(next.has(nome)) next.delete(nome); else next.add(nome);
+      return next;
+    });
+  }
+
+  const settoriNuoviLista = settoreNuovo.split(",").map(s=>s.trim()).filter(Boolean);
+  const settoriFinaliAnteprima = [...settoriSelezionati, ...settoriNuoviLista];
+  const pronto = selezionati.size>0 && categoria.trim().length>0;
+
+  async function eseguiApplicazione(){
+    setStato("salvo"); setMsg("Aggiornamento in corso…");
+    try{
+      const settoriFinali = [...new Set(settoriFinaliAnteprima)].join(",");
+      const campi = { categoria: categoria.trim() };
+      if(tipologia.trim()) campi.tipologia = tipologia.trim();
+      if(marca.trim()) campi.marchio = marca.trim();
+      if(settoriFinali) campi.settori = settoriFinali;
+      const { aggiornati } = await chiamaCatalogAdmin(
+        "bulkAssegnaCategoria", { cods: Array.from(selezionati), campi }, accessToken
+      );
+      setStato("fatto");
+      setMsg(`Fatto: ${aggiornati ?? selezionati.size} prodotti aggiornati.`);
+      setSelezionati(new Set());
+      setCategoria(""); setTipologia(""); setMarca("");
+      setSettoriSelezionati(new Set()); setSettoreNuovo("");
+      setConfermaAperta(false);
+      if(onFatto) onFatto();
+    }catch(err){
+      setStato("errore");
+      setMsg("Errore: "+err.message);
+      setConfermaAperta(false);
+    }
+  }
+
+  if(prodotti.length===0){
+    return (
+      <div style={{textAlign:"center",padding:"2.5rem 1rem",color:C.ok}}>
+        <div style={{fontSize:28,marginBottom:8}}>✓</div>
+        <div style={{fontSize:13.5,fontWeight:600}}>Tutti i prodotti hanno una categoria assegnata.</div>
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      <div style={{fontSize:12.5,color:C.steel,marginBottom:12,lineHeight:1.6}}>
+        Questi {prodotti.length} prodotti non hanno ancora una categoria. Seleziona quelli simili
+        (stessa famiglia di prodotto) e assegna categoria, tipologia, marca e settore in un colpo solo
+        — più veloce che completarli uno per uno.
+      </div>
+
+      <div style={{display:"flex",gap:8,marginBottom:10,flexWrap:"wrap",alignItems:"center"}}>
+        <input value={filtroTesto} onChange={e=>setFiltroTesto(e.target.value)} placeholder="Filtra per nome, codice o marca…" style={{...S.inp,flex:"1 1 200px"}}/>
+        <button onClick={selezionaTuttiVisibili} style={S.btnS}>Seleziona tutti {filtroTesto?`(${elencoFiltrato.length})`:""}</button>
+        <button onClick={deselezionaTuttiVisibili} style={S.btnS}>Deseleziona</button>
+      </div>
+      <div style={{fontSize:11.5,fontFamily:F_MONO,color:"#9AA3AB",marginBottom:10}} className="tnum">{selezionati.size} selezionati su {prodotti.length}</div>
+
+      <div style={{maxHeight:340,overflowY:"auto",border:`1px solid ${C.paperLine}`,borderRadius:8,marginBottom:16}}>
+        {elencoFiltrato.map(p=>(
+          <div key={p.cod} onClick={()=>toggleSel(p.cod)} style={{display:"flex",alignItems:"center",gap:10,padding:"9px 12px",borderBottom:`1px solid ${C.paperLine}`,cursor:"pointer",background:selezionati.has(p.cod)?"rgba(87,206,202,0.10)":"#fff"}}>
+            <input type="checkbox" checked={selezionati.has(p.cod)} onChange={()=>toggleSel(p.cod)} onClick={e=>e.stopPropagation()} style={{flexShrink:0,width:16,height:16}}/>
+            <div style={{flex:1,minWidth:0}}>
+              <div style={{fontSize:13,fontWeight:600,lineHeight:1.3}}>{p.nome||p.desc}</div>
+              <div className="tnum" style={{fontSize:10.5,color:"#9AA3AB",fontFamily:F_MONO,marginTop:2}}>{p.cod}{p.mar?` · ${p.mar}`:""}{p.tip?` · ${p.tip}`:""}</div>
+            </div>
+          </div>
+        ))}
+        {elencoFiltrato.length===0 && (
+          <div style={{padding:"16px 12px",fontSize:12.5,color:C.steel,textAlign:"center"}}>Nessun prodotto corrisponde al filtro.</div>
+        )}
+      </div>
+
+      <div style={{...S.card,cursor:"default",border:`1px solid ${C.warn}`,background:"rgba(217,164,65,0.05)"}}>
+        <div style={S.eyebrow}>Assegna ai {selezionati.size} selezionati</div>
+        <div style={{display:"flex",flexDirection:"column",gap:10,marginTop:8}}>
+          <div>
+            <label style={{fontSize:11,fontFamily:F_MONO,color:"#9AA3AB",textTransform:"uppercase",letterSpacing:"0.05em",display:"block",marginBottom:4}}>Categoria *</label>
+            <input value={categoria} onChange={e=>setCategoria(e.target.value)} placeholder="es. BATTERY" style={S.inp} list="da-completare-categorie"/>
+            <datalist id="da-completare-categorie">{categorieEsistenti.map(c=>(<option key={c} value={c}/>))}</datalist>
+          </div>
+          <div>
+            <label style={{fontSize:11,fontFamily:F_MONO,color:"#9AA3AB",textTransform:"uppercase",letterSpacing:"0.05em",display:"block",marginBottom:4}}>Tipologia (opzionale)</label>
+            <input value={tipologia} onChange={e=>setTipologia(e.target.value)} placeholder="es. TESTER BATTERIE" style={S.inp} list="da-completare-tipologie"/>
+            <datalist id="da-completare-tipologie">{tipologieEsistenti.map(t=>(<option key={t} value={t}/>))}</datalist>
+          </div>
+          <div>
+            <label style={{fontSize:11,fontFamily:F_MONO,color:"#9AA3AB",textTransform:"uppercase",letterSpacing:"0.05em",display:"block",marginBottom:4}}>Marca (opzionale)</label>
+            <input value={marca} onChange={e=>setMarca(e.target.value)} placeholder="es. BOSCH" style={S.inp} list="da-completare-marche"/>
+            <datalist id="da-completare-marche">{marchiEsistenti.map(m=>(<option key={m} value={m}/>))}</datalist>
+          </div>
+          <div>
+            <label style={{fontSize:11,fontFamily:F_MONO,color:"#9AA3AB",textTransform:"uppercase",letterSpacing:"0.05em",display:"block",marginBottom:4}}>Settore (opzionale)</label>
+            {settoriEsistenti.length>0 && (
+              <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:6}}>
+                {settoriEsistenti.map(s=>(
+                  <span key={s} onClick={()=>toggleSettore(s)} style={{fontSize:11.5,fontFamily:F_MONO,padding:"5px 10px",borderRadius:20,border:`1px solid ${settoriSelezionati.has(s)?C.ink:C.paperLine}`,background:settoriSelezionati.has(s)?C.ink:"#fff",color:settoriSelezionati.has(s)?"#fff":"#5B6770",cursor:"pointer"}}>{s}</span>
+                ))}
+              </div>
+            )}
+            <input value={settoreNuovo} onChange={e=>setSettoreNuovo(e.target.value)} placeholder="Aggiungi nuovo settore (o più, separati da virgola)" style={S.inp}/>
+          </div>
+        </div>
+
+        <button onClick={()=>setConfermaAperta(true)} disabled={!pronto} style={{...S.btnAccent,width:"100%",marginTop:14,opacity:pronto?1:0.4}}>
+          Applica a {selezionati.size} prodotti
+        </button>
+        {msg && <div style={{fontSize:12,color:stato==="errore"?C.danger:C.steel,marginTop:10}}>{msg}</div>}
+      </div>
+
+      {confermaAperta && (
+        <div onClick={e=>{if(e.target===e.currentTarget) setConfermaAperta(false);}} style={{position:"fixed",inset:0,background:"rgba(14,26,64,.55)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:60,padding:20}}>
+          <div style={{background:"#fff",borderRadius:12,padding:20,maxWidth:420,width:"100%"}}>
+            <div style={{fontSize:14,fontWeight:600,marginBottom:8}}>Confermi l'assegnazione?</div>
+            <div style={{fontSize:12.5,color:C.steel,marginBottom:14,lineHeight:1.6}}>
+              Stai per aggiornare <strong>{selezionati.size} prodotti</strong> con: Categoria "<strong>{categoria.trim()}</strong>"
+              {tipologia.trim() && <>, Tipologia "<strong>{tipologia.trim()}</strong>"</>}
+              {marca.trim() && <>, Marca "<strong>{marca.trim()}</strong>"</>}
+              {settoriFinaliAnteprima.length>0 && <>, Settore "<strong>{[...new Set(settoriFinaliAnteprima)].join(", ")}</strong>"</>}.
+              L'operazione va corretta manualmente se sbagliata.
+            </div>
+            <div style={{display:"flex",gap:8}}>
+              <button onClick={eseguiApplicazione} disabled={stato==="salvo"} style={{...S.btnAccent,padding:"9px 15px"}}>{stato==="salvo"?"Applico…":"Sì, conferma"}</button>
+              <button onClick={()=>setConfermaAperta(false)} style={{...S.btnS,padding:"9px 15px"}}>Annulla</button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
