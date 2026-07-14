@@ -179,6 +179,19 @@ function aggiungiGiorniLavorativi(dataIniziale, giorni){
   return d.toISOString().slice(0,10);
 }
 
+// Calcola lo stato di una data di scadenza (aggiornamenti/verifiche
+// attrezzature): giorni residui, se è già scaduta, se rientra nella finestra
+// di promemoria (30 giorni prima). Usato sia per il badge sulla singola
+// attrezzatura sia per l'elenco promemoria mostrato a responsabili/tecnici.
+const GIORNI_PREAVVISO_SCADENZE = 30;
+function statoScadenza(dataStr){
+  if(!dataStr) return null;
+  const oggi = new Date(); oggi.setHours(0,0,0,0);
+  const scadenza = new Date(dataStr);
+  const giorni = Math.round((scadenza-oggi)/(1000*60*60*24));
+  return { giorni, scaduta: giorni<0, vicina: giorni>=0 && giorni<=GIORNI_PREAVVISO_SCADENZE };
+}
+
 // Elenco utenti Telos (id, nome, ruolo) per il menu a tendina "Referente
 // Telos" — riservato lato server a responsabili/admin (vedi Edge Function
 // utenti-info); chi non ha i permessi riceve semplicemente un errore 403
@@ -574,7 +587,7 @@ export default function App(){
           {area==="clienti" && <Clienti sessione={sessione} preventivi={preventivi} ordini={ordini} attrezzature={attrezzature} setAttrezzature={setAttrezzature} interventi={interventi} setInterventi={setInterventi} catalog={catalog} ruolo={role}/>}
           {area==="preventivi" && <Preventivi cart={cart} setCart={setCart} preventivi={preventivi} setPreventivi={setPreventivi} setOrdini={setOrdini} setArea={setArea} ruolo={role} catalog={catalog} sessione={sessione}/>}
           {area==="ordini" && <Ordini ordini={ordini} setOrdini={setOrdini} sessione={sessione} ruolo={role}/>}
-          {area==="interventi" && <Interventi interventi={interventi} setInterventi={setInterventi} sessione={sessione} setArea={setArea} setInterventoDaCompletare={setInterventoDaCompletare}/>}
+          {area==="interventi" && <Interventi interventi={interventi} setInterventi={setInterventi} attrezzature={attrezzature} sessione={sessione} setArea={setArea} setInterventoDaCompletare={setInterventoDaCompletare}/>}
           {area==="rapporti" && <RapportoDemo sessione={sessione} interventi={interventi} setInterventi={setInterventi} interventoDaCompletare={interventoDaCompletare} setInterventoDaCompletare={setInterventoDaCompletare}/>}
           {area==="analytics" && RUOLI_APPROVATORI.includes(role) && <CondizioniAcquisto/>}
           {area==="analytics" && !RUOLI_APPROVATORI.includes(role) && <Placeholder area={area} setArea={setArea}/>}
@@ -1401,14 +1414,17 @@ const CAMPI_RICERCA_CLIENTI = ["codice","ragione_sociale","rag_sociale_agg","loc
 
 function Clienti({sessione, preventivi, ordini, attrezzature, setAttrezzature, interventi, setInterventi, catalog, ruolo}){
   const accessToken = trovaAccessToken(sessione);
+  const [modo,setModo] = useState("cliente"); // cliente | attrezzatura
   const [q,setQ] = useState("");
   const [risultati,setRisultati] = useState([]);
   const [caricando,setCaricando] = useState(false);
   const [errore,setErrore] = useState("");
   const [selezionato,setSelezionato] = useState(null);
+  const [tabInizialeCliente,setTabInizialeCliente] = useState("dati");
   const timer = useRef(null);
 
   useEffect(()=>{
+    if(modo!=="cliente") return;
     clearTimeout(timer.current);
     if(!q.trim()){ setRisultati([]); setErrore(""); return; }
     timer.current = setTimeout(async ()=>{
@@ -1426,52 +1442,114 @@ function Clienti({sessione, preventivi, ordini, attrezzature, setAttrezzature, i
       setCaricando(false);
     }, 350);
     return ()=>clearTimeout(timer.current);
-  },[q]);
+  },[q,modo]);
+
+  // Ricerca per attrezzatura: filtro lato client sull'elenco già caricato
+  // (nome prodotto, numero di serie, marca) — selezionando un risultato si
+  // recupera l'anagrafica completa del cliente collegato e si apre la sua
+  // scheda direttamente sulla tab Attrezzature.
+  const risultatiAttrezzature = useMemo(()=>{
+    if(modo!=="attrezzatura" || !q.trim()) return [];
+    const qq = q.trim().toLowerCase();
+    return (attrezzature||[]).filter(a=>
+      (a.nome_prodotto||"").toLowerCase().includes(qq) ||
+      (a.numero_serie||"").toLowerCase().includes(qq) ||
+      (a.marchio||"").toLowerCase().includes(qq)
+    ).slice(0,30);
+  },[q,modo,attrezzature]);
+
+  async function apriClienteDiAttrezzatura(a){
+    if(!a.cliente_codice) return;
+    setCaricando(true); setErrore("");
+    try{
+      const params = `select=codice,ragione_sociale,rag_sociale_agg,indirizzo,localita,provincia,cap,partita_iva,codice_fiscale,telefono,mail,filiale&codice=eq.${encodeURIComponent(a.cliente_codice)}`;
+      const dati = await sbGetAuth("clienti", params, accessToken);
+      if(dati && dati[0]){
+        setTabInizialeCliente("attrezzature");
+        setSelezionato(dati[0]);
+      } else {
+        setErrore("Cliente collegato non trovato in anagrafica.");
+      }
+    }catch(err){
+      setErrore(err.message);
+    }
+    setCaricando(false);
+  }
 
   if(selezionato){
-    return <ClienteDettaglio cliente={selezionato} onIndietro={()=>setSelezionato(null)} preventivi={preventivi} ordini={ordini}
+    return <ClienteDettaglio cliente={selezionato} onIndietro={()=>{setSelezionato(null); setTabInizialeCliente("dati");}} preventivi={preventivi} ordini={ordini}
       attrezzature={attrezzature} setAttrezzature={setAttrezzature} interventi={interventi} setInterventi={setInterventi}
-      catalog={catalog} ruolo={ruolo} sessione={sessione}/>;
+      catalog={catalog} ruolo={ruolo} sessione={sessione} tabIniziale={tabInizialeCliente}/>;
   }
 
   return (
     <div>
       <div style={S.eyebrow}>Clienti</div>
+
+      <div style={{display:"flex",gap:6,marginTop:10,marginBottom:12}}>
+        <button onClick={()=>{setModo("cliente"); setQ(""); setRisultati([]); setErrore("");}} style={{...S.btnS,...(modo==="cliente"?{background:C.ink,color:"#fff",borderColor:C.ink}:{})}}>◉ Per cliente</button>
+        <button onClick={()=>{setModo("attrezzatura"); setQ(""); setErrore("");}} style={{...S.btnS,...(modo==="attrezzatura"?{background:C.ink,color:"#fff",borderColor:C.ink}:{})}}># Per attrezzatura</button>
+      </div>
+
       <input
         value={q} onChange={e=>setQ(e.target.value)}
-        placeholder="🔍 Cerca per ragione sociale, città, P.IVA, codice fiscale…"
-        style={{...S.inp,padding:"13px 16px",fontSize:14,marginTop:10,marginBottom:14}}
+        placeholder={modo==="cliente" ? "🔍 Cerca per ragione sociale, città, P.IVA, codice fiscale…" : "🔍 Cerca per nome prodotto, numero di serie, marca…"}
+        style={{...S.inp,padding:"13px 16px",fontSize:14,marginBottom:14,fontFamily:modo==="attrezzatura"?F_MONO:F_BODY}}
         autoFocus
       />
 
       {errore && <div style={{fontSize:12,color:C.danger,background:"rgba(200,75,58,0.08)",borderRadius:6,padding:"9px 11px",marginBottom:14}}>⚠ {errore}</div>}
       {caricando && <div style={{fontSize:12.5,color:"#8A929A",padding:"8px 0"}}>Ricerca in corso…</div>}
-      {!caricando && q.trim() && !errore && risultati.length===0 && (
-        <div style={{textAlign:"center",padding:"2rem 1rem",color:"#9AA3AB",fontSize:13}}>Nessun cliente trovato per «{q}»</div>
+
+      {modo==="cliente" ? (
+        <>
+          {!caricando && q.trim() && !errore && risultati.length===0 && (
+            <div style={{textAlign:"center",padding:"2rem 1rem",color:"#9AA3AB",fontSize:13}}>Nessun cliente trovato per «{q}»</div>
+          )}
+          {!q.trim() && (
+            <div style={{textAlign:"center",padding:"2.5rem 1rem",color:"#9AA3AB"}}>
+              <div style={{fontSize:28,marginBottom:8}}>◉</div>
+              <div style={{fontSize:13}}>Cerca un cliente per vedere i suoi dati, preventivi, ordini e attrezzature</div>
+            </div>
+          )}
+          {risultati.map(c=>(
+            <div key={c.codice} onClick={()=>setSelezionato(c)} style={S.card}>
+              <div style={{fontWeight:600,fontSize:13.5}}>{c.ragione_sociale}</div>
+              {c.rag_sociale_agg && <div style={{fontSize:12,color:C.steel,marginTop:1}}>{c.rag_sociale_agg}</div>}
+              <div style={{fontSize:11.5,color:"#8A929A",marginTop:3}}>
+                {[c.localita, c.provincia && `(${c.provincia})`].filter(Boolean).join(" ")}
+                {c.partita_iva && <span className="tnum" style={{fontFamily:F_MONO,marginLeft:8}}>P.IVA {c.partita_iva}</span>}
+              </div>
+            </div>
+          ))}
+        </>
+      ) : (
+        <>
+          {q.trim() && risultatiAttrezzature.length===0 && (
+            <div style={{textAlign:"center",padding:"2rem 1rem",color:"#9AA3AB",fontSize:13}}>Nessuna attrezzatura trovata per «{q}»</div>
+          )}
+          {!q.trim() && (
+            <div style={{textAlign:"center",padding:"2.5rem 1rem",color:"#9AA3AB"}}>
+              <div style={{fontSize:28,marginBottom:8}}>#</div>
+              <div style={{fontSize:13}}>Cerca per nome prodotto, numero di serie o marca</div>
+            </div>
+          )}
+          {risultatiAttrezzature.map(a=>(
+            <div key={a.id} onClick={()=>apriClienteDiAttrezzatura(a)} style={S.card}>
+              {a.marchio && <Tag tone="steel">{a.marchio}</Tag>}
+              <div style={{fontWeight:600,fontSize:13.5,marginTop:6}}>{a.nome_prodotto}</div>
+              <div className="tnum" style={{fontSize:11,color:"#9AA3AB",fontFamily:F_MONO,marginTop:3}}>S/N {a.numero_serie}</div>
+            </div>
+          ))}
+        </>
       )}
-      {!q.trim() && (
-        <div style={{textAlign:"center",padding:"2.5rem 1rem",color:"#9AA3AB"}}>
-          <div style={{fontSize:28,marginBottom:8}}>◉</div>
-          <div style={{fontSize:13}}>Cerca un cliente per vedere i suoi dati, preventivi, ordini e attrezzature</div>
-        </div>
-      )}
-      {risultati.map(c=>(
-        <div key={c.codice} onClick={()=>setSelezionato(c)} style={S.card}>
-          <div style={{fontWeight:600,fontSize:13.5}}>{c.ragione_sociale}</div>
-          {c.rag_sociale_agg && <div style={{fontSize:12,color:C.steel,marginTop:1}}>{c.rag_sociale_agg}</div>}
-          <div style={{fontSize:11.5,color:"#8A929A",marginTop:3}}>
-            {[c.localita, c.provincia && `(${c.provincia})`].filter(Boolean).join(" ")}
-            {c.partita_iva && <span className="tnum" style={{fontFamily:F_MONO,marginLeft:8}}>P.IVA {c.partita_iva}</span>}
-          </div>
-        </div>
-      ))}
     </div>
   );
 }
 
-function ClienteDettaglio({cliente, onIndietro, preventivi, ordini, attrezzature, setAttrezzature, interventi, setInterventi, catalog, ruolo, sessione}){
+function ClienteDettaglio({cliente, onIndietro, preventivi, ordini, attrezzature, setAttrezzature, interventi, setInterventi, catalog, ruolo, sessione, tabIniziale}){
   const accessToken = trovaAccessToken(sessione);
-  const [tab,setTab] = useState("dati");
+  const [tab,setTab] = useState(tabIniziale || "dati");
   const [erroreLocale,setErroreLocale] = useState("");
   const preventiviCliente = (preventivi||[]).filter(p=>p.cliente_codice===cliente.codice);
   const ordiniCliente = (ordini||[]).filter(o=>o.cliente_codice===cliente.codice);
@@ -1486,8 +1564,18 @@ function ClienteDettaglio({cliente, onIndietro, preventivi, ordini, attrezzature
   const [marchioLibero,setMarchioLibero] = useState("");
   const [numeroSerie,setNumeroSerie] = useState("");
   const [dataInstallazione,setDataInstallazione] = useState("");
+  const [scadenzaAggiornamenti,setScadenzaAggiornamenti] = useState("");
+  const [scadenzaVerifiche,setScadenzaVerifiche] = useState("");
   const [noteAttrezzatura,setNoteAttrezzatura] = useState("");
   const [salvandoAttrezzatura,setSalvandoAttrezzatura] = useState(false);
+
+  // Elenco marchi già in uso nel catalogo, per il menu a tendina quando
+  // l'attrezzatura non viene scelta da lì (es. attrezzatura di terzi, o non
+  // ancora a catalogo) — evita marche scritte in modo incoerente a mano.
+  const marchiCatalogo = useMemo(()=>{
+    if(!catalog) return [];
+    return [...new Set(catalog.map(p=>p.mar).filter(Boolean))].sort();
+  },[catalog]);
 
   const risultatiProdotto = useMemo(()=>{
     if(!qProdotto.trim() || !catalog) return [];
@@ -1499,7 +1587,8 @@ function ClienteDettaglio({cliente, onIndietro, preventivi, ordini, attrezzature
 
   function resetFormAttrezzatura(){
     setFormAttrezzaturaAperto(false); setQProdotto(""); setProdottoScelto(null);
-    setNomeLibero(""); setMarchioLibero(""); setNumeroSerie(""); setDataInstallazione(""); setNoteAttrezzatura("");
+    setNomeLibero(""); setMarchioLibero(""); setNumeroSerie(""); setDataInstallazione("");
+    setScadenzaAggiornamenti(""); setScadenzaVerifiche(""); setNoteAttrezzatura("");
   }
   async function salvaAttrezzatura(){
     const nome = prodottoScelto ? prodottoScelto.nome : nomeLibero.trim();
@@ -1514,6 +1603,8 @@ function ClienteDettaglio({cliente, onIndietro, preventivi, ordini, attrezzature
         marchio: marchio || null,
         numero_serie: numeroSerie.trim(),
         data_installazione: dataInstallazione || null,
+        scadenza_aggiornamenti: scadenzaAggiornamenti || null,
+        scadenza_verifiche: scadenzaVerifiche || null,
         note: noteAttrezzatura.trim() || null,
         creato_da_nome: sessione?.nome || null,
       };
@@ -1710,7 +1801,10 @@ function ClienteDettaglio({cliente, onIndietro, preventivi, ordini, attrezzature
                   ))}
                   <div style={{fontSize:11,color:"#9AA3AB",margin:"6px 0"}}>oppure, se non è a catalogo:</div>
                   <input value={nomeLibero} onChange={e=>setNomeLibero(e.target.value)} placeholder="Nome prodotto" style={{...S.inp,marginBottom:8}}/>
-                  <input value={marchioLibero} onChange={e=>setMarchioLibero(e.target.value)} placeholder="Marca (opzionale)" style={{...S.inp,marginBottom:8}}/>
+                  <select value={marchioLibero} onChange={e=>setMarchioLibero(e.target.value)} style={{...S.inp,marginBottom:8,color:marchioLibero?C.charcoal:"#9AA3AB"}}>
+                    <option value="">Marca (opzionale)</option>
+                    {marchiCatalogo.map(m=>(<option key={m} value={m}>{m}</option>))}
+                  </select>
                 </>
               ) : (
                 <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",background:C.paper,borderRadius:7,padding:"8px 10px",marginBottom:10}}>
@@ -1719,8 +1813,20 @@ function ClienteDettaglio({cliente, onIndietro, preventivi, ordini, attrezzature
                 </div>
               )}
 
-              <input value={numeroSerie} onChange={e=>setNumeroSerie(e.target.value)} placeholder="Numero di serie *" style={{...S.inp,marginBottom:8,fontFamily:F_MONO}}/>
-              <input type="date" value={dataInstallazione} onChange={e=>setDataInstallazione(e.target.value)} style={{...S.inp,marginBottom:8}}/>
+              <input value={numeroSerie} onChange={e=>setNumeroSerie(e.target.value)} placeholder="Numero di serie *" style={{...S.inp,marginBottom:12,fontFamily:F_MONO}}/>
+
+              <label style={{fontSize:11,fontFamily:F_MONO,color:"#9AA3AB",textTransform:"uppercase",letterSpacing:"0.05em",display:"block",marginBottom:4}}>Data installazione prodotto</label>
+              <input type="date" value={dataInstallazione} onChange={e=>setDataInstallazione(e.target.value)} style={{...S.inp,marginBottom:12}}/>
+
+              <label style={{fontSize:11,fontFamily:F_MONO,color:"#9AA3AB",textTransform:"uppercase",letterSpacing:"0.05em",display:"block",marginBottom:4}}>Scadenza aggiornamenti (opzionale)</label>
+              <input type="date" value={scadenzaAggiornamenti} onChange={e=>setScadenzaAggiornamenti(e.target.value)} style={{...S.inp,marginBottom:12}}/>
+
+              <label style={{fontSize:11,fontFamily:F_MONO,color:"#9AA3AB",textTransform:"uppercase",letterSpacing:"0.05em",display:"block",marginBottom:4}}>Scadenza verifiche di controllo (opzionale)</label>
+              <input type="date" value={scadenzaVerifiche} onChange={e=>setScadenzaVerifiche(e.target.value)} style={{...S.inp,marginBottom:8}}/>
+              {(scadenzaAggiornamenti || scadenzaVerifiche) && (
+                <div style={{fontSize:11,color:"#9AA3AB",marginBottom:12}}>Un promemoria comparirà a responsabili e tecnici 30 giorni prima di ciascuna scadenza.</div>
+              )}
+
               <textarea value={noteAttrezzatura} onChange={e=>setNoteAttrezzatura(e.target.value)} rows={2} placeholder="Note (opzionale)" style={{...S.inp,resize:"vertical",fontFamily:F_BODY,marginBottom:12}}/>
 
               <div style={{display:"flex",gap:8}}>
@@ -1734,15 +1840,28 @@ function ClienteDettaglio({cliente, onIndietro, preventivi, ordini, attrezzature
 
           {attrezzatureCliente.length===0 ? (
             <div style={{textAlign:"center",padding:"1.5rem 1rem",color:"#9AA3AB",fontSize:13}}>Nessuna attrezzatura registrata per questo cliente.</div>
-          ) : attrezzatureCliente.map(a=>(
+          ) : attrezzatureCliente.map(a=>{
+            const statoAgg = statoScadenza(a.scadenza_aggiornamenti);
+            const statoVer = statoScadenza(a.scadenza_verifiche);
+            return (
             <div key={a.id} style={{...S.card,cursor:"default"}}>
               {a.marchio && <Tag tone="steel">{a.marchio}</Tag>}
               <div style={{fontWeight:600,fontSize:13.5,marginTop:6}}>{a.nome_prodotto}</div>
               <div className="tnum" style={{fontSize:11,color:"#9AA3AB",fontFamily:F_MONO,marginTop:3}}>S/N {a.numero_serie}</div>
               {a.data_installazione && <div style={{fontSize:11.5,color:"#8A929A",marginTop:3}}>Installata il {new Date(a.data_installazione).toLocaleDateString("it-IT")}</div>}
+              {a.scadenza_aggiornamenti && (
+                <div style={{fontSize:11.5,marginTop:3,color:statoAgg.scaduta?C.danger:statoAgg.vicina?C.warn:"#8A929A",fontWeight:statoAgg.scaduta||statoAgg.vicina?600:400}}>
+                  {statoAgg.scaduta?"⚠ ":""}Aggiornamenti in scadenza il {new Date(a.scadenza_aggiornamenti).toLocaleDateString("it-IT")}
+                </div>
+              )}
+              {a.scadenza_verifiche && (
+                <div style={{fontSize:11.5,marginTop:3,color:statoVer.scaduta?C.danger:statoVer.vicina?C.warn:"#8A929A",fontWeight:statoVer.scaduta||statoVer.vicina?600:400}}>
+                  {statoVer.scaduta?"⚠ ":""}Verifica di controllo in scadenza il {new Date(a.scadenza_verifiche).toLocaleDateString("it-IT")}
+                </div>
+              )}
               {a.note && <div style={{fontSize:12,color:C.charcoal,marginTop:5}}>{a.note}</div>}
             </div>
-          ))}
+          );})}
         </div>
       )}
     </div>
@@ -3538,11 +3657,24 @@ ${o.firma_cliente ? `
 }
 
 // ─── INTERVENTI ───────────────────────────────────────────────────────────────
-function Interventi({interventi, setInterventi, sessione, setArea, setInterventoDaCompletare}){
+function Interventi({interventi, setInterventi, attrezzature, sessione, setArea, setInterventoDaCompletare}){
   const pianificati = (interventi||[]).filter(i=>i.stato==="Pianificato")
     .sort((a,b)=>new Date(a.data_pianificata||"9999-12-31")-new Date(b.data_pianificata||"9999-12-31"));
   const completati = (interventi||[]).filter(i=>i.stato==="Completato")
     .sort((a,b)=>new Date(b.completato_il||0)-new Date(a.completato_il||0)).slice(0,15);
+
+  // Promemoria scadenze attrezzature (aggiornamenti/verifiche): entro 30
+  // giorni o già scadute, visibili qui a responsabili e tecnici.
+  const scadenzePromemoria = useMemo(()=>{
+    const elenco = [];
+    (attrezzature||[]).forEach(a=>{
+      [["scadenza_aggiornamenti","Aggiornamento"],["scadenza_verifiche","Verifica di controllo"]].forEach(([campo,etichetta])=>{
+        const stato = statoScadenza(a[campo]);
+        if(stato && stato.vicina) elenco.push({ attrezzatura:a, etichetta, data:a[campo], ...stato });
+      });
+    });
+    return elenco.sort((x,y)=>x.giorni-y.giorni);
+  },[attrezzature]);
 
   function riga(i){
     const oggi = new Date(); oggi.setHours(0,0,0,0);
@@ -3571,10 +3703,29 @@ function Interventi({interventi, setInterventi, sessione, setArea, setIntervento
 
   return (
     <div>
+      {scadenzePromemoria.length>0 && (
+        <div style={{marginBottom:24}}>
+          <div style={S.eyebrow}>Scadenze attrezzature ({scadenzePromemoria.length})</div>
+          {scadenzePromemoria.map((s,i)=>(
+            <div key={i} style={{...S.card,cursor:"default",borderColor:s.scaduta?C.danger:C.warn}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:10}}>
+                <div style={{minWidth:0}}>
+                  <div style={{fontWeight:600,fontSize:13.5}}>{s.attrezzatura.nome_prodotto}</div>
+                  <div style={{fontSize:11.5,color:"#8A929A",marginTop:2}}>S/N {s.attrezzatura.numero_serie} · {s.etichetta}</div>
+                </div>
+                <Tag tone={s.scaduta?"danger":"warn"}>{s.scaduta?`scaduta da ${Math.abs(s.giorni)}gg`:`tra ${s.giorni}gg`}</Tag>
+              </div>
+              <div className="tnum" style={{fontSize:11,color:"#9AA3AB",marginTop:6,fontFamily:F_MONO}}>{new Date(s.data).toLocaleDateString("it-IT")}</div>
+            </div>
+          ))}
+        </div>
+      )}
+
       <div style={S.eyebrow}>Pianificati ({pianificati.length})</div>
       {pianificati.length===0 ? (
         <div style={{fontSize:12.5,color:"#9AA3AB",padding:"8px 0",marginBottom:18}}>Nessun intervento pianificato — puoi crearne uno dalla scheda di un cliente.</div>
       ) : pianificati.map(riga)}
+
 
       {completati.length>0 && (
         <>
