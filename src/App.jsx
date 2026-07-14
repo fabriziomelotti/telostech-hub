@@ -1414,17 +1414,17 @@ const CAMPI_RICERCA_CLIENTI = ["codice","ragione_sociale","rag_sociale_agg","loc
 
 function Clienti({sessione, preventivi, ordini, attrezzature, setAttrezzature, interventi, setInterventi, catalog, ruolo}){
   const accessToken = trovaAccessToken(sessione);
-  const [modo,setModo] = useState("cliente"); // cliente | attrezzatura
   const [q,setQ] = useState("");
   const [risultati,setRisultati] = useState([]);
   const [caricando,setCaricando] = useState(false);
   const [errore,setErrore] = useState("");
   const [selezionato,setSelezionato] = useState(null);
   const [tabInizialeCliente,setTabInizialeCliente] = useState("dati");
+  const [qAttrezzatura,setQAttrezzatura] = useState("");
+  const [attrezzaturaAperta,setAttrezzaturaAperta] = useState(null);
   const timer = useRef(null);
 
   useEffect(()=>{
-    if(modo!=="cliente") return;
     clearTimeout(timer.current);
     if(!q.trim()){ setRisultati([]); setErrore(""); return; }
     timer.current = setTimeout(async ()=>{
@@ -1442,38 +1442,30 @@ function Clienti({sessione, preventivi, ordini, attrezzature, setAttrezzature, i
       setCaricando(false);
     }, 350);
     return ()=>clearTimeout(timer.current);
-  },[q,modo]);
+  },[q]);
 
   // Ricerca per attrezzatura: filtro lato client sull'elenco già caricato
-  // (nome prodotto, numero di serie, marca) — selezionando un risultato si
-  // recupera l'anagrafica completa del cliente collegato e si apre la sua
-  // scheda direttamente sulla tab Attrezzature.
-  const risultatiAttrezzature = useMemo(()=>{
-    if(modo!=="attrezzatura" || !q.trim()) return [];
-    const qq = q.trim().toLowerCase();
+  // (nome prodotto, numero di serie, marca). Sempre visibile sotto quella
+  // cliente, senza bisogno di scegliere una modalità — porta dritti alla
+  // modifica dell'attrezzatura, non alla scheda cliente.
+  const risultatiAttrezzatura = useMemo(()=>{
+    if(!qAttrezzatura.trim()) return [];
+    const qq = qAttrezzatura.trim().toLowerCase();
     return (attrezzature||[]).filter(a=>
       (a.nome_prodotto||"").toLowerCase().includes(qq) ||
       (a.numero_serie||"").toLowerCase().includes(qq) ||
       (a.marchio||"").toLowerCase().includes(qq)
     ).slice(0,30);
-  },[q,modo,attrezzature]);
+  },[qAttrezzatura,attrezzature]);
 
-  async function apriClienteDiAttrezzatura(a){
-    if(!a.cliente_codice) return;
-    setCaricando(true); setErrore("");
-    try{
-      const params = `select=codice,ragione_sociale,rag_sociale_agg,indirizzo,localita,provincia,cap,partita_iva,codice_fiscale,telefono,mail,filiale&codice=eq.${encodeURIComponent(a.cliente_codice)}`;
-      const dati = await sbGetAuth("clienti", params, accessToken);
-      if(dati && dati[0]){
-        setTabInizialeCliente("attrezzature");
-        setSelezionato(dati[0]);
-      } else {
-        setErrore("Cliente collegato non trovato in anagrafica.");
-      }
-    }catch(err){
-      setErrore(err.message);
-    }
-    setCaricando(false);
+  if(attrezzaturaAperta){
+    return <ModificaAttrezzatura
+      attrezzatura={attrezzaturaAperta}
+      onChiudi={()=>setAttrezzaturaAperta(null)}
+      onSalvata={(agg)=>{ setAttrezzature(prev=>prev.map(x=>x.id===agg.id?agg:x)); setAttrezzaturaAperta(null); }}
+      onEliminata={(id)=>{ setAttrezzature(prev=>prev.filter(x=>x.id!==id)); setAttrezzaturaAperta(null); }}
+      catalog={catalog} sessione={sessione}
+    />;
   }
 
   if(selezionato){
@@ -1485,63 +1477,227 @@ function Clienti({sessione, preventivi, ordini, attrezzature, setAttrezzature, i
   return (
     <div>
       <div style={S.eyebrow}>Clienti</div>
-
-      <div style={{display:"flex",gap:6,marginTop:10,marginBottom:12}}>
-        <button onClick={()=>{setModo("cliente"); setQ(""); setRisultati([]); setErrore("");}} style={{...S.btnS,...(modo==="cliente"?{background:C.ink,color:"#fff",borderColor:C.ink}:{})}}>◉ Per cliente</button>
-        <button onClick={()=>{setModo("attrezzatura"); setQ(""); setErrore("");}} style={{...S.btnS,...(modo==="attrezzatura"?{background:C.ink,color:"#fff",borderColor:C.ink}:{})}}># Per attrezzatura</button>
-      </div>
-
       <input
         value={q} onChange={e=>setQ(e.target.value)}
-        placeholder={modo==="cliente" ? "🔍 Cerca per ragione sociale, città, P.IVA, codice fiscale…" : "🔍 Cerca per nome prodotto, numero di serie, marca…"}
-        style={{...S.inp,padding:"13px 16px",fontSize:14,marginBottom:14,fontFamily:modo==="attrezzatura"?F_MONO:F_BODY}}
+        placeholder="🔍 Cerca per ragione sociale, città, P.IVA, codice fiscale…"
+        style={{...S.inp,padding:"13px 16px",fontSize:14,marginTop:10,marginBottom:10}}
         autoFocus
+      />
+      <input
+        value={qAttrezzatura} onChange={e=>setQAttrezzatura(e.target.value)}
+        placeholder="🔧 Cerca attrezzatura per nome, numero di serie o marca…"
+        style={{...S.inp,padding:"13px 16px",fontSize:14,marginBottom:14,fontFamily:F_MONO}}
       />
 
       {errore && <div style={{fontSize:12,color:C.danger,background:"rgba(200,75,58,0.08)",borderRadius:6,padding:"9px 11px",marginBottom:14}}>⚠ {errore}</div>}
-      {caricando && <div style={{fontSize:12.5,color:"#8A929A",padding:"8px 0"}}>Ricerca in corso…</div>}
 
-      {modo==="cliente" ? (
+      {qAttrezzatura.trim() ? (
         <>
-          {!caricando && q.trim() && !errore && risultati.length===0 && (
-            <div style={{textAlign:"center",padding:"2rem 1rem",color:"#9AA3AB",fontSize:13}}>Nessun cliente trovato per «{q}»</div>
+          <div style={{...S.eyebrow,marginBottom:8}}>Attrezzature ({risultatiAttrezzatura.length})</div>
+          {risultatiAttrezzatura.length===0 && (
+            <div style={{textAlign:"center",padding:"1.5rem 1rem",color:"#9AA3AB",fontSize:13,marginBottom:8}}>Nessuna attrezzatura per «{qAttrezzatura}»</div>
           )}
-          {!q.trim() && (
-            <div style={{textAlign:"center",padding:"2.5rem 1rem",color:"#9AA3AB"}}>
-              <div style={{fontSize:28,marginBottom:8}}>◉</div>
-              <div style={{fontSize:13}}>Cerca un cliente per vedere i suoi dati, preventivi, ordini e attrezzature</div>
-            </div>
-          )}
-          {risultati.map(c=>(
-            <div key={c.codice} onClick={()=>setSelezionato(c)} style={S.card}>
-              <div style={{fontWeight:600,fontSize:13.5}}>{c.ragione_sociale}</div>
-              {c.rag_sociale_agg && <div style={{fontSize:12,color:C.steel,marginTop:1}}>{c.rag_sociale_agg}</div>}
-              <div style={{fontSize:11.5,color:"#8A929A",marginTop:3}}>
-                {[c.localita, c.provincia && `(${c.provincia})`].filter(Boolean).join(" ")}
-                {c.partita_iva && <span className="tnum" style={{fontFamily:F_MONO,marginLeft:8}}>P.IVA {c.partita_iva}</span>}
+          {risultatiAttrezzatura.map(a=>(
+            <div key={a.id} onClick={()=>setAttrezzaturaAperta(a)} style={S.card}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:8}}>
+                <div style={{minWidth:0}}>
+                  {a.marchio && <Tag tone="steel">{a.marchio}</Tag>}
+                  <div style={{fontWeight:600,fontSize:13.5,marginTop:6}}>{a.nome_prodotto}</div>
+                  <div className="tnum" style={{fontSize:11,color:"#9AA3AB",fontFamily:F_MONO,marginTop:3}}>S/N {a.numero_serie}</div>
+                </div>
+                {a.stato==="Dismessa" && <Tag tone="danger">Dismessa</Tag>}
               </div>
             </div>
           ))}
+          <div style={{height:8}}/>
         </>
-      ) : (
-        <>
-          {q.trim() && risultatiAttrezzature.length===0 && (
-            <div style={{textAlign:"center",padding:"2rem 1rem",color:"#9AA3AB",fontSize:13}}>Nessuna attrezzatura trovata per «{q}»</div>
-          )}
-          {!q.trim() && (
-            <div style={{textAlign:"center",padding:"2.5rem 1rem",color:"#9AA3AB"}}>
-              <div style={{fontSize:28,marginBottom:8}}>#</div>
-              <div style={{fontSize:13}}>Cerca per nome prodotto, numero di serie o marca</div>
-            </div>
-          )}
-          {risultatiAttrezzature.map(a=>(
-            <div key={a.id} onClick={()=>apriClienteDiAttrezzatura(a)} style={S.card}>
-              {a.marchio && <Tag tone="steel">{a.marchio}</Tag>}
-              <div style={{fontWeight:600,fontSize:13.5,marginTop:6}}>{a.nome_prodotto}</div>
-              <div className="tnum" style={{fontSize:11,color:"#9AA3AB",fontFamily:F_MONO,marginTop:3}}>S/N {a.numero_serie}</div>
-            </div>
+      ) : null}
+
+      {caricando && <div style={{fontSize:12.5,color:"#8A929A",padding:"8px 0"}}>Ricerca in corso…</div>}
+      {!caricando && q.trim() && !errore && risultati.length===0 && (
+        <div style={{textAlign:"center",padding:"2rem 1rem",color:"#9AA3AB",fontSize:13}}>Nessun cliente trovato per «{q}»</div>
+      )}
+      {!q.trim() && !qAttrezzatura.trim() && (
+        <div style={{textAlign:"center",padding:"2.5rem 1rem",color:"#9AA3AB"}}>
+          <div style={{fontSize:28,marginBottom:8}}>◉</div>
+          <div style={{fontSize:13}}>Cerca un cliente per vedere i suoi dati, preventivi, ordini e attrezzature</div>
+        </div>
+      )}
+      {q.trim() && risultati.length>0 && qAttrezzatura.trim() && (
+        <div style={{...S.eyebrow,marginBottom:8}}>Clienti ({risultati.length})</div>
+      )}
+      {risultati.map(c=>(
+        <div key={c.codice} onClick={()=>setSelezionato(c)} style={S.card}>
+          <div style={{fontWeight:600,fontSize:13.5}}>{c.ragione_sociale}</div>
+          {c.rag_sociale_agg && <div style={{fontSize:12,color:C.steel,marginTop:1}}>{c.rag_sociale_agg}</div>}
+          <div style={{fontSize:11.5,color:"#8A929A",marginTop:3}}>
+            {[c.localita, c.provincia && `(${c.provincia})`].filter(Boolean).join(" ")}
+            {c.partita_iva && <span className="tnum" style={{fontFamily:F_MONO,marginLeft:8}}>P.IVA {c.partita_iva}</span>}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ─── MODIFICA ATTREZZATURA ──────────────────────────────────────────────────
+// Le attrezzature sono pensate come un unico archivio: qui si corregge un
+// inserimento sbagliato, si sposta un'attrezzatura su un altro cliente
+// (venduta/passata di mano), la si segna dismessa (senza perderne la
+// storia) o, se davvero necessario, la si elimina.
+function ModificaAttrezzatura({ attrezzatura, onChiudi, onSalvata, onEliminata, catalog, sessione }){
+  const accessToken = trovaAccessToken(sessione);
+  const [nome,setNome] = useState(attrezzatura.nome_prodotto||"");
+  const [marchio,setMarchio] = useState(attrezzatura.marchio||"");
+  const [numeroSerie,setNumeroSerie] = useState(attrezzatura.numero_serie||"");
+  const [dataInstallazione,setDataInstallazione] = useState(attrezzatura.data_installazione||"");
+  const [scadenzaAggiornamenti,setScadenzaAggiornamenti] = useState(attrezzatura.scadenza_aggiornamenti||"");
+  const [scadenzaVerifiche,setScadenzaVerifiche] = useState(attrezzatura.scadenza_verifiche||"");
+  const [note,setNote] = useState(attrezzatura.note||"");
+  const [stato,setStato] = useState(attrezzatura.stato||"Attiva");
+  const [salvando,setSalvando] = useState(false);
+  const [errore,setErrore] = useState("");
+  const [confermaElimina,setConfermaElimina] = useState(false);
+
+  // Cliente attuale (mostrato per nome) e cambio cliente (spostamento)
+  const [clienteAttuale,setClienteAttuale] = useState(null);
+  const [caricandoCliente,setCaricandoCliente] = useState(true);
+  const [cambioClienteAperto,setCambioClienteAperto] = useState(false);
+  const [nuovoCliente,setNuovoCliente] = useState(null);
+
+  useEffect(()=>{
+    let annullato = false;
+    (async()=>{
+      try{
+        const dati = await sbGetAuth("clienti", `select=codice,ragione_sociale&codice=eq.${encodeURIComponent(attrezzatura.cliente_codice||"")}`, accessToken);
+        if(!annullato) setClienteAttuale(dati && dati[0] ? dati[0] : null);
+      }catch{ if(!annullato) setClienteAttuale(null); }
+      if(!annullato) setCaricandoCliente(false);
+    })();
+    return ()=>{ annullato=true; };
+  },[attrezzatura.cliente_codice]);
+
+  const marchiCatalogo = useMemo(()=>{
+    if(!catalog) return [];
+    return [...new Set(catalog.map(p=>p.mar).filter(Boolean))].sort();
+  },[catalog]);
+
+  async function salva(){
+    if(!nome.trim() || !numeroSerie.trim()) return;
+    setSalvando(true); setErrore("");
+    try{
+      const payload = {
+        nome_prodotto: nome.trim(),
+        marchio: marchio || null,
+        numero_serie: numeroSerie.trim(),
+        data_installazione: dataInstallazione || null,
+        scadenza_aggiornamenti: scadenzaAggiornamenti || null,
+        scadenza_verifiche: scadenzaVerifiche || null,
+        note: note.trim() || null,
+        stato,
+      };
+      if(nuovoCliente) payload.cliente_codice = nuovoCliente.codice;
+      await sbAuth("PATCH","attrezzature",`id=eq.${attrezzatura.id}`,payload,accessToken);
+      onSalvata({ ...attrezzatura, ...payload });
+    }catch(err){
+      setErrore("Salvataggio non riuscito: "+err.message);
+    }
+    setSalvando(false);
+  }
+  async function elimina(){
+    setErrore("");
+    try{
+      await sbAuth("DELETE","attrezzature",`id=eq.${attrezzatura.id}`,null,accessToken);
+      onEliminata(attrezzatura.id);
+    }catch(err){
+      setErrore("Eliminazione non riuscita: "+err.message);
+      setConfermaElimina(false);
+    }
+  }
+
+  return (
+    <div>
+      <button onClick={onChiudi} style={{...S.btnS,marginBottom:14}}>← Indietro</button>
+      <div style={S.eyebrow}>Modifica attrezzatura</div>
+
+      {errore && <div style={{fontSize:12,color:C.danger,background:"rgba(200,75,58,0.08)",borderRadius:6,padding:"9px 11px",marginBottom:14,marginTop:10}}>⚠ {errore}</div>}
+
+      <div style={{...S.card,cursor:"default",marginTop:10,marginBottom:16}}>
+        <div style={{fontSize:11,fontFamily:F_MONO,color:"#9AA3AB",textTransform:"uppercase",letterSpacing:"0.05em",marginBottom:6}}>Cliente</div>
+        {caricandoCliente ? (
+          <div style={{fontSize:12.5,color:"#9AA3AB"}}>Caricamento…</div>
+        ) : !cambioClienteAperto ? (
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+            <span style={{fontWeight:600,fontSize:13.5}}>{nuovoCliente?.ragione_sociale || clienteAttuale?.ragione_sociale || attrezzatura.cliente_codice}</span>
+            <button onClick={()=>setCambioClienteAperto(true)} style={{background:"none",border:"none",color:C.steel,fontSize:11.5,cursor:"pointer",textDecoration:"underline"}}>Sposta su un altro cliente</button>
+          </div>
+        ) : (
+          <div>
+            <SelezioneCliente clienteSelezionato={nuovoCliente} onSeleziona={c=>{setNuovoCliente(c); setCambioClienteAperto(false);}} sessione={sessione}/>
+            <button onClick={()=>setCambioClienteAperto(false)} style={{marginTop:8,background:"none",border:"none",color:"#9AA3AB",fontSize:11.5,cursor:"pointer"}}>Annulla spostamento</button>
+          </div>
+        )}
+        {nuovoCliente && (
+          <div style={{fontSize:11.5,color:C.warn,marginTop:8}}>⚠ Verrà spostata su {nuovoCliente.ragione_sociale} al salvataggio.</div>
+        )}
+      </div>
+
+      <div style={{...S.card,cursor:"default",marginBottom:16}}>
+        <label style={{fontSize:11,fontFamily:F_MONO,color:"#9AA3AB",textTransform:"uppercase",letterSpacing:"0.05em",display:"block",marginBottom:4}}>Nome prodotto</label>
+        <input value={nome} onChange={e=>setNome(e.target.value)} style={{...S.inp,marginBottom:12}}/>
+
+        <label style={{fontSize:11,fontFamily:F_MONO,color:"#9AA3AB",textTransform:"uppercase",letterSpacing:"0.05em",display:"block",marginBottom:4}}>Marca</label>
+        <select value={marchio} onChange={e=>setMarchio(e.target.value)} style={{...S.inp,marginBottom:12,color:marchio?C.charcoal:"#9AA3AB"}}>
+          <option value="">— nessuna —</option>
+          {marchiCatalogo.map(m=>(<option key={m} value={m}>{m}</option>))}
+        </select>
+
+        <label style={{fontSize:11,fontFamily:F_MONO,color:"#9AA3AB",textTransform:"uppercase",letterSpacing:"0.05em",display:"block",marginBottom:4}}>Numero di serie</label>
+        <input value={numeroSerie} onChange={e=>setNumeroSerie(e.target.value)} style={{...S.inp,marginBottom:12,fontFamily:F_MONO}}/>
+
+        <label style={{fontSize:11,fontFamily:F_MONO,color:"#9AA3AB",textTransform:"uppercase",letterSpacing:"0.05em",display:"block",marginBottom:4}}>Data installazione prodotto</label>
+        <input type="date" value={dataInstallazione} onChange={e=>setDataInstallazione(e.target.value)} style={{...S.inp,marginBottom:12}}/>
+
+        <label style={{fontSize:11,fontFamily:F_MONO,color:"#9AA3AB",textTransform:"uppercase",letterSpacing:"0.05em",display:"block",marginBottom:4}}>Scadenza aggiornamenti</label>
+        <input type="date" value={scadenzaAggiornamenti} onChange={e=>setScadenzaAggiornamenti(e.target.value)} style={{...S.inp,marginBottom:12}}/>
+
+        <label style={{fontSize:11,fontFamily:F_MONO,color:"#9AA3AB",textTransform:"uppercase",letterSpacing:"0.05em",display:"block",marginBottom:4}}>Scadenza verifiche di controllo</label>
+        <input type="date" value={scadenzaVerifiche} onChange={e=>setScadenzaVerifiche(e.target.value)} style={{...S.inp,marginBottom:12}}/>
+
+        <label style={{fontSize:11,fontFamily:F_MONO,color:"#9AA3AB",textTransform:"uppercase",letterSpacing:"0.05em",display:"block",marginBottom:4}}>Note</label>
+        <textarea value={note} onChange={e=>setNote(e.target.value)} rows={2} style={{...S.inp,resize:"vertical",fontFamily:F_BODY}}/>
+      </div>
+
+      <div style={{...S.card,cursor:"default",marginBottom:16}}>
+        <div style={{fontSize:11,fontFamily:F_MONO,color:"#9AA3AB",textTransform:"uppercase",letterSpacing:"0.05em",marginBottom:8}}>Stato</div>
+        <div style={{display:"flex",gap:8}}>
+          {["Attiva","Dismessa"].map(s=>(
+            <button key={s} onClick={()=>setStato(s)} style={{
+              flex:1,border:`1px solid ${stato===s?(s==="Dismessa"?C.danger:C.ink):C.paperLine}`,borderRadius:8,padding:"10px",fontSize:12.5,cursor:"pointer",
+              background:stato===s?(s==="Dismessa"?C.danger:C.ink):"#fff",color:stato===s?"#fff":"#5B6770",fontWeight:stato===s?600:400
+            }}>{s}</button>
           ))}
-        </>
+        </div>
+        {stato==="Dismessa" && <div style={{fontSize:11.5,color:"#9AA3AB",marginTop:8}}>Resta nello storico del cliente, ma non compare più tra le attrezzature attive né nei promemoria scadenze.</div>}
+      </div>
+
+      <button onClick={salva} disabled={salvando||!nome.trim()||!numeroSerie.trim()} style={{...S.btnAccent,width:"100%",padding:"13px",fontWeight:700,marginBottom:12}}>
+        {salvando?"Salvo…":"💾 Salva modifiche"}
+      </button>
+
+      {!confermaElimina ? (
+        <button onClick={()=>setConfermaElimina(true)} style={{width:"100%",padding:"12px",background:"#fff",color:C.danger,border:`1px solid ${C.danger}`,borderRadius:9,fontSize:13,fontWeight:700,cursor:"pointer"}}>
+          🗑 Elimina attrezzatura
+        </button>
+      ) : (
+        <div style={{background:"rgba(200,75,58,0.08)",border:`1px solid ${C.danger}`,borderRadius:9,padding:16}}>
+          <div style={{fontSize:13,fontWeight:700,color:C.danger,marginBottom:6}}>Confermi l'eliminazione definitiva?</div>
+          <div style={{fontSize:12,color:C.steel,marginBottom:14}}>Se è solo fuori uso, valuta "Dismessa" sopra invece di eliminarla: qui si perde ogni storico.</div>
+          <div style={{display:"flex",gap:10}}>
+            <button onClick={elimina} style={{flex:1,padding:"12px",background:C.danger,color:"#fff",border:"none",borderRadius:8,fontSize:13,fontWeight:700,cursor:"pointer"}}>Sì, elimina</button>
+            <button onClick={()=>setConfermaElimina(false)} style={{flex:1,padding:"12px",background:"#fff",color:C.steel,border:`1px solid ${C.paperLine}`,borderRadius:8,fontSize:13,fontWeight:600,cursor:"pointer"}}>Annulla</button>
+          </div>
+        </div>
       )}
     </div>
   );
@@ -1551,10 +1707,21 @@ function ClienteDettaglio({cliente, onIndietro, preventivi, ordini, attrezzature
   const accessToken = trovaAccessToken(sessione);
   const [tab,setTab] = useState(tabIniziale || "dati");
   const [erroreLocale,setErroreLocale] = useState("");
+  const [attrezzaturaInModifica,setAttrezzaturaInModifica] = useState(null);
   const preventiviCliente = (preventivi||[]).filter(p=>p.cliente_codice===cliente.codice);
   const ordiniCliente = (ordini||[]).filter(o=>o.cliente_codice===cliente.codice);
   const attrezzatureCliente = (attrezzature||[]).filter(a=>a.cliente_codice===cliente.codice);
   const interventiCliente = (interventi||[]).filter(i=>i.cliente_codice===cliente.codice);
+
+  if(attrezzaturaInModifica){
+    return <ModificaAttrezzatura
+      attrezzatura={attrezzaturaInModifica}
+      onChiudi={()=>setAttrezzaturaInModifica(null)}
+      onSalvata={(agg)=>{ setAttrezzature(prev=>prev.map(x=>x.id===agg.id?agg:x)); setAttrezzaturaInModifica(null); }}
+      onEliminata={(id)=>{ setAttrezzature(prev=>prev.filter(x=>x.id!==id)); setAttrezzaturaInModifica(null); }}
+      catalog={catalog} sessione={sessione}
+    />;
+  }
 
   // ── Form: aggiungi attrezzatura ──
   const [formAttrezzaturaAperto,setFormAttrezzaturaAperto] = useState(false);
@@ -1844,9 +2011,15 @@ function ClienteDettaglio({cliente, onIndietro, preventivi, ordini, attrezzature
             const statoAgg = statoScadenza(a.scadenza_aggiornamenti);
             const statoVer = statoScadenza(a.scadenza_verifiche);
             return (
-            <div key={a.id} style={{...S.card,cursor:"default"}}>
-              {a.marchio && <Tag tone="steel">{a.marchio}</Tag>}
-              <div style={{fontWeight:600,fontSize:13.5,marginTop:6}}>{a.nome_prodotto}</div>
+            <div key={a.id} style={{...S.card,cursor:"default",...(a.stato==="Dismessa"?{opacity:0.6}:{})}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:8}}>
+                <div style={{minWidth:0}}>
+                  {a.marchio && <Tag tone="steel">{a.marchio}</Tag>}
+                  {a.stato==="Dismessa" && <Tag tone="danger">Dismessa</Tag>}
+                  <div style={{fontWeight:600,fontSize:13.5,marginTop:6}}>{a.nome_prodotto}</div>
+                </div>
+                <button onClick={()=>setAttrezzaturaInModifica(a)} style={{background:"none",border:"none",color:C.steel,fontSize:11.5,cursor:"pointer",textDecoration:"underline",flexShrink:0}}>✎ Modifica</button>
+              </div>
               <div className="tnum" style={{fontSize:11,color:"#9AA3AB",fontFamily:F_MONO,marginTop:3}}>S/N {a.numero_serie}</div>
               {a.data_installazione && <div style={{fontSize:11.5,color:"#8A929A",marginTop:3}}>Installata il {new Date(a.data_installazione).toLocaleDateString("it-IT")}</div>}
               {a.scadenza_aggiornamenti && (
@@ -3665,7 +3838,7 @@ function Interventi({interventi, setInterventi, attrezzature, sessione, setArea,
   // giorni o già scadute, visibili qui a responsabili e tecnici.
   const scadenzePromemoria = useMemo(()=>{
     const elenco = [];
-    (attrezzature||[]).forEach(a=>{
+    (attrezzature||[]).filter(a=>a.stato!=="Dismessa").forEach(a=>{
       [["scadenza_aggiornamenti","Aggiornamento"],["scadenza_verifiche","Verifica di controllo"]].forEach(([campo,etichetta])=>{
         const stato = statoScadenza(a[campo]);
         if(stato && stato.vicina) elenco.push({ attrezzatura:a, etichetta, data:a[campo], ...stato });
