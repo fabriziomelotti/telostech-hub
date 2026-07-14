@@ -105,17 +105,17 @@ const LOGO_TELOSTECH = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAsMAAAFXCA
 // ─── DATI DEMO ────────────────────────────────────────────────────────────────
 const RUOLI = {
   commerciale: {label:"Commerciale", initials:"MC", nome:"Marco Conti",
-    nav:["home","ai","prodotti","clienti","preventivi","ordini"]},
+    nav:["home","ai","prodotti","clienti","promemoria","preventivi","ordini"]},
   tecnico: {label:"Tecnico", initials:"LR", nome:"Luca Rossi",
-    nav:["home","ai","interventi","rapporti","clienti","prodotti"]},
+    nav:["home","ai","interventi","rapporti","clienti","promemoria","prodotti"]},
   responsabile: {label:"Responsabile", initials:"GF", nome:"Giovanni Ferri",
-    nav:["home","ai","prodotti","clienti","preventivi","ordini","interventi","rapporti","analytics","saltati"]},
+    nav:["home","ai","prodotti","clienti","promemoria","preventivi","ordini","interventi","rapporti","analytics","saltati"]},
   admin: {label:"Admin", initials:"AM", nome:"Amministratore",
-    nav:["home","ai","prodotti","clienti","preventivi","ordini","interventi","rapporti","analytics","saltati","admin"]},
+    nav:["home","ai","prodotti","clienti","promemoria","preventivi","ordini","interventi","rapporti","analytics","saltati","admin"]},
 };
 const NAV_META = {
   home:{icon:"⌂",label:"Dashboard"}, ai:{icon:"✦",label:"Assistente"}, prodotti:{icon:"▣",label:"Catalogo"},
-  clienti:{icon:"◉",label:"Clienti"}, preventivi:{icon:"▤",label:"Preventivi"}, ordini:{icon:"⬡",label:"Ordini"},
+  clienti:{icon:"◉",label:"Clienti"}, promemoria:{icon:"⚑",label:"Promemoria"}, preventivi:{icon:"▤",label:"Preventivi"}, ordini:{icon:"⬡",label:"Ordini"},
   interventi:{icon:"⚒",label:"Interventi"}, rapporti:{icon:"☑",label:"Rapporto"}, analytics:{icon:"◈",label:"Condizioni"},
   saltati:{icon:"⊘",label:"Saltati"}, admin:{icon:"⚙",label:"Admin"},
 };
@@ -379,6 +379,7 @@ export default function App(){
   const [ordini, setOrdini] = useState([]);
   const [attrezzature, setAttrezzature] = useState([]);
   const [interventi, setInterventi] = useState([]);
+  const [promemoria, setPromemoria] = useState([]);
   const [interventoDaCompletare, setInterventoDaCompletare] = useState(null);
   const [msgs, setMsgs] = useState([]);
   const [msgInput, setMsgInput] = useState("");
@@ -458,6 +459,9 @@ export default function App(){
     sbGetAuth("interventi", "select=*&order=data_pianificata.desc.nullslast,creato_il.desc&limit=1000", accessToken)
       .then(dati => setInterventi(dati || []))
       .catch(err => console.warn("Interventi non raggiungibili:", err.message));
+    sbGetAuth("promemoria", "select=*&order=scadenza.asc.nullslast,creato_il.desc&limit=500", accessToken)
+      .then(dati => setPromemoria(dati || []))
+      .catch(err => console.warn("Promemoria non raggiungibili:", err.message));
   },[role]);
 
   // permessi/nav dal ruolo, ma nome reale dalla sessione
@@ -581,10 +585,11 @@ export default function App(){
         </div>
 
         <div style={S.content}>
-          {area==="home" && <Home r={r} role={role} setArea={setArea} isMobile={isMobile} preventivi={preventivi} interventi={interventi}/>}
+          {area==="home" && <Home r={r} role={role} setArea={setArea} isMobile={isMobile} preventivi={preventivi} interventi={interventi} promemoria={promemoria} sessione={sessione}/>}
           {area==="ai" && <AIChat msgs={msgs} msgInput={msgInput} setMsgInput={setMsgInput} sendMsg={sendMsg} aiTyping={aiTyping}/>}
           {area==="prodotti" && <Prodotti cart={cart} setCart={setCart} catalog={catalog} catalogLoading={catalogLoading} sessione={sessione} ruolo={role} setCatalog={setCatalog} setArea={setArea}/>}
           {area==="clienti" && <Clienti sessione={sessione} preventivi={preventivi} ordini={ordini} attrezzature={attrezzature} setAttrezzature={setAttrezzature} interventi={interventi} setInterventi={setInterventi} catalog={catalog} ruolo={role}/>}
+          {area==="promemoria" && <Promemoria sessione={sessione} ruolo={role} preventivi={preventivi} interventi={interventi} promemoria={promemoria} setPromemoria={setPromemoria} setArea={setArea}/>}
           {area==="preventivi" && <Preventivi cart={cart} setCart={setCart} preventivi={preventivi} setPreventivi={setPreventivi} setOrdini={setOrdini} setArea={setArea} ruolo={role} catalog={catalog} sessione={sessione}/>}
           {area==="ordini" && <Ordini ordini={ordini} setOrdini={setOrdini} sessione={sessione} ruolo={role}/>}
           {area==="interventi" && <Interventi interventi={interventi} setInterventi={setInterventi} attrezzature={attrezzature} sessione={sessione} setArea={setArea} setInterventoDaCompletare={setInterventoDaCompletare}/>}
@@ -645,13 +650,74 @@ export default function App(){
 
 // ─── LOGIN ──────────────────────────────────────────────────────────────────────
 // ─── HOME ───────────────────────────────────────────────────────────────────────
-function Home({r,role,setArea,isMobile,preventivi,interventi}){
+// ─── PROMEMORIA "AUTOMATICI" ────────────────────────────────────────────────
+// Non sono righe salvate su una tabella: si calcolano al volo da preventivi e
+// interventi già caricati, così restano sempre aggiornati senza rischio di
+// doppioni o dati vecchi (stesso principio già usato per le scadenze
+// attrezzature in Interventi). Condivisi tra Home (badge/anteprima) e
+// Promemoria (elenco completo).
+const GIORNI_PREAVVISO_PROMEMORIA = 7;
+
+function giorniA(dataStr){
+  if(!dataStr) return null;
+  const oggi = new Date(); oggi.setHours(0,0,0,0);
+  const d = new Date(dataStr); d.setHours(0,0,0,0);
+  return Math.round((d-oggi)/(1000*60*60*24));
+}
+// Preventivi "Inviato" ancora da gestire (tutto il team, come in ListaPreventivi).
+function preventiviDaGestire(preventivi){
+  return (preventivi||[]).filter(p=>p.stato==="Inviato");
+}
+// Trattative "vendita rimandata" con un richiamo impostato, con i giorni al richiamo.
+function trattativeDaRecuperare(preventivi){
+  return (preventivi||[])
+    .filter(p=>p.stato==="Saltato" && p.motivo_saltato_tipo==="rimandata" && p.promemoria_recupero)
+    .map(p=>({...p, giorni: giorniA(p.promemoria_recupero)}))
+    .sort((a,b)=>new Date(a.promemoria_recupero)-new Date(b.promemoria_recupero));
+}
+function trattativeDaRecuperareVicine(preventivi){
+  return trattativeDaRecuperare(preventivi).filter(p=>p.giorni<=GIORNI_PREAVVISO_PROMEMORIA);
+}
+// Interventi pianificati (aggiunti, non ancora gestiti/completati).
+function interventiDaGestire(interventi){
+  return (interventi||[]).filter(i=>i.stato==="Pianificato");
+}
+function interventiScadenzaVicina(interventi){
+  return interventiDaGestire(interventi)
+    .filter(i=>i.data_pianificata)
+    .map(i=>({...i, giorni: giorniA(i.data_pianificata)}))
+    .filter(i=>i.giorni<=GIORNI_PREAVVISO_PROMEMORIA)
+    .sort((a,b)=>a.giorni-b.giorni);
+}
+function interventiMancaInfo(interventi){
+  return (interventi||[]).filter(i=>i.manca_info);
+}
+// Quanti elementi richiedono attenzione a breve — usato per il badge sulla
+// dashboard. Volutamente non conta i "da gestire" generici (sono un
+// backlog, non un'urgenza), solo le scadenze vicine/scadute e i propri
+// promemoria liberi ancora aperti.
+function contaAttenzionePromemoria(ruolo, preventivi, interventi, promemoriaPropri){
+  let n = (promemoriaPropri||[]).filter(p=>p.stato==="aperto").length;
+  if(ruolo==="commerciale" || ruolo==="responsabile" || ruolo==="admin"){
+    n += trattativeDaRecuperareVicine(preventivi).length;
+  }
+  if(ruolo==="tecnico" || ruolo==="responsabile" || ruolo==="admin"){
+    n += interventiScadenzaVicina(interventi).length + interventiMancaInfo(interventi).length;
+  }
+  return n;
+}
+
+function Home({r,role,setArea,isMobile,preventivi,interventi,promemoria,sessione}){
   const isT=role==="tecnico";
   const ora = new Date();
   const saluto = ora.getHours()<12?"Buongiorno":ora.getHours()<18?"Buon pomeriggio":"Buonasera";
   const dataFmt = ora.toLocaleDateString("it-IT",{weekday:"short",day:"numeric",month:"short"}).toUpperCase();
   const interventiPianificati = (interventi||[]).filter(i=>i.stato==="Pianificato")
     .sort((a,b)=>new Date(a.data_pianificata||"9999-12-31")-new Date(b.data_pianificata||"9999-12-31"));
+  // Promemoria propri (per nome, come già fatto altrove nell'app — es.
+  // mieiSaltati in ListaPreventivi — non abbiamo l'id utente lato client).
+  const promemoriaPropri = (promemoria||[]).filter(p=>p.autore_nome===sessione?.nome);
+  const contaPromemoria = contaAttenzionePromemoria(role, preventivi, interventi, promemoriaPropri);
 
   return (
     <div>
@@ -704,16 +770,21 @@ function Home({r,role,setArea,isMobile,preventivi,interventi}){
         {[
           ["prodotti","▣","Catalogo"],
           ["clienti","◉","Clienti"],
+          ["promemoria","⚑","Promemoria",contaPromemoria],
           ["ai","✦","Assistente"],
           [isT?"rapporti":"preventivi",isT?"☑":"▤",isT?"Rapporto":"Preventivo"]
-        ].map(([id,icon,lbl])=>(
+        ].map(([id,icon,lbl,badge])=>(
           <div key={id} onClick={()=>setArea(id)} style={{
+            position:"relative",
             background:"#fff", border:`1px solid ${C.paperLine}`, borderRadius:8,
             padding:"16px 12px", cursor:"pointer", textAlign:"center",
             transition:"border-color 0.15s",
           }}
           onMouseEnter={e=>e.currentTarget.style.borderColor=C.ink}
           onMouseLeave={e=>e.currentTarget.style.borderColor=C.paperLine}>
+            {badge>0 && (
+              <span className="tnum" style={{position:"absolute",top:8,right:8,minWidth:16,height:16,borderRadius:8,background:C.danger,color:"#fff",fontSize:9.5,fontWeight:700,fontFamily:F_MONO,display:"flex",alignItems:"center",justifyContent:"center",padding:"0 4px"}}>{badge}</span>
+            )}
             <div style={{fontSize:20,color:C.ink,marginBottom:6}}>{icon}</div>
             <div style={{fontSize:12,color:C.charcoal,fontWeight:600}}>{lbl}</div>
           </div>
@@ -1876,6 +1947,259 @@ function Clienti({sessione, preventivi, ordini, attrezzature, setAttrezzature, i
             </div>
           </div>
         ))}
+      </>)}
+    </div>
+  );
+}
+
+// ─── PROMEMORIA ────────────────────────────────────────────────────────────
+// Promemoria liberi legati ai clienti (tabella "promemoria", propri per
+// commerciale/tecnico, visibili anche di tutto il team per responsabile/
+// admin — stesso schema di visibilità già usato per "Saltati"). A questi si
+// affiancano le sezioni automatiche, calcolate al volo da preventivi/
+// interventi (vedi funzioni sopra Home) e non salvate da nessuna parte.
+function Promemoria({sessione, ruolo, preventivi, interventi, promemoria, setPromemoria, setArea}){
+  const accessToken = trovaAccessToken(sessione);
+  const puoVedereTeam = ruolo==="responsabile" || ruolo==="admin";
+  const [vistaTeam,setVistaTeam] = useState(false);
+  const [formAperto,setFormAperto] = useState(false);
+  const [clienteForm,setClienteForm] = useState(null);
+  const [testoForm,setTestoForm] = useState("");
+  const [scadenzaForm,setScadenzaForm] = useState("");
+  const [salvando,setSalvando] = useState(false);
+  const [errore,setErrore] = useState("");
+  const [confermaEliminaId,setConfermaEliminaId] = useState(null);
+
+  // "Propri" per nome (come mieiSaltati in ListaPreventivi) — non abbiamo
+  // l'id utente lato client, solo il nome della sessione.
+  const mieiPromemoria = useMemo(()=>(promemoria||[]).filter(p=>p.autore_nome===sessione?.nome),[promemoria,sessione]);
+  const elencoBase = (puoVedereTeam && vistaTeam) ? (promemoria||[]) : mieiPromemoria;
+  const aperti = useMemo(()=>[...elencoBase.filter(p=>p.stato==="aperto")].sort((a,b)=>{
+    const ga=giorniA(a.scadenza), gb=giorniA(b.scadenza);
+    if(ga===null && gb===null) return new Date(b.creato_il||0)-new Date(a.creato_il||0);
+    if(ga===null) return 1;
+    if(gb===null) return -1;
+    return ga-gb;
+  }),[elencoBase]);
+  const fatti = useMemo(()=>[...elencoBase.filter(p=>p.stato==="fatto")]
+    .sort((a,b)=>new Date(b.completato_il||0)-new Date(a.completato_il||0)).slice(0,10),[elencoBase]);
+
+  const mostraCommerciale = ruolo==="commerciale" || ruolo==="responsabile" || ruolo==="admin";
+  const mostraTecnico = ruolo==="tecnico" || ruolo==="responsabile" || ruolo==="admin";
+  const daGestirePrev = useMemo(()=>preventiviDaGestire(preventivi),[preventivi]);
+  const daRecuperareVicine = useMemo(()=>trattativeDaRecuperareVicine(preventivi),[preventivi]);
+  const interventiGestireList = useMemo(()=>interventiDaGestire(interventi),[interventi]);
+  const interventiScadenzaList = useMemo(()=>interventiScadenzaVicina(interventi),[interventi]);
+  const interventiMancaList = useMemo(()=>interventiMancaInfo(interventi),[interventi]);
+
+  async function salvaNuovo(){
+    if(!testoForm.trim()) return;
+    setSalvando(true); setErrore("");
+    try{
+      const payload = {
+        cliente_codice: clienteForm?.codice || null,
+        cliente_nome: clienteForm?.ragione_sociale || null,
+        testo: testoForm.trim(),
+        scadenza: scadenzaForm || null,
+        autore_nome: sessione?.nome || null,
+      };
+      const [salvato] = await sbAuth("POST","promemoria","",payload,accessToken);
+      setPromemoria(prev=>[salvato,...prev]);
+      setTestoForm(""); setClienteForm(null); setScadenzaForm(""); setFormAperto(false);
+    }catch(err){
+      setErrore("Salvataggio non riuscito: "+err.message);
+    }
+    setSalvando(false);
+  }
+  async function segnaFatto(p){
+    const payload = {stato:"fatto", completato_il:new Date().toISOString()};
+    try{
+      await sbAuth("PATCH","promemoria",`id=eq.${p.id}`,payload,accessToken);
+      setPromemoria(prev=>prev.map(x=>x.id===p.id?{...x,...payload}:x));
+    }catch(err){ setErrore("Errore: "+err.message); }
+  }
+  async function riapri(p){
+    const payload = {stato:"aperto", completato_il:null};
+    try{
+      await sbAuth("PATCH","promemoria",`id=eq.${p.id}`,payload,accessToken);
+      setPromemoria(prev=>prev.map(x=>x.id===p.id?{...x,...payload}:x));
+    }catch(err){ setErrore("Errore: "+err.message); }
+  }
+  async function eliminaConfermato(id){
+    try{
+      await sbAuth("DELETE","promemoria",`id=eq.${id}`,null,accessToken);
+      setPromemoria(prev=>prev.filter(x=>x.id!==id));
+    }catch(err){ setErrore("Errore: "+err.message); }
+    setConfermaEliminaId(null);
+  }
+
+  function rigaPromemoria(p){
+    const giorni = giorniA(p.scadenza);
+    const scaduto = giorni!==null && giorni<0;
+    const vicino = giorni!==null && giorni>=0 && giorni<=GIORNI_PREAVVISO_PROMEMORIA;
+    return (
+      <div key={p.id} style={{...S.card,cursor:"default",...(scaduto?{borderColor:C.danger}:vicino?{borderColor:C.warn}:{})}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:10}}>
+          <div style={{minWidth:0}}>
+            {p.cliente_nome && <div style={{fontWeight:600,fontSize:13.5}}>{p.cliente_nome}</div>}
+            <div style={{fontSize:13,color:C.charcoal,marginTop:p.cliente_nome?3:0,lineHeight:1.4}}>{p.testo}</div>
+            <div style={{display:"flex",gap:8,alignItems:"center",marginTop:6,flexWrap:"wrap"}}>
+              {p.scadenza && (
+                <span className="tnum" style={{fontSize:10.5,fontFamily:F_MONO,color:scaduto?C.danger:vicino?"#8a6418":"#9AA3AB",fontWeight:scaduto||vicino?700:400}}>
+                  {scaduto?"⚠ scaduto il ":"entro il "}{new Date(p.scadenza).toLocaleDateString("it-IT")}
+                </span>
+              )}
+              {vistaTeam && p.autore_nome && <Tag tone="steel">{p.autore_nome}</Tag>}
+            </div>
+          </div>
+          <div style={{display:"flex",flexDirection:"column",gap:6,flexShrink:0}}>
+            <button onClick={()=>segnaFatto(p)} style={{...S.btnS,padding:"6px 10px",fontSize:11.5}}>✓ Fatto</button>
+            <button onClick={()=>setConfermaEliminaId(p.id)} style={{...S.btnS,padding:"6px 10px",fontSize:11.5,color:C.danger}}>Elimina</button>
+          </div>
+        </div>
+        {confermaEliminaId===p.id && (
+          <div style={{marginTop:10,paddingTop:10,borderTop:`1px solid ${C.paperLine}`}}>
+            <div style={{fontSize:12,color:C.steel,marginBottom:8}}>Eliminare questo promemoria? L'operazione non è reversibile.</div>
+            <div style={{display:"flex",gap:8}}>
+              <button onClick={()=>eliminaConfermato(p.id)} style={{...S.btnAccent,padding:"7px 12px",background:C.danger,color:"#fff"}}>Sì, elimina</button>
+              <button onClick={()=>setConfermaEliminaId(null)} style={{...S.btnS,padding:"7px 12px"}}>Annulla</button>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
+  function rigaPromemoriaFatto(p){
+    return (
+      <div key={p.id} style={{...S.card,cursor:"default",opacity:0.65,display:"flex",justifyContent:"space-between",alignItems:"center",gap:10}}>
+        <div style={{minWidth:0}}>
+          {p.cliente_nome && <div style={{fontWeight:600,fontSize:12.5}}>{p.cliente_nome}</div>}
+          <div style={{fontSize:12,color:C.steel,marginTop:2}}>{p.testo}</div>
+        </div>
+        <button onClick={()=>riapri(p)} style={{...S.btnS,padding:"5px 10px",fontSize:11,flexShrink:0}}>↺ Riapri</button>
+      </div>
+    );
+  }
+  function rigaPreventivoDaGestire(p){
+    return (
+      <div key={p.id} onClick={()=>setArea("preventivi")} style={{...S.card,borderLeft:`3px solid ${C.warn}`}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:10}}>
+          <div style={{minWidth:0}}>
+            <div style={{fontWeight:600,fontSize:13.5}}>{p.cliente || "Cliente non specificato"}</div>
+            <div style={{fontSize:11.5,color:"#8A929A",marginTop:2}}>{p.righe.length} articol{p.righe.length===1?"o":"i"} · Inviato</div>
+          </div>
+          <span className="tnum" style={{fontFamily:F_MONO,fontSize:13,fontWeight:600,flexShrink:0}}>€{p.val.toLocaleString("it-IT")}</span>
+        </div>
+      </div>
+    );
+  }
+  function rigaTrattativa(p){
+    const scaduto = p.giorni<0;
+    return (
+      <div key={p.id} onClick={()=>setArea("preventivi")} style={{...S.card,borderLeft:`3px solid ${scaduto?C.danger:C.warn}`}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:10}}>
+          <div style={{minWidth:0}}>
+            <div style={{fontWeight:600,fontSize:13.5}}>{p.cliente || "Cliente non specificato"}</div>
+            <div style={{fontSize:11.5,color:scaduto?C.danger:"#8A929A",marginTop:2,fontWeight:scaduto?600:400}}>
+              {scaduto?`⚠ Richiamo scaduto da ${Math.abs(p.giorni)}gg`:p.giorni===0?"Richiamare oggi":`Richiamare tra ${p.giorni}gg`}
+            </div>
+          </div>
+          <span className="tnum" style={{fontFamily:F_MONO,fontSize:13,fontWeight:600,flexShrink:0}}>€{p.val.toLocaleString("it-IT")}</span>
+        </div>
+      </div>
+    );
+  }
+  function rigaIntervento(i, badgeTesto, tono){
+    return (
+      <div key={i.id} onClick={()=>setArea("interventi")} style={{...S.card,borderLeft:`3px solid ${tono}`}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:10}}>
+          <div style={{minWidth:0}}>
+            <div style={{fontWeight:600,fontSize:13.5}}>{TIPO_LABELS[i.tipo]||i.tipo}</div>
+            <div style={{fontSize:11.5,color:"#8A929A",marginTop:2}}>{i.cliente_nome || "Cliente non specificato"}</div>
+            {i.nota_manca_info && <div style={{fontSize:11,color:"#8a6418",marginTop:3}}>ⓘ {i.nota_manca_info}</div>}
+          </div>
+          <Tag tone={tono===C.danger?"danger":tono===C.warn?"warn":"steel"}>{badgeTesto}</Tag>
+        </div>
+      </div>
+    );
+  }
+
+  const tuttoVuoto = aperti.length===0 && !(mostraCommerciale && (daRecuperareVicine.length>0||daGestirePrev.length>0))
+    && !(mostraTecnico && (interventiMancaList.length>0||interventiScadenzaList.length>0||interventiGestireList.length>0));
+
+  return (
+    <div>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:8}}>
+        <div style={S.eyebrow}>Promemoria</div>
+        {puoVedereTeam && (
+          <div style={{display:"flex",gap:6}}>
+            <button onClick={()=>setVistaTeam(false)} style={{...S.btnS,padding:"5px 10px",fontSize:11,...(!vistaTeam?{background:C.ink,color:"#fff",borderColor:C.ink}:{})}}>Miei</button>
+            <button onClick={()=>setVistaTeam(true)} style={{...S.btnS,padding:"5px 10px",fontSize:11,...(vistaTeam?{background:C.ink,color:"#fff",borderColor:C.ink}:{})}}>Tutti</button>
+          </div>
+        )}
+      </div>
+
+      <div style={{marginTop:10,marginBottom:18}}>
+        {formAperto ? (
+          <div style={{...S.card,cursor:"default",border:`1px solid ${C.ink}`}}>
+            <div style={S.eyebrow}>Nuovo promemoria</div>
+            <div style={{marginTop:8,marginBottom:10}}>
+              <SelezioneCliente clienteSelezionato={clienteForm} onSeleziona={setClienteForm} sessione={sessione}/>
+            </div>
+            <textarea value={testoForm} onChange={e=>setTestoForm(e.target.value)} placeholder="Cosa devi ricordare?" rows={3} style={{...S.inp,resize:"vertical",marginBottom:10}}/>
+            <div style={{marginBottom:12}}>
+              <label style={{fontSize:11,fontFamily:F_MONO,color:"#9AA3AB",textTransform:"uppercase",letterSpacing:"0.05em",display:"block",marginBottom:4}}>Scadenza (opzionale)</label>
+              <input type="date" value={scadenzaForm} onChange={e=>setScadenzaForm(e.target.value)} style={S.inp}/>
+            </div>
+            {errore && <div style={{fontSize:12,color:C.danger,marginBottom:10}}>⚠ {errore}</div>}
+            <div style={{display:"flex",gap:8}}>
+              <button onClick={salvaNuovo} disabled={!testoForm.trim()||salvando} style={{...S.btnAccent,padding:"10px 16px",opacity:testoForm.trim()?1:0.4}}>{salvando?"Salvo…":"Salva promemoria"}</button>
+              <button onClick={()=>{setFormAperto(false); setTestoForm(""); setClienteForm(null); setScadenzaForm(""); setErrore("");}} style={{...S.btnS,padding:"10px 16px"}}>Annulla</button>
+            </div>
+          </div>
+        ) : (
+          <button onClick={()=>setFormAperto(true)} style={{...S.btnAccent,padding:"14px 24px",fontSize:14.5,fontWeight:700}}>+ Nuovo promemoria</button>
+        )}
+      </div>
+
+      {tuttoVuoto && fatti.length===0 && (
+        <div style={{textAlign:"center",padding:"2.5rem 1rem",color:"#9AA3AB"}}>
+          <div style={{fontSize:28,marginBottom:8}}>✓</div>
+          <div style={{fontSize:13}}>Niente da ricordare al momento.</div>
+        </div>
+      )}
+
+      <div style={{...S.eyebrow,marginTop:4,marginBottom:8}}>{vistaTeam?"Promemoria del team":"I tuoi promemoria"} ({aperti.length})</div>
+      {aperti.length===0 && <div style={{fontSize:12.5,color:"#9AA3AB",padding:"4px 0 8px"}}>Nessun promemoria aperto.</div>}
+      {aperti.map(rigaPromemoria)}
+
+      {mostraCommerciale && daRecuperareVicine.length>0 && (<>
+        <div style={{...S.eyebrow,marginTop:22,marginBottom:8}}>Trattative da recuperare a breve ({daRecuperareVicine.length})</div>
+        {daRecuperareVicine.map(rigaTrattativa)}
+      </>)}
+      {mostraCommerciale && daGestirePrev.length>0 && (<>
+        <div style={{...S.eyebrow,marginTop:22,marginBottom:8}}>Preventivi da gestire ({daGestirePrev.length})</div>
+        {daGestirePrev.slice(0,8).map(rigaPreventivoDaGestire)}
+        {daGestirePrev.length>8 && <div onClick={()=>setArea("preventivi")} style={{fontSize:12,color:C.ink,cursor:"pointer",padding:"6px 0",fontWeight:600}}>Vedi tutti in Preventivi →</div>}
+      </>)}
+
+      {mostraTecnico && interventiMancaList.length>0 && (<>
+        <div style={{...S.eyebrow,marginTop:22,marginBottom:8}}>Manca qualcosa per chiudere ({interventiMancaList.length})</div>
+        {interventiMancaList.map(i=>rigaIntervento(i,"manca info",C.warn))}
+      </>)}
+      {mostraTecnico && interventiScadenzaList.length>0 && (<>
+        <div style={{...S.eyebrow,marginTop:22,marginBottom:8}}>Interventi in scadenza ({interventiScadenzaList.length})</div>
+        {interventiScadenzaList.map(i=>rigaIntervento(i, i.giorni<0?`scaduto da ${Math.abs(i.giorni)}gg`:i.giorni===0?"oggi":`tra ${i.giorni}gg`, i.giorni<0?C.danger:C.warn))}
+      </>)}
+      {mostraTecnico && interventiGestireList.length>0 && (<>
+        <div style={{...S.eyebrow,marginTop:22,marginBottom:8}}>Interventi da gestire ({interventiGestireList.length})</div>
+        {interventiGestireList.slice(0,8).map(i=>rigaIntervento(i,"pianificato",C.steel))}
+        {interventiGestireList.length>8 && <div onClick={()=>setArea("interventi")} style={{fontSize:12,color:C.ink,cursor:"pointer",padding:"6px 0",fontWeight:600}}>Vedi tutti in Interventi →</div>}
+      </>)}
+
+      {fatti.length>0 && (<>
+        <div style={{...S.eyebrow,marginTop:22,marginBottom:8}}>Completati di recente</div>
+        {fatti.map(rigaPromemoriaFatto)}
       </>)}
     </div>
   );
@@ -4170,10 +4494,24 @@ ${o.firma_cliente ? `
 
 // ─── INTERVENTI ───────────────────────────────────────────────────────────────
 function Interventi({interventi, setInterventi, attrezzature, sessione, setArea, setInterventoDaCompletare}){
+  const accessToken = trovaAccessToken(sessione);
+  const [modificaBloccoId,setModificaBloccoId] = useState(null);
+  const [notaBlocco,setNotaBlocco] = useState("");
   const pianificati = (interventi||[]).filter(i=>i.stato==="Pianificato")
     .sort((a,b)=>new Date(a.data_pianificata||"9999-12-31")-new Date(b.data_pianificata||"9999-12-31"));
   const completati = (interventi||[]).filter(i=>i.stato==="Completato")
     .sort((a,b)=>new Date(b.completato_il||0)-new Date(a.completato_il||0)).slice(0,15);
+
+  // Segnala/rimuove il flag "manca qualcosa per chiudere" (vedi Promemoria):
+  // scrittura diretta come le altre su interventi, nessuna Edge Function.
+  async function salvaManca(i, mancaInfo, nota){
+    const payload = { manca_info: mancaInfo, nota_manca_info: mancaInfo ? (nota.trim()||null) : null };
+    try{
+      await sbAuth("PATCH","interventi",`id=eq.${i.id}`,payload,accessToken);
+      setInterventi(prev=>prev.map(x=>x.id===i.id?{...x,...payload}:x));
+    }catch{ /* riprova al prossimo tocco, non blocchiamo l'interfaccia per questo */ }
+    setModificaBloccoId(null); setNotaBlocco("");
+  }
 
   // Promemoria scadenze attrezzature (aggiornamenti/verifiche): entro 30
   // giorni o già scadute, visibili qui a responsabili e tecnici.
@@ -4192,23 +4530,45 @@ function Interventi({interventi, setInterventi, attrezzature, sessione, setArea,
     const oggi = new Date(); oggi.setHours(0,0,0,0);
     const scaduto = i.stato==="Pianificato" && i.data_pianificata && new Date(i.data_pianificata) < oggi;
     return (
-      <div key={i.id} style={{...S.card,...(scaduto?{borderColor:C.danger}:{})}}>
+      <div key={i.id} style={{...S.card,...(scaduto?{borderColor:C.danger}:i.manca_info?{borderColor:C.warn}:{})}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:10}}>
           <div style={{minWidth:0}}>
             <div style={{display:"flex",gap:6,marginBottom:5,alignItems:"center",flexWrap:"wrap"}}>
               <Tag tone="primary">{TIPO_LABELS[i.tipo]||i.tipo}</Tag>
               {i.data_pianificata && <span className="tnum" style={{fontSize:10.5,color:scaduto?C.danger:"#9AA3AB",fontFamily:F_MONO,fontWeight:scaduto?700:400}}>{new Date(i.data_pianificata).toLocaleDateString("it-IT")}</span>}
+              {i.manca_info && <Tag tone="warn">⚠ manca info</Tag>}
             </div>
             <div style={{fontWeight:600,fontSize:13.5}}>{i.cliente_nome || "Cliente non specificato"}</div>
             {i.note && <div style={{fontSize:11.5,color:"#8A929A",marginTop:2}}>{i.note}</div>}
+            {i.manca_info && i.nota_manca_info && <div style={{fontSize:11.5,color:"#8a6418",marginTop:4}}>ⓘ {i.nota_manca_info}</div>}
           </div>
           <Tag tone={i.stato==="Completato"?"ok":i.priorita==="alta"?"danger":i.priorita==="media"?"warn":"steel"}>{i.stato==="Completato"?"✓ completato":i.priorita}</Tag>
         </div>
-        {i.stato==="Pianificato" && (
-          <button onClick={()=>{setInterventoDaCompletare(i); setArea("rapporti");}} style={{...S.btnS,marginTop:10,padding:"7px 12px",fontSize:12}}>
-            Compila rapporto e completa →
-          </button>
-        )}
+        {i.stato==="Pianificato" && (<>
+          <div style={{marginTop:10,display:"flex",gap:8,flexWrap:"wrap"}}>
+            <button onClick={()=>{setInterventoDaCompletare(i); setArea("rapporti");}} style={{...S.btnS,padding:"7px 12px",fontSize:12}}>
+              Compila rapporto e completa →
+            </button>
+            {i.manca_info ? (
+              <button onClick={()=>salvaManca(i,false,"")} style={{...S.btnS,padding:"7px 12px",fontSize:12,color:"#8a6418",borderColor:C.warn,background:"rgba(217,164,65,0.08)"}}>
+                ⚠ Rimuovi segnalazione
+              </button>
+            ) : (
+              <button onClick={()=>{setModificaBloccoId(i.id); setNotaBlocco("");}} style={{...S.btnS,padding:"7px 12px",fontSize:12}}>
+                ⚠ Segnala: manca qualcosa
+              </button>
+            )}
+          </div>
+          {modificaBloccoId===i.id && (
+            <div style={{marginTop:10,paddingTop:10,borderTop:`1px solid ${C.paperLine}`}}>
+              <textarea value={notaBlocco} onChange={e=>setNotaBlocco(e.target.value)} placeholder="Cosa manca per chiudere? (opzionale)" rows={2} style={{...S.inp,resize:"vertical",marginBottom:8}}/>
+              <div style={{display:"flex",gap:8}}>
+                <button onClick={()=>salvaManca(i,true,notaBlocco)} style={{...S.btnAccent,padding:"7px 12px",fontSize:12}}>Conferma</button>
+                <button onClick={()=>{setModificaBloccoId(null); setNotaBlocco("");}} style={{...S.btnS,padding:"7px 12px",fontSize:12}}>Annulla</button>
+              </div>
+            </div>
+          )}
+        </>)}
       </div>
     );
   }
