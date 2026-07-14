@@ -445,17 +445,23 @@ export default function App(){
   },[]);
 
   // Rileva nuovi deploy mentre l'app è già aperta in una scheda. L'header
-  // no-cache su index.html (vercel.json) fa sì che questo fetch veda sempre
-  // la versione realmente pubblicata; confrontiamo il file JS referenziato
-  // con quello attualmente caricato (identificato dal nome con hash che Vite
-  // genera ad ogni build). Se diverso, avvisiamo invece di forzare il reload
-  // a sorpresa mentre magari si sta compilando un preventivo.
+  // no-cache (vercel.json, ora su tutte le route e non solo /index.html) fa
+  // sì che questo fetch veda sempre la versione realmente pubblicata;
+  // confrontiamo il file JS referenziato con quello attualmente caricato
+  // (identificato dal nome con hash che Vite genera ad ogni build). Se
+  // diverso, avvisiamo invece di forzare il reload a sorpresa mentre magari
+  // si sta compilando un preventivo.
   useEffect(()=>{
     const scriptTag = document.querySelector('script[type="module"][src]');
     const versioneCaricata = scriptTag?.getAttribute("src") || null;
     if(!versioneCaricata) return; // ambiente non standard (es. dev server): non applicabile
 
+    let ultimoControllo = 0;
+
     async function controllaAggiornamento(){
+      const ora = Date.now();
+      if(ora - ultimoControllo < 30*1000) return; // evita controlli ravvicinati (focus+visibilitychange insieme)
+      ultimoControllo = ora;
       try{
         const res = await fetch("/index.html", { cache: "no-store" });
         const html = await res.text();
@@ -473,8 +479,15 @@ export default function App(){
       }catch{ /* rete assente: ignora, riprova al prossimo giro */ }
     }
 
-    const interval = setInterval(controllaAggiornamento, 5*60*1000); // ogni 5 minuti
-    return ()=>clearInterval(interval);
+    const interval = setInterval(controllaAggiornamento, 5*60*1000); // ogni 5 minuti in background
+    const onVisibile = ()=>{ if(document.visibilityState === "visible") controllaAggiornamento(); };
+    window.addEventListener("focus", controllaAggiornamento);
+    document.addEventListener("visibilitychange", onVisibile);
+    return ()=>{
+      clearInterval(interval);
+      window.removeEventListener("focus", controllaAggiornamento);
+      document.removeEventListener("visibilitychange", onVisibile);
+    };
   },[]);
 
   // Carica il catalogo reale da Supabase appena l'app monta
