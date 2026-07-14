@@ -163,12 +163,13 @@ const DEMO_INTERVENTI = [
 ];
 // Stati possibili di un preventivo, in ordine di avanzamento del ciclo di vita
 const STATI_PREVENTIVO = ["Bozza","Inviato"];
-const STATO_COLORE = { "Bozza":"steel", "Inviato":"warn", "Convertito in ordine":"primary", "Saltato":"danger" };
+const STATO_COLORE = { "Bozza":"steel", "Inviato":"warn", "Convertito in ordine":"primary", "Saltato":"danger", "Sospeso":"warn" };
 // Ciclo ordine: Convertito in ordine (preventivo) → "In attesa di invio"
 // (chi vende compila il modulo logistico) → "Da evadere" (magazzino) →
 // "Evaso". "Annullato" possibile in qualunque momento.
 function toneOrdine(stato){
   if(stato==="Annullato") return "danger";
+  if(stato==="Sospeso") return "warn";
   if(stato==="In attesa di invio") return "steel";
   if(stato==="Da evadere") return "warn";
   return "ok"; // Evaso
@@ -4187,6 +4188,9 @@ function ListaPreventivi({preventivi,onApri,onNuovo,sessione}){
   const daCompletare = filtra(preventivi.filter(p=>p.stato==="Bozza"));
   const daGestire = filtra(preventivi.filter(p=>p.stato==="Inviato"));
   const inOrdine = filtra(preventivi.filter(p=>p.stato==="Convertito in ordine"));
+  // Preventivo il cui ordine collegato è stato sospeso (vedi Ordini →
+  // Sospendi/Riattiva) — resta visibile qui finché l'ordine non riparte.
+  const sospesi = filtra(preventivi.filter(p=>p.stato==="Sospeso"));
   // Trattative "vendita rimandata" con un promemoria impostato: categoria a
   // parte, più visibile, invece che perse in mezzo ai saltati definitivi.
   const daRecuperare = filtra(preventivi.filter(p=>p.stato==="Saltato" && p.motivo_saltato_tipo==="rimandata" && p.promemoria_recupero))
@@ -4196,7 +4200,7 @@ function ListaPreventivi({preventivi,onApri,onNuovo,sessione}){
   // dedicata "Saltati" (responsabile/admin)
   const mieiSaltati = filtra(preventivi.filter(p=>p.stato==="Saltato" && p.creato_da_nome===sessione?.nome && p.motivo_saltato_tipo!=="rimandata"));
 
-  const totaleVisibile = daCompletare.length+daGestire.length+inOrdine.length+daRecuperare.length+mieiSaltati.length;
+  const totaleVisibile = daCompletare.length+daGestire.length+inOrdine.length+sospesi.length+daRecuperare.length+mieiSaltati.length;
 
   function rigaPreventivo(p){
     return (
@@ -4284,6 +4288,7 @@ function ListaPreventivi({preventivi,onApri,onNuovo,sessione}){
       {sezione("Da completare", daCompletare)}
       {sezione("Da gestire", daGestire)}
       {sezione("In ordine", inOrdine)}
+      {sezione("Sospesi", sospesi)}
       {daRecuperare.length>0 && (
         <div style={{marginBottom:24}}>
           <div style={{...S.eyebrow,marginBottom:8}}>Trattativa da recuperare ({daRecuperare.length})</div>
@@ -4376,11 +4381,57 @@ function PreventiviSaltati({preventivi}){
 function Ordini({ordini,setOrdini,preventivi,setPreventivi,catalog,sessione,ruolo}){
   const [selId,setSelId]=useState(null);
   const [erroreSync,setErroreSync]=useState("");
-  const [confermaAnnulla,setConfermaAnnulla]=useState(false);
+  const [confermaSospendi,setConfermaSospendi]=useState(false);
+  const [confermaRiattiva,setConfermaRiattiva]=useState(false);
   const [confermaEliminaOrdine,setConfermaEliminaOrdine]=useState(false);
   const selezionato = ordini.find(o=>o.id===selId);
   const accessToken = trovaAccessToken(sessione);
-  useEffect(()=>{ setConfermaAnnulla(false); setConfermaEliminaOrdine(false); },[selId]);
+  useEffect(()=>{ setConfermaSospendi(false); setConfermaRiattiva(false); setConfermaEliminaOrdine(false); },[selId]);
+
+  // ── Nuovo ordine senza preventivo ───────────────────────────────────────
+  const [creandoNuovo,setCreandoNuovo] = useState(false);
+  const [nuovoCliente,setNuovoCliente] = useState(null);
+  const [nuovoClienteLibero,setNuovoClienteLibero] = useState(false);
+  const [nuovoNomeClienteLibero,setNuovoNomeClienteLibero] = useState("");
+  const [nuoveRighe,setNuoveRighe] = useState([]);
+  const [salvandoNuovo,setSalvandoNuovo] = useState(false);
+  const [erroreNuovo,setErroreNuovo] = useState("");
+
+  function annullaNuovoOrdine(){
+    setCreandoNuovo(false); setNuovoCliente(null); setNuovoClienteLibero(false);
+    setNuovoNomeClienteLibero(""); setNuoveRighe([]); setErroreNuovo("");
+  }
+  function aggiungiRigaNuovoOrdine(rigaNuova){
+    setNuoveRighe(prev=>{
+      const esiste = prev.some(r=>r.cod===rigaNuova.cod);
+      return esiste ? prev.map(r=>r.cod===rigaNuova.cod?rigaNuova:r) : [...prev, rigaNuova];
+    });
+  }
+  function rimuoviRigaNuovoOrdine(cod){
+    setNuoveRighe(prev=>prev.filter(r=>r.cod!==cod));
+  }
+  const nomeClienteNuovoOrdine = nuovoClienteLibero ? nuovoNomeClienteLibero.trim() : (nuovoCliente?.ragione_sociale||"");
+  async function salvaNuovoOrdine(){
+    if(!nomeClienteNuovoOrdine || nuoveRighe.length===0) return;
+    setSalvandoNuovo(true); setErroreNuovo("");
+    const payload = {
+      preventivo_id: null,
+      cliente: nomeClienteNuovoOrdine,
+      cliente_codice: nuovoClienteLibero ? null : (nuovoCliente?.codice || null),
+      righe: nuoveRighe,
+      val: ricalcolaVal(nuoveRighe),
+      stato: "In attesa di invio",
+    };
+    try{
+      const [salvato] = await sbAuth("POST","ordini","",payload,accessToken);
+      setOrdini(prev=>[salvato,...prev]);
+      annullaNuovoOrdine();
+      setSelId(salvato.id);
+    }catch(err){
+      setErroreNuovo("Salvataggio non riuscito: "+err.message);
+    }
+    setSalvandoNuovo(false);
+  }
 
   // ── Modulo logistico pre-invio (vedi CAMPI_LOGISTICA_ORDINE) ───────────
   const [categorieLogistica,setCategorieLogistica] = useState({}); // {categoria: {rottamazione,...}}
@@ -4512,10 +4563,71 @@ function Ordini({ordini,setOrdini,preventivi,setPreventivi,catalog,sessione,ruol
       setErroreSync("Modifica non salvata sul server: "+err.message);
     }
   }
-  function annullaOrdine(id){
+  // "Sospendi" (ex "Annulla"): non più uno stato terminale — l'ordine resta
+  // modificabile e può essere riattivato (vedi riattivaOrdine). Il
+  // preventivo collegato segue lo stesso stato "Sospeso", non più "Bozza"
+  // (che resta riservata alle bozze vere, mai state inviate/convertite).
+  async function sospendiOrdine(id){
     if(!RUOLI_APPROVATORI.includes(ruolo)) return;
-    setConfermaAnnulla(false);
-    setStato(id,"Annullato");
+    setConfermaSospendi(false);
+    setErroreSync("");
+    const o = ordini.find(x=>x.id===id);
+    if(!o) return;
+    const statoPrecedente = o.stato;
+    setOrdini(prev=>prev.map(x=>x.id===id?{...x,stato:"Sospeso",stato_prima_sospensione:statoPrecedente}:x));
+    const preventivoCollegato = o.preventivo_id ? (preventivi||[]).find(p=>p.id===o.preventivo_id) : null;
+    if(preventivoCollegato && setPreventivi){
+      setPreventivi(prev=>prev.map(p=>p.id===o.preventivo_id?{...p,stato:"Sospeso"}:p));
+    }
+    try{
+      await sbAuth("PATCH","ordini",`id=eq.${id}`,{stato:"Sospeso",stato_prima_sospensione:statoPrecedente},accessToken);
+      if(preventivoCollegato){
+        try{
+          await sbAuth("PATCH","preventivi",`id=eq.${o.preventivo_id}`,{stato:"Sospeso"},accessToken);
+        }catch(err){
+          setErroreSync("Ordine sospeso, ma non sono riuscito a sospendere anche il preventivo: "+err.message);
+        }
+      }
+    }catch(err){
+      setOrdini(prev=>prev.map(x=>x.id===id?{...x,stato:statoPrecedente,stato_prima_sospensione:o.stato_prima_sospensione}:x)); // rollback ordine
+      if(preventivoCollegato && setPreventivi){
+        setPreventivi(prev=>prev.map(p=>p.id===o.preventivo_id?{...p,stato:preventivoCollegato.stato}:p)); // rollback preventivo
+      }
+      setErroreSync("Sospensione non riuscita: "+err.message);
+    }
+  }
+  // Riattiva un ordine sospeso: torna esattamente allo stato in cui era
+  // prima della sospensione (memorizzato in stato_prima_sospensione), e il
+  // preventivo collegato torna "Convertito in ordine" — come richiesto,
+  // indipendentemente da cos'altro fosse successo nel frattempo.
+  async function riattivaOrdine(id){
+    if(!RUOLI_APPROVATORI.includes(ruolo)) return;
+    setConfermaSospendi(false);
+    setErroreSync("");
+    const o = ordini.find(x=>x.id===id);
+    if(!o) return;
+    const statoRipristinato = o.stato_prima_sospensione || "Da evadere";
+    setOrdini(prev=>prev.map(x=>x.id===id?{...x,stato:statoRipristinato,stato_prima_sospensione:null}:x));
+    const preventivoCollegato = o.preventivo_id ? (preventivi||[]).find(p=>p.id===o.preventivo_id) : null;
+    if(preventivoCollegato && setPreventivi){
+      setPreventivi(prev=>prev.map(p=>p.id===o.preventivo_id?{...p,stato:"Convertito in ordine"}:p));
+    }
+    try{
+      await sbAuth("PATCH","ordini",`id=eq.${id}`,{stato:statoRipristinato,stato_prima_sospensione:null},accessToken);
+      if(preventivoCollegato){
+        try{
+          await sbAuth("PATCH","preventivi",`id=eq.${o.preventivo_id}`,{stato:"Convertito in ordine"},accessToken);
+        }catch(err){
+          setErroreSync("Ordine riattivato, ma non sono riuscito ad aggiornare il preventivo: "+err.message);
+        }
+      }
+    }catch(err){
+      setOrdini(prev=>prev.map(x=>x.id===id?{...x,stato:"Sospeso",stato_prima_sospensione:o.stato_prima_sospensione}:x)); // rollback ordine
+      if(preventivoCollegato && setPreventivi){
+        setPreventivi(prev=>prev.map(p=>p.id===o.preventivo_id?{...p,stato:preventivoCollegato.stato}:p)); // rollback preventivo
+      }
+      setErroreSync("Riattivazione non riuscita: "+err.message);
+    }
   }
   async function eliminaOrdine(id){
     setConfermaEliminaOrdine(false);
@@ -4558,6 +4670,36 @@ function Ordini({ordini,setOrdini,preventivi,setPreventivi,catalog,sessione,ruol
         <button onClick={onNo} style={{...S.btnS,padding:"7px 14px",flex:1,...(valore===false?{background:C.ink,color:"#fff",borderColor:C.ink}:{})}}>No</button>
       </div>
     );
+  }
+  // Modifica righe (solo mentre l'ordine è "Sospeso" — vedi rendering più
+  // sotto): stessa idea della modifica righe inline dei preventivi, ma
+  // scritta subito con PATCH diretto invece di passare da un "aggiorna"
+  // locale condiviso, dato che qui non esiste un concetto di bozza.
+  function ricalcolaVal(righe){ return righe.reduce((s,r)=>s+r.netto*(r.qty||1),0); }
+  async function modificaRigaOrdine(cod, campo, valore){
+    if(!selezionato) return;
+    const righe = selezionato.righe.map(r=>r.cod===cod?{...r,[campo]:valore}:r);
+    const val = ricalcolaVal(righe);
+    setOrdini(prev=>prev.map(o=>o.id===selezionato.id?{...o,righe,val}:o));
+    try{ await sbAuth("PATCH","ordini",`id=eq.${selezionato.id}`,{righe,val},accessToken); }
+    catch(err){ setErroreSync("Modifica non salvata: "+err.message); }
+  }
+  async function rimuoviRigaOrdine(cod){
+    if(!selezionato) return;
+    const righe = selezionato.righe.filter(r=>r.cod!==cod);
+    const val = ricalcolaVal(righe);
+    setOrdini(prev=>prev.map(o=>o.id===selezionato.id?{...o,righe,val}:o));
+    try{ await sbAuth("PATCH","ordini",`id=eq.${selezionato.id}`,{righe,val},accessToken); }
+    catch(err){ setErroreSync("Modifica non salvata: "+err.message); }
+  }
+  async function aggiungiRigaOrdine(rigaNuova){
+    if(!selezionato) return;
+    const esiste = selezionato.righe.some(r=>r.cod===rigaNuova.cod);
+    const righe = esiste ? selezionato.righe.map(r=>r.cod===rigaNuova.cod?rigaNuova:r) : [...selezionato.righe, rigaNuova];
+    const val = ricalcolaVal(righe);
+    setOrdini(prev=>prev.map(o=>o.id===selezionato.id?{...o,righe,val}:o));
+    try{ await sbAuth("PATCH","ordini",`id=eq.${selezionato.id}`,{righe,val},accessToken); }
+    catch(err){ setErroreSync("Modifica non salvata: "+err.message); }
   }
   function generaOrdinePDF(o){
     const righe = o.righe.map(r => `
@@ -4636,14 +4778,37 @@ ${o.firma_cliente ? `
           </div>
         )}
         <div style={S.eyebrow}>Articoli ({selezionato.righe.length})</div>
+        {selezionato.stato==="Sospeso" && (
+          <div style={{fontSize:11.5,color:"#8a6418",background:"rgba(217,164,65,0.14)",borderRadius:6,padding:"9px 11px",marginBottom:10}}>
+            ⓘ Ordine sospeso: articoli, quantità e prezzi sono modificabili finché non lo riattivi.
+          </div>
+        )}
+        {selezionato.stato==="Sospeso" && (
+          <RicercaProdottiInline onSeleziona={aggiungiRigaOrdine} righeEsistenti={selezionato.righe} ruolo={ruolo} catalog={catalog} sessione={sessione}/>
+        )}
         {selezionato.righe.map(r=>(
-          <div key={r.cod} style={{...S.card,cursor:"default",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-            <div>
-              <Tag tone="steel">{r.mar}</Tag>
-              <div style={{fontWeight:600,fontSize:13,marginTop:4}}>{r.nome}</div>
-              <div className="tnum" style={{fontSize:11,color:"#9AA3AB",marginTop:2}}>€{r.netto.toFixed(2)} × {r.qty||1}</div>
+          <div key={r.cod} style={{...S.card,cursor:"default"}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+              <div>
+                <Tag tone="steel">{r.mar}</Tag>
+                <div style={{fontWeight:600,fontSize:13,marginTop:4}}>{r.nome}</div>
+                {selezionato.stato!=="Sospeso" && <div className="tnum" style={{fontSize:11,color:"#9AA3AB",marginTop:2}}>€{r.netto.toFixed(2)} × {r.qty||1}</div>}
+              </div>
+              <span className="tnum" style={{fontWeight:700,fontFamily:F_MONO,fontSize:14}}>€{(r.netto*(r.qty||1)).toFixed(2)}</span>
             </div>
-            <span className="tnum" style={{fontWeight:700,fontFamily:F_MONO,fontSize:14}}>€{(r.netto*(r.qty||1)).toFixed(2)}</span>
+            {selezionato.stato==="Sospeso" && (
+              <div style={{display:"flex",gap:8,alignItems:"center",marginTop:10,paddingTop:10,borderTop:`1px solid ${C.paperLine}`}}>
+                <div style={{flex:"0 0 70px"}}>
+                  <label style={{fontSize:10,fontFamily:F_MONO,color:"#9AA3AB"}}>Qtà</label>
+                  <input type="number" min="1" value={r.qty||1} onChange={e=>modificaRigaOrdine(r.cod,"qty",Math.max(1,parseInt(e.target.value)||1))} className="tnum" style={{...S.inp,fontFamily:F_MONO,padding:"7px 9px"}}/>
+                </div>
+                <div style={{flex:"1 1 120px"}}>
+                  <label style={{fontSize:10,fontFamily:F_MONO,color:"#9AA3AB"}}>Netto unitario €</label>
+                  <input type="number" step="0.01" value={r.netto} onChange={e=>modificaRigaOrdine(r.cod,"netto",parseFloat(e.target.value)||0)} className="tnum" style={{...S.inp,fontFamily:F_MONO,padding:"7px 9px"}}/>
+                </div>
+                <button onClick={()=>rimuoviRigaOrdine(r.cod)} style={{...S.btnS,padding:"7px 10px",fontSize:11.5,color:C.danger,flexShrink:0,alignSelf:"flex-end"}}>🗑 Rimuovi</button>
+              </div>
+            )}
           </div>
         ))}
         <div style={{display:"flex",justifyContent:"space-between",padding:"14px 0",borderTop:`1px solid ${C.paperLine}`,marginTop:8,marginBottom:16}}>
@@ -4787,18 +4952,42 @@ ${o.firma_cliente ? `
           <button onClick={()=>generaOrdinePDF(selezionato)} style={{...S.btnAccent,padding:"12px"}}>📄 Invia ordine in PDF</button>
         </div>
 
-        {RUOLI_APPROVATORI.includes(ruolo) && selezionato.stato!=="Annullato" && (
+        {RUOLI_APPROVATORI.includes(ruolo) && selezionato.stato==="Sospeso" && (
           <div style={{marginTop:20}}>
-            {!confermaAnnulla ? (
-              <button onClick={()=>setConfermaAnnulla(true)} style={{width:"100%",padding:"12px",background:"#fff",color:C.danger,border:`1px solid ${C.danger}`,borderRadius:9,fontSize:13,fontWeight:700,cursor:"pointer"}}>
-                ⊘ Annulla ordine
+            {!confermaRiattiva ? (
+              <button onClick={()=>setConfermaRiattiva(true)} style={{width:"100%",padding:"12px",background:C.ink,color:"#fff",border:"none",borderRadius:9,fontSize:13,fontWeight:700,cursor:"pointer"}}>
+                ▶ Riattiva ordine
+              </button>
+            ) : (
+              <div style={{background:"rgba(22,39,88,0.06)",border:`1px solid ${C.ink}`,borderRadius:9,padding:16}}>
+                <div style={{fontSize:13.5,fontWeight:700,color:C.ink,marginBottom:6}}>Confermi la riattivazione dell'ordine?</div>
+                <div style={{fontSize:12.5,color:C.steel,marginBottom:12}}>
+                  L'ordine torna allo stato precedente la sospensione{selezionato.preventivo_id?" e il preventivo collegato torna \"Convertito in ordine\"":""}.
+                </div>
+                <div style={{display:"flex",gap:10}}>
+                  <button onClick={()=>{riattivaOrdine(selezionato.id); setConfermaRiattiva(false);}} style={{flex:1,padding:"12px",background:C.ink,color:"#fff",border:"none",borderRadius:8,fontSize:13.5,fontWeight:700,cursor:"pointer"}}>Sì, riattiva</button>
+                  <button onClick={()=>setConfermaRiattiva(false)} style={{flex:1,padding:"12px",background:"#fff",color:C.steel,border:`1px solid ${C.paperLine}`,borderRadius:8,fontSize:13.5,fontWeight:600,cursor:"pointer"}}>Torna indietro</button>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {RUOLI_APPROVATORI.includes(ruolo) && selezionato.stato!=="Annullato" && selezionato.stato!=="Sospeso" && (
+          <div style={{marginTop:20}}>
+            {!confermaSospendi ? (
+              <button onClick={()=>setConfermaSospendi(true)} style={{width:"100%",padding:"12px",background:"#fff",color:C.danger,border:`1px solid ${C.danger}`,borderRadius:9,fontSize:13,fontWeight:700,cursor:"pointer"}}>
+                ⏸ Sospendi ordine
               </button>
             ) : (
               <div style={{background:"rgba(200,75,58,0.08)",border:`1px solid ${C.danger}`,borderRadius:9,padding:16}}>
-                <div style={{fontSize:13.5,fontWeight:700,color:C.danger,marginBottom:10}}>Confermi l'annullamento dell'ordine?</div>
+                <div style={{fontSize:13.5,fontWeight:700,color:C.danger,marginBottom:6}}>Confermi la sospensione dell'ordine?</div>
+                <div style={{fontSize:12.5,color:C.steel,marginBottom:12}}>
+                  L'ordine resta modificabile e riattivabile in seguito{selezionato.preventivo_id?" — anche il preventivo collegato passa a \"Sospeso\"":""}.
+                </div>
                 <div style={{display:"flex",gap:10}}>
-                  <button onClick={()=>annullaOrdine(selezionato.id)} style={{flex:1,padding:"12px",background:C.danger,color:"#fff",border:"none",borderRadius:8,fontSize:13.5,fontWeight:700,cursor:"pointer"}}>Sì, annulla</button>
-                  <button onClick={()=>setConfermaAnnulla(false)} style={{flex:1,padding:"12px",background:"#fff",color:C.steel,border:`1px solid ${C.paperLine}`,borderRadius:8,fontSize:13.5,fontWeight:600,cursor:"pointer"}}>Torna indietro</button>
+                  <button onClick={()=>sospendiOrdine(selezionato.id)} style={{flex:1,padding:"12px",background:C.danger,color:"#fff",border:"none",borderRadius:8,fontSize:13.5,fontWeight:700,cursor:"pointer"}}>Sì, sospendi</button>
+                  <button onClick={()=>setConfermaSospendi(false)} style={{flex:1,padding:"12px",background:"#fff",color:C.steel,border:`1px solid ${C.paperLine}`,borderRadius:8,fontSize:13.5,fontWeight:600,cursor:"pointer"}}>Torna indietro</button>
                 </div>
               </div>
             )}
@@ -4831,13 +5020,72 @@ ${o.firma_cliente ? `
 
   return (
     <div>
-      <div style={S.eyebrow}>Ordini</div>
-      {erroreSync && <div style={{fontSize:12,color:C.danger,background:"rgba(200,75,58,0.08)",borderRadius:6,padding:"9px 11px",marginBottom:14}}>⚠ {erroreSync}</div>}
-      {ordini.length===0 && (
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:8}}>
+        <div style={S.eyebrow}>Ordini</div>
+        {!creandoNuovo && <button onClick={()=>setCreandoNuovo(true)} style={{...S.btnAccent,padding:"9px 15px",fontSize:12.5}}>+ Nuovo ordine</button>}
+      </div>
+      {erroreSync && <div style={{fontSize:12,color:C.danger,background:"rgba(200,75,58,0.08)",borderRadius:6,padding:"9px 11px",marginTop:14}}>⚠ {erroreSync}</div>}
+
+      {creandoNuovo && (
+        <div style={{...S.card,cursor:"default",border:`1px solid ${C.ink}`,marginTop:14,marginBottom:18}}>
+          <div style={S.eyebrow}>Nuovo ordine (senza preventivo)</div>
+          <div style={{fontSize:11.5,color:"#9AA3AB",marginTop:4,marginBottom:12,lineHeight:1.5}}>
+            Per ordini nati fuori dal normale ciclo preventivo → conferma. Entrerà comunque in
+            "In attesa di invio", con lo stesso modulo logistico degli altri.
+          </div>
+
+          {nuovoClienteLibero ? (
+            <div style={{marginBottom:12}}>
+              <input value={nuovoNomeClienteLibero} onChange={e=>setNuovoNomeClienteLibero(e.target.value)} placeholder="Ragione sociale / nome cliente" style={{...S.inp,marginBottom:8}} autoFocus/>
+              <button onClick={()=>{ setNuovoClienteLibero(false); setNuovoNomeClienteLibero(""); }} style={{...S.btnS,padding:"6px 11px",fontSize:11.5}}>← Cerca in anagrafica</button>
+            </div>
+          ) : (
+            <div style={{marginBottom:12}}>
+              <SelezioneCliente clienteSelezionato={nuovoCliente} onSeleziona={setNuovoCliente} sessione={sessione}/>
+              {!nuovoCliente && (
+                <button onClick={()=>setNuovoClienteLibero(true)} style={{...S.btnS,marginTop:8,padding:"7px 12px",fontSize:12}}>+ Cliente non in anagrafica</button>
+              )}
+            </div>
+          )}
+
+          <RicercaProdottiInline onSeleziona={aggiungiRigaNuovoOrdine} righeEsistenti={nuoveRighe} ruolo={ruolo} catalog={catalog} sessione={sessione}/>
+
+          {nuoveRighe.length>0 && (
+            <div style={{marginBottom:12}}>
+              {nuoveRighe.map(r=>(
+                <div key={r.cod} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"8px 0",borderBottom:`1px solid ${C.paperLine}`}}>
+                  <div style={{minWidth:0}}>
+                    <div style={{fontWeight:600,fontSize:12.5}}>{r.nome}</div>
+                    <div className="tnum" style={{fontSize:11,color:"#9AA3AB"}}>€{r.netto.toFixed(2)} × {r.qty||1}</div>
+                  </div>
+                  <div style={{display:"flex",alignItems:"center",gap:8,flexShrink:0}}>
+                    <span className="tnum" style={{fontWeight:700,fontFamily:F_MONO,fontSize:13}}>€{(r.netto*(r.qty||1)).toFixed(2)}</span>
+                    <button onClick={()=>rimuoviRigaNuovoOrdine(r.cod)} style={{background:"none",border:"none",color:C.danger,cursor:"pointer",fontSize:15}}>✕</button>
+                  </div>
+                </div>
+              ))}
+              <div style={{display:"flex",justifyContent:"space-between",padding:"10px 0",fontWeight:700,fontSize:13.5}}>
+                <span>Totale</span>
+                <span className="tnum" style={{fontFamily:F_MONO,color:C.ink}}>€{ricalcolaVal(nuoveRighe).toFixed(2)}</span>
+              </div>
+            </div>
+          )}
+
+          {erroreNuovo && <div style={{fontSize:12,color:C.danger,background:"rgba(200,75,58,0.08)",borderRadius:6,padding:"9px 11px",marginBottom:10}}>⚠ {erroreNuovo}</div>}
+          <div style={{display:"flex",gap:8}}>
+            <button onClick={salvaNuovoOrdine} disabled={!nomeClienteNuovoOrdine||nuoveRighe.length===0||salvandoNuovo} style={{...S.btnAccent,padding:"10px 16px",opacity:(!nomeClienteNuovoOrdine||nuoveRighe.length===0)?0.4:1}}>
+              {salvandoNuovo?"Salvo…":"Crea ordine"}
+            </button>
+            <button onClick={annullaNuovoOrdine} style={{...S.btnS,padding:"10px 16px"}}>Annulla</button>
+          </div>
+        </div>
+      )}
+
+      {ordini.length===0 && !creandoNuovo && (
         <div style={{textAlign:"center",padding:"2.5rem 1rem",color:"#9AA3AB"}}>
           <div style={{fontSize:28,marginBottom:8}}>⬡</div>
           <div style={{fontSize:13}}>Nessun ordine ancora</div>
-          <div style={{fontSize:11.5,marginTop:4}}>Gli ordini nascono dai preventivi confermati</div>
+          <div style={{fontSize:11.5,marginTop:4}}>Gli ordini nascono dai preventivi confermati, o si creano da qui</div>
         </div>
       )}
       {ordini.map(o=>(
