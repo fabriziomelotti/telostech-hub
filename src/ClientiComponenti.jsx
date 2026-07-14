@@ -135,6 +135,7 @@ const COLONNE_DB = {
   "Descrizione filiale": "filiale",
   "Descrizione categoria": "categoria",
   "Descrizione pagamento": "pagamento",
+  "Descrizione Agente": "agente",
 };
 
 // ═══════════════════════════════════════════════════════════════════════════

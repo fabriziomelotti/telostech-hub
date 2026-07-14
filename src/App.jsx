@@ -1836,7 +1836,7 @@ function SchedaProdotto({p, isIn, onToggleCart, onClose, ruolo, onModifica}){
 // Stessa ricerca già usata in Preventivi (SelezioneCliente): wildcard OR su
 // più campi, con il token di sessione reale perché la RLS di "clienti"
 // richiede una sessione autenticata.
-const CAMPI_RICERCA_CLIENTI = ["codice","ragione_sociale","rag_sociale_agg","localita","provincia","partita_iva","codice_fiscale","mail","telefono"];
+const CAMPI_RICERCA_CLIENTI = ["codice","ragione_sociale","rag_sociale_agg","localita","provincia","partita_iva","codice_fiscale","mail","telefono","agente"];
 
 function Clienti({sessione, preventivi, ordini, attrezzature, setAttrezzature, interventi, setInterventi, catalog, ruolo}){
   const accessToken = trovaAccessToken(sessione);
@@ -1869,7 +1869,7 @@ function Clienti({sessione, preventivi, ordini, attrezzature, setAttrezzature, i
         const safe = q.trim().replace(/[,()]/g,"");
         const pattern = "*"+encodeURIComponent(safe)+"*"; // * non va MAI url-encodato
         const orExpr = CAMPI_RICERCA_CLIENTI.map(c=>`${c}.ilike.${pattern}`).join(",");
-        const params = `select=codice,ragione_sociale,rag_sociale_agg,indirizzo,localita,provincia,cap,partita_iva,codice_fiscale,telefono,mail,filiale&or=(${orExpr})&limit=30`;
+        const params = `select=codice,ragione_sociale,rag_sociale_agg,indirizzo,localita,provincia,cap,partita_iva,codice_fiscale,telefono,mail,filiale,agente&or=(${orExpr})&limit=30`;
         const dati = await sbGetAuth("clienti", params, accessToken);
         setRisultati(dati||[]);
       }catch(err){
@@ -2596,6 +2596,7 @@ function ClienteDettaglio({cliente, onIndietro, preventivi, ordini, attrezzature
             ["Partita IVA", cliente.partita_iva],
             ["Codice fiscale", cliente.codice_fiscale],
             ["Filiale di riferimento", cliente.filiale],
+            ["Agente", cliente.agente],
           ].filter(([,v])=>v).map(([lbl,v])=>(
             <div key={lbl} style={{display:"flex",justifyContent:"space-between",padding:"10px 4px",borderBottom:`1px solid ${C.paperLine}`,fontSize:13}}>
               <span style={{color:C.steel}}>{lbl}</span>
