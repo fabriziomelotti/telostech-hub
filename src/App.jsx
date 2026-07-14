@@ -6198,6 +6198,413 @@ function GestioneLogisticaOrdini({ sessione, categorie }){
   );
 }
 
+// ─── GESTIONE PREZZI DA FORNITORE ──────────────────────────────────────────
+// Incolla un elenco "codice,prezzo" (es. estratto da un listino PDF di un
+// fornitore) e aggiorna in blocco SOLO il listino (e opzionalmente anche
+// netto/sconto/tipo_prezzo) dei prodotti già presenti in catalogo — nessun
+// inserimento di articoli nuovi, nessun'altra colonna toccata. Scrittura
+// via Edge Function catalog-admin (azione "aggiornaPrezzi", admin-only).
+const GEATEK_MAGGIO_2026 = `GEA10030,3850.00
+GEA10805,745.00
+GEA10809,2845.00
+GEA10901,2500.00
+GEA10903,1700.00
+GEA11000,225.00
+GEA12005-001,13.50
+GEA12005-005,59.50
+GEA12005-020,233.50
+GEA12005-206,2018.00
+GEA12006-001,13.50
+GEA12006-005,59.50
+GEA12006-020,233.50
+GEA12006-206,2018.00
+GEA12007-001,14.50
+GEA12007-005,60.00
+GEA12007-020,228.50
+GEA12007-206,1981.00
+GEA12008-001,15.00
+GEA12008-005,69.50
+GEA12008-020,267.50
+GEA12008-206,2376.00
+GEA12109,14.50
+GEA12010,9.00
+GEA12011,14.00
+GEA12012,14.00
+GEA12501-020,92.50
+GEA12502,16.00
+GEA12801,25.00
+GEA12802,25.00
+GEA12805,19.00
+GEA12806,19.00
+GEA12808,25.00
+GEA12901-010,105.00
+GEA13001,17.00
+GEA13003,92.50
+GEA13004,61.50
+GEA13005,12.50
+GEA13006,17.00
+GEA13007,12.50
+GEA13008,20.00
+GEA13009,18.50
+GEA13010,29.50
+GEA13016,14.00
+GEA13020,12.50
+GEA13021,17.00
+GEA13028,37.00
+GEA13029,20.00
+GEA13031,14.00
+GEA13032,20.00
+GEA13033,20.00
+GEA13043,14.00
+GEA13044,8.00
+GEA13045,15.50
+GEA13046,15.50
+GEA13047,57.00
+GEA13048,55.50
+GEA13049,57.00
+GEA13050,57.00
+GEA13053,34.00
+GEA13054,20.00
+GEA13056,26.50
+GEA13057,17.00
+GEA13058,46.50
+GEA13062,46.50
+GEA13063,18.50
+GEA13064,45.00
+GEA13065,28.00
+GEA13066,17.00
+GEA13068,38.50
+GEA13069,40.00
+GEA13070,40.00
+GEA13071,43.50
+GEA13072,40.00
+GEA13073,40.00
+GEA13074,54.00
+GEA13075,37.00
+GEA13076,49.50
+GEA13077,20.00
+GEA13078,11.00
+GEA13079,20.00
+GEA13080,11.00
+GEA13081,49.50
+GEA13082,52.50
+GEA13083,26.50
+GEA13084,12.50
+GEA13085,17.00
+GEA13086,21.50
+GEA13087,23.50
+GEA13088,55.50
+GEA13089,11.00
+GEA13090,57.00
+GEA13091,52.50
+GEA13092,28.00
+GEA13093,14.00
+GEA13094,43.50
+GEA13095,43.50
+GEA13096,12.50
+GEA13097,17.00
+GEA13098,23.50
+GEA13099,52.50
+GEA13100,46.50
+GEA13101,34.00
+GEA13102,29.50
+GEA13103,46.50
+GEA13104,22.00
+GEA13105,15.50
+GEA13106,8.00
+GEA13107,46.50
+GEA13108,55.50
+GEA13109,22.00
+GEA13110,52.50
+GEA13111,20.00
+GEA13112,22.00
+GEA13113,17.00
+GEA13114,17.00
+GEA13115,12.50
+GEA13116,20.00
+GEA13117,46.50
+GEA13118,43.50
+GEA13119,17.00
+GEA13120,20.00
+GEA13121,46.50
+GEA13122,46.50
+GEA13123,52.50
+GEA13124,8.00
+GEA13125,37.00
+GEA13126,46.50
+GEA13127,29.50
+GEA13128,57.00
+GEA13129,46.50
+GEA13130,55.50
+GEA13131,57.00
+GEA13132,21.50
+GEA13801,15.00
+GEA13802,15.00
+GEA13803,15.00
+GEA13804,15.00
+GEA13805,15.00
+GEA13806,15.00
+GEA13807,15.00
+GEA13808,15.00
+GEA13809,15.00
+GEA13810,15.00
+GEA13811,15.00
+GEA13812,15.00
+GEA13813,15.00
+GEA13814,15.00
+GEA13815,15.00
+GEA13816,15.00
+GEA13817,15.00
+GEA13823,14.00
+GEA13824,14.00
+GEA13825,12.00
+GEA13826,14.00
+GEA13827,30.00
+GEA13851,110.00
+GEA13852,100.00
+GEA13870,150.00
+GEA13875,12.50
+GEA13876,12.50
+GEA13877,12.50
+GEA13878,8.00
+GEA13879,9.00
+GEA13880,14.00
+GEA13881,14.00
+GEA13882,10.00
+GEA14001,525.00
+GEA14002,925.00
+GEA14051,35.00
+GEA14052,37.00
+GEA14801,370.00
+GEA14901,300.00
+GEA14902,300.00
+GEA15501,21.30
+GEA15502,105.00
+GEA15503,33.20
+GEA15504,23.70
+GEA15505,70.50
+GEA15506,23.70
+GEA15507,57.90
+GEA15508,74.30
+GEA15509,23.60
+GEA15510,45.00
+GEA15511,99.30
+GEA15512,99.30
+GEA15513,48.00
+GEA15514,34.50
+GEA15515,32.50
+GEA15516,38.00
+GEA15517,139.40
+GEA15518,37.50
+GEA15519,51.00
+GEA15520,38.50
+GEA15521,41.50
+GEA15522,51.50
+GEA15523,54.00
+GEA15524,45.50
+GEA15525,46.00
+GEA15526,45.50
+GEA15527,68.00
+GEA15528,117.50
+GEA15529,65.00
+GEA15530,46.00
+GEA15531,55.50
+GEA15532,58.90
+GEA15533,42.50
+GEA15535,39.00
+GEA15536,115.00
+GEA15537,37.50
+GEA15538,85.00
+GEA15539,52.00
+GEA15540,60.00
+GEA15541,104.40
+GEA15542,39.50
+GEA15543,46.50
+GEA15545,48.50
+GEA15546,33.50
+GEA15547,141.30
+GEA15548,185.00
+GEA15549,41.50
+GEA15550,45.00
+GEA15551,47.50
+GEA15552,47.50
+GEA15553,53.90
+GEA15556,32.50
+GEA15558,39.50
+GEA15559,35.50
+GEA15562,97.00
+GEA15563,90.50
+GEA15564,50.50
+GEA15566,52.50
+GEA15568,65.40
+GEA15570,78.50
+GEA15571,79.00
+GEA15572,59.60
+GEA15573,71.50
+GEA15575,179.00
+GEA15576,205.50
+GEA15578,45.90
+GEA15579,54.30
+GEA15581,43.50
+GEA15584,39.50
+GEA15586,78.90
+GEA15587,73.50
+GEA15589,42.00
+GEA15590,66.50
+GEA15592,54.00
+GEA15593,45.00
+GEA15594,45.50
+GEA15596,73.50
+GEA15597,58.90
+GEA15599,48.50
+GEA15606,105.00
+GEA15608,56.50
+GEA15613,48.50
+GEA15617,90.00
+GEA15619,67.90
+GEA15638,79.50
+GEA15639,67.60
+GEA15640,63.50
+GEA15641,155.00
+GEA15642,58.90
+GEA15643,129.50
+GEA15645,173.50
+GEA15648,57.80
+GEA15655,57.80
+GEA15659,265.00
+GEA15661,61.20
+GEA15662,142.00
+GEA15667,79.50
+GEA15677,50.50
+GEA15678,89.00
+GEA15679,96.71
+GEA15680,90.50
+GEA15681,68.70
+GEA15682,51.50
+GEA15683,103.90
+GEA15684,145.00
+GEA15685,89.20
+GEA15686,119.00
+GEA15687,119.00
+GEA15688,66.43
+GEA15689,255.00
+GEA15690,28.50
+GEA15692,58.50
+GEA15693,67.90
+GEA15695,168.00
+GEA15696,168.00
+GEA16001,25.00
+GEA16002,120.00
+GEA16003,25.00
+GEA16004,60.00
+GEA16005,25.00
+GEA16013,125.00
+GEA17001,30.00
+GEA17003,23.00
+GEA17005,9.50`;
+
+function parsePrezzo(raw){
+  let s = (raw||"").replace(/[€\s]/g,"");
+  if(s.includes(",") && s.includes(".")){
+    if(s.lastIndexOf(",") > s.lastIndexOf(".")) s = s.replace(/\./g,"").replace(",",".");
+    else s = s.replace(/,/g,"");
+  } else if(s.includes(",")){
+    s = s.replace(",",".");
+  }
+  return parseFloat(s);
+}
+
+function GestionePrezziFornitore({ sessione }){
+  const accessToken = trovaAccessToken(sessione);
+  const [testo,setTesto] = useState(GEATEK_MAGGIO_2026);
+  const [nettoUguale,setNettoUguale] = useState(true);
+  const [confermaAperta,setConfermaAperta] = useState(false);
+  const [stato,setStato] = useState("idle"); // idle | salvo | fatto | errore
+  const [msg,setMsg] = useState("");
+  const [risultato,setRisultato] = useState(null); // {aggiornati, nonTrovati}
+
+  const righeTotali = useMemo(()=>testo.split("\n").filter(r=>r.trim()).length,[testo]);
+  const righeParsate = useMemo(()=>{
+    return testo.split("\n").map(riga=>{
+      const parti = riga.split(/[,;\t]/).map(p=>p.trim()).filter(Boolean);
+      if(parti.length<2) return null;
+      const cod = parti[0].replace(/\s+/g,"");
+      const prezzo = parsePrezzo(parti[parti.length-1]);
+      if(!cod || !isFinite(prezzo) || prezzo<=0) return null;
+      return {cod, prezzo};
+    }).filter(Boolean);
+  },[testo]);
+
+  async function applica(){
+    setStato("salvo"); setMsg(""); setConfermaAperta(false);
+    try{
+      const payload = { righe: righeParsate };
+      if(nettoUguale) payload.impostaCome = "netto_uguale";
+      const { aggiornati, nonTrovati } = await chiamaCatalogAdmin("aggiornaPrezzi", payload, accessToken);
+      setRisultato({ aggiornati, nonTrovati: nonTrovati||[] });
+      setStato("fatto");
+    }catch(err){
+      setStato("errore");
+      setMsg("Errore: "+err.message);
+    }
+  }
+
+  return (
+    <div>
+      <div style={{fontSize:13,color:"#5B6770",marginBottom:16,lineHeight:1.6}}>
+        Incolla un elenco <strong>codice,prezzo</strong> (una riga per articolo — virgola, punto e virgola o
+        tab vanno bene, formato prezzo italiano o con il punto) da un listino fornitore. Aggiorna{" "}
+        <strong>solo</strong> i prodotti già presenti nel catalogo (nessun inserimento di articoli nuovi) e{" "}
+        <strong>solo</strong> le colonne prezzo — nome, categoria, immagine e tutto il resto restano invariati.
+      </div>
+
+      <textarea value={testo} onChange={e=>{setTesto(e.target.value); setRisultato(null); setStato("idle"); setConfermaAperta(false);}} rows={10} className="tnum" style={{...S.inp,fontFamily:F_MONO,fontSize:11.5,resize:"vertical",marginBottom:10}}/>
+
+      <label style={{display:"flex",alignItems:"flex-start",gap:8,fontSize:12.5,marginBottom:14,cursor:"pointer",lineHeight:1.4}}>
+        <input type="checkbox" checked={nettoUguale} onChange={e=>setNettoUguale(e.target.checked)} style={{width:16,height:16,marginTop:1,flexShrink:0}}/>
+        <span>Questo prezzo è già il Netto Telos (nessuno sconto ulteriore) — aggiorna anche il Netto, azzera lo sconto e imposta "Listino" come tipo prezzo. Se lasci deselezionato, viene toccato solo il Listino.</span>
+      </label>
+
+      <div style={{fontSize:12,color:C.steel,marginBottom:14}}>
+        {righeParsate.length} righe valide riconosciute su {righeTotali} totali
+        {righeParsate.length<righeTotali && <span style={{color:C.warn}}> — {righeTotali-righeParsate.length} righe ignorate (formato non riconosciuto)</span>}.
+      </div>
+
+      {msg && <div style={{fontSize:12,color:C.danger,background:"rgba(200,75,58,0.08)",borderRadius:6,padding:"9px 11px",marginBottom:14}}>⚠ {msg}</div>}
+
+      {!confermaAperta ? (
+        <button onClick={()=>setConfermaAperta(true)} disabled={righeParsate.length===0||stato==="salvo"} style={{...S.btnAccent,padding:"11px 18px",opacity:righeParsate.length===0?0.4:1}}>
+          Applica a {righeParsate.length} prodotti
+        </button>
+      ) : (
+        <div style={{...S.card,cursor:"default",border:`1px solid ${C.warn}`,background:"rgba(217,164,65,0.06)"}}>
+          <div style={{fontSize:13.5,fontWeight:600,marginBottom:8}}>Confermi l'aggiornamento prezzi?</div>
+          <div style={{fontSize:12.5,color:C.steel,marginBottom:12}}>
+            Aggiorna il Listino{nettoUguale?" e il Netto Telos":""} di {righeParsate.length} prodotti (solo quelli
+            già presenti in catalogo — i codici non trovati vengono segnalati, non creati). L'operazione va
+            corretta manualmente se sbagliata.
+          </div>
+          <div style={{display:"flex",gap:8}}>
+            <button onClick={applica} disabled={stato==="salvo"} style={{...S.btnAccent,padding:"9px 15px"}}>{stato==="salvo"?"Applico…":"Sì, applica"}</button>
+            <button onClick={()=>setConfermaAperta(false)} style={{...S.btnS,padding:"9px 15px"}}>Annulla</button>
+          </div>
+        </div>
+      )}
+
+      {risultato && (
+        <div style={{...S.card,cursor:"default",marginTop:16,border:`1px solid ${C.ok}`}}>
+          <div style={{fontSize:13,fontWeight:600,color:C.ok,marginBottom:6}}>✓ Fatto: {risultato.aggiornati} prodotti aggiornati.</div>
+          {risultato.nonTrovati.length>0 && (
+            <div style={{fontSize:12,color:"#8a6418",lineHeight:1.5}}>
+              {risultato.nonTrovati.length} codici non trovati nel catalogo (non toccati): {risultato.nonTrovati.slice(0,40).join(", ")}{risultato.nonTrovati.length>40?"…":""}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function PannelloAdmin({ setCatalog, ruolo, sessione }) {
   const accessToken = trovaAccessToken(sessione);
   const [tab, setTab] = useState("utenti");
@@ -6539,7 +6946,7 @@ function PannelloAdmin({ setCatalog, ruolo, sessione }) {
 
       {/* Tab */}
       <div style={{display:"flex",borderBottom:`1px solid ${C.paperLine}`,marginBottom:18}}>
-        {[["utenti","👤 Utenti"],["import","⬆ Importa"],["export","⬇ Esporta"],["categorie","▤ Categorie"],["logistica","⚑ Logistica"]].map(([id,lbl])=>(
+        {[["utenti","👤 Utenti"],["import","⬆ Importa"],["export","⬇ Esporta"],["categorie","▤ Categorie"],["prezzi","💶 Prezzi"],["logistica","⚑ Logistica"]].map(([id,lbl])=>(
           <button key={id} onClick={()=>setTab(id)} style={{
             background:"none",border:"none",borderBottom:`2px solid ${tab===id?C.ink:"transparent"}`,
             padding:"8px 16px",fontSize:13,cursor:"pointer",
@@ -6553,6 +6960,8 @@ function PannelloAdmin({ setCatalog, ruolo, sessione }) {
       {tab==="categorie" && <GestioneCategorie sessione={sessione} categorie={categorie} ricarica={()=>{ ricaricaCategorie(); caricaCatalogo(CATALOG).then(d=>setCatalog(d)); }}/>}
 
       {tab==="logistica" && <GestioneLogisticaOrdini sessione={sessione} categorie={categorie}/>}
+
+      {tab==="prezzi" && <GestionePrezziFornitore sessione={sessione}/>}
 
       {tab==="import" && (
         <div>
