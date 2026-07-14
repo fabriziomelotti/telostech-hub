@@ -1717,7 +1717,17 @@ function Clienti({sessione, preventivi, ordini, attrezzature, setAttrezzature, i
   const [tabInizialeCliente,setTabInizialeCliente] = useState("dati");
   const [qAttrezzatura,setQAttrezzatura] = useState("");
   const [attrezzaturaAperta,setAttrezzaturaAperta] = useState(null);
+  // Quale ricerca è attiva: null (nessuna scelta ancora), "clienti" o
+  // "attrezzatura". Prima i due campi erano sempre visibili insieme (con
+  // font diversi tra loro, confuso su mobile) — ora si sceglie con un
+  // pulsante grande e compare solo il campo pertinente.
+  const [modalita,setModalita] = useState(null);
   const timer = useRef(null);
+
+  function selezionaModalita(m){
+    setModalita(prev=>prev===m?null:m);
+    setQ(""); setQAttrezzatura(""); setRisultati([]); setErrore("");
+  }
 
   useEffect(()=>{
     clearTimeout(timer.current);
@@ -1740,9 +1750,7 @@ function Clienti({sessione, preventivi, ordini, attrezzature, setAttrezzature, i
   },[q]);
 
   // Ricerca per attrezzatura: filtro lato client sull'elenco già caricato
-  // (nome prodotto, numero di serie, marca). Sempre visibile sotto quella
-  // cliente, senza bisogno di scegliere una modalità — porta dritti alla
-  // modifica dell'attrezzatura, non alla scheda cliente.
+  // (nome prodotto, numero di serie, marca).
   const risultatiAttrezzatura = useMemo(()=>{
     if(!qAttrezzatura.trim()) return [];
     const qq = qAttrezzatura.trim().toLowerCase();
@@ -1769,25 +1777,63 @@ function Clienti({sessione, preventivi, ordini, attrezzature, setAttrezzature, i
       catalog={catalog} ruolo={ruolo} sessione={sessione} tabIniziale={tabInizialeCliente}/>;
   }
 
+  // Stile comune ai due pulsanti di scelta: stesso font/dimensione/peso,
+  // cambia solo il colore per distinguerli — grandi e comodi da toccare su
+  // schermo piccolo (min. 52px di altezza).
+  function bottoneModalita(tono, attivo, onClick, icona, etichetta){
+    const palette = tono==="clienti"
+      ? { bg:C.ink, bgInattivo:"rgba(22,39,88,0.08)", fg:"#fff", fgInattivo:C.ink, ombra:"rgba(22,39,88,0.28)" }
+      : { bg:C.cyan, bgInattivo:"rgba(87,206,202,0.14)", fg:C.inkDeep, fgInattivo:"#2E8783", ombra:"rgba(87,206,202,0.4)" };
+    return (
+      <button onClick={onClick} style={{
+        flex:"1 1 150px", display:"flex", alignItems:"center", justifyContent:"center", gap:8,
+        padding:"16px 14px", minHeight:52, borderRadius:10, border:"none", cursor:"pointer",
+        fontFamily:F_BODY, fontWeight:700, fontSize:13.5, letterSpacing:"0.02em",
+        background: attivo?palette.bg:palette.bgInattivo, color: attivo?palette.fg:palette.fgInattivo,
+        boxShadow: attivo?`0 2px 10px ${palette.ombra}`:"none",
+      }}>
+        <span style={{fontSize:17}}>{icona}</span>{etichetta}
+      </button>
+    );
+  }
+
   return (
     <div>
       <div style={S.eyebrow}>Clienti</div>
-      <input
-        value={q} onChange={e=>setQ(e.target.value)}
-        placeholder="🔍 Cerca per ragione sociale, città, P.IVA, codice fiscale…"
-        style={{...S.inp,padding:"13px 16px",fontSize:14,marginTop:10,marginBottom:10}}
-        autoFocus
-      />
-      <input
-        value={qAttrezzatura} onChange={e=>setQAttrezzatura(e.target.value)}
-        placeholder="🔧 Cerca attrezzatura per nome, numero di serie o marca…"
-        style={{...S.inp,padding:"13px 16px",fontSize:14,marginBottom:14,fontFamily:F_MONO}}
-      />
+
+      <div style={{display:"flex",gap:10,marginTop:10,marginBottom:14,flexWrap:"wrap"}}>
+        {bottoneModalita("clienti", modalita==="clienti", ()=>selezionaModalita("clienti"), "🔍", "CERCA CLIENTI")}
+        {bottoneModalita("attrezzatura", modalita==="attrezzatura", ()=>selezionaModalita("attrezzatura"), "🔧", "CERCA ATTREZZATURA")}
+      </div>
+
+      {modalita==="clienti" && (
+        <input
+          value={q} onChange={e=>setQ(e.target.value)}
+          placeholder="Cerca per ragione sociale, città, P.IVA, codice fiscale…"
+          style={{...S.inp,padding:"13px 16px",fontSize:14,marginBottom:14}}
+          autoFocus
+        />
+      )}
+      {modalita==="attrezzatura" && (
+        <input
+          value={qAttrezzatura} onChange={e=>setQAttrezzatura(e.target.value)}
+          placeholder="Cerca per nome, numero di serie o marca…"
+          style={{...S.inp,padding:"13px 16px",fontSize:14,marginBottom:14}}
+          autoFocus
+        />
+      )}
 
       {errore && <div style={{fontSize:12,color:C.danger,background:"rgba(200,75,58,0.08)",borderRadius:6,padding:"9px 11px",marginBottom:14}}>⚠ {errore}</div>}
 
-      {qAttrezzatura.trim() ? (
-        <>
+      {modalita===null && (
+        <div style={{textAlign:"center",padding:"2.5rem 1rem",color:"#9AA3AB"}}>
+          <div style={{fontSize:28,marginBottom:8}}>◉</div>
+          <div style={{fontSize:13}}>Scegli se cercare un cliente o un'attrezzatura</div>
+        </div>
+      )}
+
+      {modalita==="attrezzatura" && (<>
+        {qAttrezzatura.trim() ? (<>
           <div style={{...S.eyebrow,marginBottom:8}}>Attrezzature ({risultatiAttrezzatura.length})</div>
           {risultatiAttrezzatura.length===0 && (
             <div style={{textAlign:"center",padding:"1.5rem 1rem",color:"#9AA3AB",fontSize:13,marginBottom:8}}>Nessuna attrezzatura per «{qAttrezzatura}»</div>
@@ -1804,33 +1850,33 @@ function Clienti({sessione, preventivi, ordini, attrezzature, setAttrezzature, i
               </div>
             </div>
           ))}
-          <div style={{height:8}}/>
-        </>
-      ) : null}
+        </>) : (
+          <div style={{textAlign:"center",padding:"2rem 1rem",color:"#9AA3AB",fontSize:13}}>Digita per cercare un'attrezzatura</div>
+        )}
+      </>)}
 
-      {caricando && <div style={{fontSize:12.5,color:"#8A929A",padding:"8px 0"}}>Ricerca in corso…</div>}
-      {!caricando && q.trim() && !errore && risultati.length===0 && (
-        <div style={{textAlign:"center",padding:"2rem 1rem",color:"#9AA3AB",fontSize:13}}>Nessun cliente trovato per «{q}»</div>
-      )}
-      {!q.trim() && !qAttrezzatura.trim() && (
-        <div style={{textAlign:"center",padding:"2.5rem 1rem",color:"#9AA3AB"}}>
-          <div style={{fontSize:28,marginBottom:8}}>◉</div>
-          <div style={{fontSize:13}}>Cerca un cliente per vedere i suoi dati, preventivi, ordini e attrezzature</div>
-        </div>
-      )}
-      {q.trim() && risultati.length>0 && qAttrezzatura.trim() && (
-        <div style={{...S.eyebrow,marginBottom:8}}>Clienti ({risultati.length})</div>
-      )}
-      {risultati.map(c=>(
-        <div key={c.codice} onClick={()=>setSelezionato(c)} style={S.card}>
-          <div style={{fontWeight:600,fontSize:13.5}}>{c.ragione_sociale}</div>
-          {c.rag_sociale_agg && <div style={{fontSize:12,color:C.steel,marginTop:1}}>{c.rag_sociale_agg}</div>}
-          <div style={{fontSize:11.5,color:"#8A929A",marginTop:3}}>
-            {[c.localita, c.provincia && `(${c.provincia})`].filter(Boolean).join(" ")}
-            {c.partita_iva && <span className="tnum" style={{fontFamily:F_MONO,marginLeft:8}}>P.IVA {c.partita_iva}</span>}
+      {modalita==="clienti" && (<>
+        {caricando && <div style={{fontSize:12.5,color:"#8A929A",padding:"8px 0"}}>Ricerca in corso…</div>}
+        {!caricando && q.trim() && !errore && risultati.length===0 && (
+          <div style={{textAlign:"center",padding:"2rem 1rem",color:"#9AA3AB",fontSize:13}}>Nessun cliente trovato per «{q}»</div>
+        )}
+        {!caricando && !q.trim() && (
+          <div style={{textAlign:"center",padding:"2rem 1rem",color:"#9AA3AB",fontSize:13}}>Digita per cercare un cliente</div>
+        )}
+        {risultati.length>0 && (
+          <div style={{...S.eyebrow,marginBottom:8}}>Clienti ({risultati.length})</div>
+        )}
+        {risultati.map(c=>(
+          <div key={c.codice} onClick={()=>setSelezionato(c)} style={S.card}>
+            <div style={{fontWeight:600,fontSize:13.5}}>{c.ragione_sociale}</div>
+            {c.rag_sociale_agg && <div style={{fontSize:12,color:C.steel,marginTop:1}}>{c.rag_sociale_agg}</div>}
+            <div style={{fontSize:11.5,color:"#8A929A",marginTop:3}}>
+              {[c.localita, c.provincia && `(${c.provincia})`].filter(Boolean).join(" ")}
+              {c.partita_iva && <span className="tnum" style={{fontFamily:F_MONO,marginLeft:8}}>P.IVA {c.partita_iva}</span>}
+            </div>
           </div>
-        </div>
-      ))}
+        ))}
+      </>)}
     </div>
   );
 }
