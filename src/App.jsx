@@ -2406,8 +2406,6 @@ function Preventivi({cart,setCart,preventivi,setPreventivi,setOrdini,setArea,ruo
   const [bozzaSalvata,setBozzaSalvata]=useState(false); // conferma temporanea dopo il salvataggio
   const [mostraFirma,setMostraFirma]=useState(false);
   const [nomeFirmatario,setNomeFirmatario]=useState("");
-  useEffect(()=>{ setNomeFirmatario(""); },[selId]);
-  const [nomeFirmatario,setNomeFirmatario]=useState("");
   useEffect(()=>{ setConfermaEliminazione(false); setConfermaSalto(false); setTipoMotivoSalto(""); setDettaglioMotivoSalto(""); setPromemoriaRecupero(""); setBozzaSalvata(false); setMostraFirma(false); setNomeFirmatario(""); },[selId]);
   const [erroreSync,setErroreSync]=useState("");
   const [utentiTelos,setUtentiTelos]=useState(null); // null=non caricato, [] o [...]
