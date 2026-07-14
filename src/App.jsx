@@ -1902,6 +1902,8 @@ function generaPreventivoPDF(righe, total, meta={}){
   .firma-box .testo{font-size:10.5px;color:#3A4248;margin-bottom:36px}
   .firma-linee{display:flex;justify-content:space-between;font-size:10px;color:#7C879E}
   .firma-linee div{width:45%;border-top:1px solid #232323;padding-top:4px}
+  .firma-digitale img{max-width:200px;max-height:80px;display:block;margin-top:6px}
+  .firma-digitale-nota{font-size:9.5px;color:#7C879E;margin-top:6px;font-style:italic}
 </style></head><body>
 
 ${meta.includi_copertina!==false ? `
@@ -1968,7 +1970,14 @@ ${meta.includi_copertina!==false ? `
     <div class="firma-box">
       <div class="titolo">Timbro e Firma per accettazione</div>
       <div class="testo">Il sottoscritto Cliente dichiara di aver letto, compreso e integralmente accettato il preventivo e le condizioni che precedono, che assumono valore di ordine contrattuale vincolante.</div>
+      ${meta.firma_cliente ? `
+      <div class="firma-digitale">
+        <img src="${meta.firma_cliente}" alt="Firma cliente"/>
+        <div class="firma-digitale-nota">Firmato digitalmente da ${meta.firma_nome||"Cliente"}${meta.firma_data ? ` il ${new Date(meta.firma_data).toLocaleString("it-IT",{dateStyle:"short",timeStyle:"short"})}` : ""}</div>
+      </div>
+      ` : `
       <div class="firma-linee"><div>Luogo e data</div><div>Timbro e firma del Cliente</div></div>
+      `}
     </div>
   </div>
   <div class="footer-legale">
@@ -2276,7 +2285,11 @@ function Preventivi({cart,setCart,preventivi,setPreventivi,setOrdini,setArea,ruo
   const [promemoriaRecupero,setPromemoriaRecupero]=useState("");
   const [bozza,setBozza]=useState(null); // scadenza/referente/pagamento in modifica locale, salvati solo al click su "Salva"
   const [bozzaSalvata,setBozzaSalvata]=useState(false); // conferma temporanea dopo il salvataggio
-  useEffect(()=>{ setConfermaEliminazione(false); setConfermaSalto(false); setTipoMotivoSalto(""); setDettaglioMotivoSalto(""); setPromemoriaRecupero(""); setBozzaSalvata(false); },[selId]);
+  const [mostraFirma,setMostraFirma]=useState(false);
+  const [nomeFirmatario,setNomeFirmatario]=useState("");
+  useEffect(()=>{ setNomeFirmatario(""); },[selId]);
+  const [nomeFirmatario,setNomeFirmatario]=useState("");
+  useEffect(()=>{ setConfermaEliminazione(false); setConfermaSalto(false); setTipoMotivoSalto(""); setDettaglioMotivoSalto(""); setPromemoriaRecupero(""); setBozzaSalvata(false); setMostraFirma(false); setNomeFirmatario(""); },[selId]);
   const [erroreSync,setErroreSync]=useState("");
   const [utentiTelos,setUtentiTelos]=useState(null); // null=non caricato, [] o [...]
   const [erroreUtentiTelos,setErroreUtentiTelos]=useState("");
@@ -2458,6 +2471,7 @@ function Preventivi({cart,setCart,preventivi,setPreventivi,setOrdini,setArea,ruo
     aggiorna(id, patch);
   }
   async function convertiInOrdine(p){
+    if(!p.firma_cliente) return; // rete di sicurezza, il pulsante è già disabilitato senza firma
     setErroreSync("");
     const nuovo = {
       preventivo_id: p.id,
@@ -2467,6 +2481,9 @@ function Preventivi({cart,setCart,preventivi,setPreventivi,setOrdini,setArea,ruo
       righe: p.righe,
       val: p.val,
       stato: "Da evadere",
+      firma_cliente: p.firma_cliente,
+      firma_data: p.firma_data,
+      firma_nome: p.firma_nome,
     };
     try{
       const [salvato] = await sbAuth("POST","ordini","",nuovo,accessToken);
@@ -2861,13 +2878,70 @@ function Preventivi({cart,setCart,preventivi,setPreventivi,setOrdini,setArea,ruo
               finanziamento_spese_contratto: selezionato.finanziamento_spese_contratto,
               finanziamento_riscatto: selezionato.finanziamento_riscatto,
               includi_copertina: selezionato.includi_copertina,
+              firma_cliente: selezionato.firma_cliente,
+              firma_data: selezionato.firma_data,
+              firma_nome: selezionato.firma_nome,
             });
           }} style={{...S.btnAccent,padding:"14px",fontSize:14,fontWeight:700,background:C.cyan,color:C.inkDeep}}>
             📄 Genera preventivo PDF
           </button>
           {selezionato.stato==="Inviato" && (
-            <button onClick={()=>convertiInOrdine(selezionato)} style={{...S.btnAccent,padding:"13px",background:C.ink,color:"#fff",fontSize:14}}>
-              ⬡ Converti in ordine
+            <div style={{...S.card,cursor:"default"}}>
+              <div style={{fontSize:13.5,fontWeight:700,marginBottom:4}}>Firma del cliente</div>
+              <div style={{fontSize:12,color:C.steel,marginBottom:12}}>
+                Obbligatoria prima di convertire il preventivo in ordine — passa il dispositivo al cliente per l'accettazione.
+              </div>
+
+              {selezionato.firma_cliente && !mostraFirma && (
+                <div style={{marginBottom:12}}>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+                    <span style={{fontSize:12.5,fontWeight:600,color:C.ok}}>
+                      ✓ Firmato da {selezionato.firma_nome}{selezionato.firma_data ? ` — ${new Date(selezionato.firma_data).toLocaleString("it-IT",{dateStyle:"short",timeStyle:"short"})}` : ""}
+                    </span>
+                    <button onClick={()=>setMostraFirma(true)} style={{background:"none",border:"none",color:C.steel,fontSize:11.5,cursor:"pointer",textDecoration:"underline"}}>Rifirma</button>
+                  </div>
+                  <img src={selezionato.firma_cliente} alt="Firma cliente" style={{maxWidth:220,border:`1px solid ${C.paperLine}`,borderRadius:6,background:"#fff",display:"block"}}/>
+                </div>
+              )}
+
+              {(!selezionato.firma_cliente || mostraFirma) && (
+                !mostraFirma ? (
+                  <button onClick={()=>setMostraFirma(true)} style={{...S.btnAccent,width:"100%",padding:"12px",fontWeight:700}}>
+                    ✍️ Raccogli firma cliente
+                  </button>
+                ) : (
+                  <>
+                    <input
+                      value={nomeFirmatario}
+                      onChange={e=>setNomeFirmatario(e.target.value)}
+                      placeholder="Nome e cognome di chi firma"
+                      style={{...S.inp,marginBottom:12}}
+                      autoFocus
+                    />
+                    {nomeFirmatario.trim() ? (
+                      <FirmaPad
+                        onSalva={(dataUrl)=>{
+                          aggiorna(selezionato.id, {
+                            firma_cliente: dataUrl,
+                            firma_data: new Date().toISOString(),
+                            firma_nome: nomeFirmatario.trim(),
+                          });
+                          setMostraFirma(false);
+                          setNomeFirmatario("");
+                        }}
+                        onAnnulla={selezionato.firma_cliente ? ()=>setMostraFirma(false) : undefined}
+                      />
+                    ) : (
+                      <div style={{fontSize:11.5,color:"#9AA3AB"}}>Scrivi nome e cognome per abilitare l'area di firma.</div>
+                    )}
+                  </>
+                )
+              )}
+            </div>
+          )}
+          {selezionato.stato==="Inviato" && (
+            <button onClick={()=>convertiInOrdine(selezionato)} disabled={!selezionato.firma_cliente} style={{...S.btnAccent,padding:"13px",background:selezionato.firma_cliente?C.ink:"#c8c8c8",color:"#fff",fontSize:14,cursor:selezionato.firma_cliente?"pointer":"default"}}>
+              ⬡ Converti in ordine{!selezionato.firma_cliente ? " (serve la firma)" : ""}
             </button>
           )}
           {selezionato.stato==="Convertito in ordine" && (
@@ -2980,6 +3054,86 @@ function Preventivi({cart,setCart,preventivi,setPreventivi,setOrdini,setArea,ruo
   }
 
   return null;
+}
+
+// ─── FIRMA CLIENTE ─────────────────────────────────────────────────────────
+// Pad di firma su canvas: funziona sia a dito (tablet/smartphone, via
+// Pointer Events che unificano touch/penna/mouse) sia con il mouse su PC.
+// Esporta la firma come PNG in base64, salvato direttamente sul preventivo.
+function FirmaPad({ onSalva, onAnnulla }){
+  const canvasRef = useRef(null);
+  const disegnando = useRef(false);
+  const [vuoto,setVuoto] = useState(true);
+
+  useEffect(()=>{
+    const canvas = canvasRef.current;
+    const ctx = canvas.getContext("2d");
+    ctx.lineWidth = 2.5;
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+    ctx.strokeStyle = "#162758";
+    ctx.fillStyle = "#fff";
+    ctx.fillRect(0,0,canvas.width,canvas.height);
+  },[]);
+
+  function posizione(e){
+    const rect = canvasRef.current.getBoundingClientRect();
+    const scaleX = canvasRef.current.width / rect.width;
+    const scaleY = canvasRef.current.height / rect.height;
+    return { x: (e.clientX-rect.left)*scaleX, y: (e.clientY-rect.top)*scaleY };
+  }
+  function iniziaTratto(e){
+    e.preventDefault();
+    canvasRef.current.setPointerCapture?.(e.pointerId);
+    disegnando.current = true;
+    const { x, y } = posizione(e);
+    const ctx = canvasRef.current.getContext("2d");
+    ctx.beginPath();
+    ctx.moveTo(x,y);
+    setVuoto(false);
+  }
+  function disegna(e){
+    if(!disegnando.current) return;
+    e.preventDefault();
+    const { x, y } = posizione(e);
+    const ctx = canvasRef.current.getContext("2d");
+    ctx.lineTo(x,y);
+    ctx.stroke();
+  }
+  function fineTratto(){ disegnando.current = false; }
+
+  function pulisci(){
+    const canvas = canvasRef.current;
+    const ctx = canvas.getContext("2d");
+    ctx.fillStyle = "#fff";
+    ctx.fillRect(0,0,canvas.width,canvas.height);
+    setVuoto(true);
+  }
+  function conferma(){
+    if(vuoto) return;
+    onSalva(canvasRef.current.toDataURL("image/png"));
+  }
+
+  return (
+    <div>
+      <canvas
+        ref={canvasRef}
+        width={600} height={220}
+        style={{width:"100%",maxWidth:600,height:180,border:`2px solid ${C.paperLine}`,borderRadius:10,touchAction:"none",background:"#fff",display:"block",cursor:"crosshair"}}
+        onPointerDown={iniziaTratto}
+        onPointerMove={disegna}
+        onPointerUp={fineTratto}
+        onPointerLeave={fineTratto}
+        onPointerCancel={fineTratto}
+      />
+      <div style={{fontSize:11,color:"#9AA3AB",marginTop:6,textAlign:"center"}}>Firma qui sopra — con il dito su tablet/smartphone, o con il mouse</div>
+      <div style={{display:"flex",gap:8,marginTop:12}}>
+        <button onClick={pulisci} style={{flex:1,padding:"11px",background:"#fff",color:C.steel,border:`1px solid ${C.paperLine}`,borderRadius:8,fontSize:13,fontWeight:600,cursor:"pointer"}}>Cancella</button>
+        <button onClick={conferma} disabled={vuoto} style={{flex:2,padding:"11px",background:vuoto?"#c8c8c8":C.ink,color:"#fff",border:"none",borderRadius:8,fontSize:13,fontWeight:700,cursor:vuoto?"default":"pointer"}}>✓ Conferma firma</button>
+      </div>
+      {onAnnulla && <button onClick={onAnnulla} style={{width:"100%",marginTop:8,padding:"9px",background:"none",border:"none",color:"#9AA3AB",fontSize:12,cursor:"pointer"}}>Annulla</button>}
+    </div>
+  );
 }
 
 function ListaPreventivi({preventivi,onApri,onNuovo,sessione}){
@@ -3208,6 +3362,9 @@ function Ordini({ordini,setOrdini,sessione}){
   table{width:100%;border-collapse:collapse;margin-top:10px}
   th{background:#162758;color:#fff;padding:8px 6px;font-size:11px;text-align:left}
   .tot{text-align:right;margin-top:18px;font-size:18px;font-weight:700;color:#162758}
+  .firma{margin-top:24px;border:1px solid #E3E5EA;border-radius:6px;padding:14px}
+  .firma img{max-width:200px;max-height:80px;display:block}
+  .firma-nota{font-size:10px;color:#7C879E;margin-top:6px;font-style:italic}
   .footer{margin-top:32px;font-size:10px;color:#9AA3AB;border-top:1px solid #E3E5EA;padding-top:10px}
 </style></head><body>
 <div class="hd"><div><div class="brand">Telos Tech</div><div style="font-size:11px;color:#7C879E">Conferma d'ordine</div></div>
@@ -3215,6 +3372,13 @@ function Ordini({ordini,setOrdini,sessione}){
 <div style="font-size:15px;font-weight:600;margin-bottom:6px">${o.cliente}</div>
 <table><thead><tr><th>Articolo</th><th>Codice</th><th style="text-align:center">Qtà</th><th style="text-align:right">Totale</th></tr></thead><tbody>${righe}</tbody></table>
 <div class="tot">Totale: €${o.val.toFixed(2)}</div>
+${o.firma_cliente ? `
+<div class="firma">
+  <div style="font-size:11px;font-weight:600;color:#3A4248;margin-bottom:6px">Accettato con firma del cliente</div>
+  <img src="${o.firma_cliente}" alt="Firma cliente"/>
+  <div class="firma-nota">Firmato da ${o.firma_nome||"Cliente"}${o.firma_data ? ` il ${new Date(o.firma_data).toLocaleString("it-IT",{dateStyle:"short",timeStyle:"short"})}` : ""}</div>
+</div>
+` : ""}
 <div class="footer">Telos Tech S.r.l. · Documento generato il ${new Date().toLocaleDateString("it-IT")}</div>
 <script>
 (function(){
@@ -3248,6 +3412,15 @@ function Ordini({ordini,setOrdini,sessione}){
         </div>
         <div style={{fontFamily:F_DISPLAY,fontSize:19,fontWeight:600,marginBottom:4}}>{selezionato.cliente}</div>
         <div style={{fontSize:11.5,color:"#8A929A",marginBottom:14}}>Da preventivo {codicePreventivoRif(selezionato)} · creato il {selezionato.creato_il ? new Date(selezionato.creato_il).toLocaleDateString("it-IT") : ""}</div>
+
+        {selezionato.firma_cliente && (
+          <div style={{...S.card,cursor:"default",marginBottom:16}}>
+            <div style={{fontSize:12.5,fontWeight:600,color:C.ok,marginBottom:8}}>
+              ✓ Accettato con firma da {selezionato.firma_nome}{selezionato.firma_data ? ` — ${new Date(selezionato.firma_data).toLocaleString("it-IT",{dateStyle:"short",timeStyle:"short"})}` : ""}
+            </div>
+            <img src={selezionato.firma_cliente} alt="Firma cliente" style={{maxWidth:220,border:`1px solid ${C.paperLine}`,borderRadius:6,background:"#fff",display:"block"}}/>
+          </div>
+        )}
         <div style={S.eyebrow}>Articoli ({selezionato.righe.length})</div>
         {selezionato.righe.map(r=>(
           <div key={r.cod} style={{...S.card,cursor:"default",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
