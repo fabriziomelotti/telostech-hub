@@ -3244,7 +3244,9 @@ function Preventivi({cart,setCart,preventivi,setPreventivi,setOrdini,setArea,ruo
   const [bozzaSalvata,setBozzaSalvata]=useState(false); // conferma temporanea dopo il salvataggio
   const [mostraFirma,setMostraFirma]=useState(false);
   const [nomeFirmatario,setNomeFirmatario]=useState("");
-  useEffect(()=>{ setConfermaEliminazione(false); setConfermaSalto(false); setTipoMotivoSalto(""); setDettaglioMotivoSalto(""); setPromemoriaRecupero(""); setBozzaSalvata(false); setMostraFirma(false); setNomeFirmatario(""); },[selId]);
+  const [clienteLibero,setClienteLibero]=useState(false); // true = form nome libero al posto della ricerca in anagrafica
+  const [nomeClienteLibero,setNomeClienteLibero]=useState("");
+  useEffect(()=>{ setConfermaEliminazione(false); setConfermaSalto(false); setTipoMotivoSalto(""); setDettaglioMotivoSalto(""); setPromemoriaRecupero(""); setBozzaSalvata(false); setMostraFirma(false); setNomeFirmatario(""); setClienteLibero(false); setNomeClienteLibero(""); },[selId]);
   const [erroreSync,setErroreSync]=useState("");
   const [utentiTelos,setUtentiTelos]=useState(null); // null=non caricato, [] o [...]
   const [erroreUtentiTelos,setErroreUtentiTelos]=useState("");
@@ -3571,25 +3573,68 @@ function Preventivi({cart,setCart,preventivi,setPreventivi,setOrdini,setArea,ruo
 
         {editable ? (
           <div style={{marginBottom:14}}>
-            <SelezioneCliente
-              clienteSelezionato={selezionato.cliente_codice ? {
-                codice: selezionato.cliente_codice,
-                ragione_sociale: selezionato.cliente,
-                localita: selezionato.cliente_localita,
-                provincia: selezionato.cliente_provincia,
-                partita_iva: selezionato.cliente_piva,
-              } : null}
-              onSeleziona={(c)=>aggiorna(selezionato.id, c ? {
-                cliente: c.ragione_sociale,
-                cliente_codice: c.codice,
-                cliente_localita: c.localita || "",
-                cliente_provincia: c.provincia || "",
-                cliente_piva: c.partita_iva || "",
-              } : {
-                cliente:"", cliente_codice:null, cliente_localita:"", cliente_provincia:"", cliente_piva:"",
-              })}
-              sessione={sessione}
-            />
+            {clienteLibero ? (
+              <div style={{...S.card,cursor:"default",border:`1px solid ${C.ink}`}}>
+                <div style={S.eyebrow}>Cliente non in anagrafica</div>
+                <input
+                  value={nomeClienteLibero}
+                  onChange={e=>setNomeClienteLibero(e.target.value)}
+                  placeholder="Ragione sociale / nome cliente"
+                  style={{...S.inp,marginTop:8,marginBottom:10}}
+                  autoFocus
+                />
+                <div style={{display:"flex",gap:8}}>
+                  <button
+                    onClick={()=>{
+                      aggiorna(selezionato.id, {
+                        cliente: nomeClienteLibero.trim(),
+                        cliente_codice: null, cliente_localita: "", cliente_provincia: "", cliente_piva: "",
+                      });
+                      setClienteLibero(false);
+                    }}
+                    disabled={!nomeClienteLibero.trim()}
+                    style={{...S.btnAccent,padding:"9px 15px",opacity:nomeClienteLibero.trim()?1:0.4}}
+                  >
+                    Usa questo nome
+                  </button>
+                  <button onClick={()=>{ setClienteLibero(false); setNomeClienteLibero(""); }} style={{...S.btnS,padding:"9px 15px"}}>Annulla</button>
+                </div>
+                <div style={{fontSize:11,color:"#9AA3AB",marginTop:10,lineHeight:1.5}}>
+                  Non essendo in anagrafica, questo preventivo non comparirà nella scheda di nessun cliente —
+                  se in seguito lo aggiungi ai Clienti, torna qui e usa la ricerca per collegarlo.
+                </div>
+              </div>
+            ) : (<>
+              {!selezionato.cliente_codice && selezionato.cliente && (
+                <div style={{fontSize:12,color:C.steel,marginBottom:8}}>
+                  Cliente attuale (non in anagrafica): <strong>{selezionato.cliente}</strong>
+                </div>
+              )}
+              <SelezioneCliente
+                clienteSelezionato={selezionato.cliente_codice ? {
+                  codice: selezionato.cliente_codice,
+                  ragione_sociale: selezionato.cliente,
+                  localita: selezionato.cliente_localita,
+                  provincia: selezionato.cliente_provincia,
+                  partita_iva: selezionato.cliente_piva,
+                } : null}
+                onSeleziona={(c)=>aggiorna(selezionato.id, c ? {
+                  cliente: c.ragione_sociale,
+                  cliente_codice: c.codice,
+                  cliente_localita: c.localita || "",
+                  cliente_provincia: c.provincia || "",
+                  cliente_piva: c.partita_iva || "",
+                } : {
+                  cliente:"", cliente_codice:null, cliente_localita:"", cliente_provincia:"", cliente_piva:"",
+                })}
+                sessione={sessione}
+              />
+              {!selezionato.cliente_codice && (
+                <button onClick={()=>{ setClienteLibero(true); setNomeClienteLibero(selezionato.cliente||""); }} style={{...S.btnS,marginTop:8,padding:"7px 12px",fontSize:12}}>
+                  {selezionato.cliente ? "✎ Modifica nome cliente" : "+ Cliente non in anagrafica"}
+                </button>
+              )}
+            </>)}
           </div>
         ) : (
           <div style={{fontFamily:F_DISPLAY,fontSize:19,fontWeight:600,marginBottom:14}}>{selezionato.cliente || "Cliente non specificato"}</div>
