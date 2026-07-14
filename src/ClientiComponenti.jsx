@@ -60,6 +60,29 @@ async function sbUpsert(table, righe) {
   }
 }
 
+// Come sbUpsert, ma col token di sessione dell'utente al posto della sola
+// chiave pubblica. La tabella "clienti" ha RLS che richiede una sessione
+// autenticata (con ruolo admin, verificato via `profili`) anche in scrittura
+// — con la sola chiave pubblica la richiesta risulta anonima e la RLS la
+// rifiuta con 401/42501 "new row violates row-level security policy".
+async function sbUpsertAuth(table, righe, accessToken) {
+  if (!accessToken) throw new Error("Sessione non trovata: ricarica la pagina e rieffettua il login.");
+  const res = await fetch(`${SUPABASE_URL}/rest/v1/${table}`, {
+    method: "POST",
+    headers: {
+      "apikey": SUPABASE_ANON_KEY,
+      "Authorization": `Bearer ${accessToken}`,
+      "Content-Type": "application/json",
+      "Prefer": "resolution=merge-duplicates,return=minimal",
+    },
+    body: JSON.stringify(righe),
+  });
+  if (!res.ok) {
+    const txt = await res.text().catch(() => "");
+    throw new Error(`Supabase ${res.status} ${txt}`);
+  }
+}
+
 // La sessione custom (Auth.jsx) conserva il token in un campo il cui nome può
 // variare; stesso helper di App.jsx, duplicato qui per rendere il file
 // autonomo (vedi nota in cima al file).
@@ -143,7 +166,7 @@ const COLONNE_DB = {
 // individua il foglio con la colonna "Codice", mappa, deduplica e fa upsert
 // a batch da 500 righe con barra di avanzamento.
 // ═══════════════════════════════════════════════════════════════════════════
-export function ImportClienti({ ruolo }){
+export function ImportClienti({ ruolo, sessione }){
   const [stato, setStato] = useState("idle"); // idle | leggo | carico | fatto | errore
   const [msg, setMsg] = useState("");
   const [prog, setProg] = useState(0);       // 0..100
@@ -214,11 +237,18 @@ export function ImportClienti({ ruolo }){
         return;
       }
 
+      const accessToken = trovaAccessToken(sessione);
+      if(!accessToken){
+        setStato("errore");
+        setMsg("Sessione non trovata: ricarica la pagina e rieffettua il login.");
+        return;
+      }
+
       setStato("carico");
       const BATCH = 500;
       for(let i=0; i<clienti.length; i+=BATCH){
         const chunk = clienti.slice(i, i+BATCH);
-        await sbUpsert("clienti", chunk);
+        await sbUpsertAuth("clienti", chunk, accessToken);
         const done = Math.min(i+BATCH, clienti.length);
         setProg(Math.round(done/clienti.length*100));
         setMsg(`Caricati ${done} / ${clienti.length} clienti…`);
