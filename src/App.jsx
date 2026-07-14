@@ -61,6 +61,29 @@ async function sbAuth(method, table, params, body, accessToken) {
   return res.json();
 }
 
+// Upload diretto su uno storage bucket con il token dell'utente loggato
+// (nessuna Edge Function/service_role: il bucket ha una policy RLS che
+// apre l'insert a chiunque autenticato — vedi 10_logistica_ordini.sql).
+// Usato per la foto del prodotto da rottamare negli ordini.
+async function sbUploadStorage(bucket, path, file, accessToken) {
+  if (!accessToken) throw new Error("Sessione non trovata: ricarica la pagina e rieffettua il login.");
+  const res = await fetch(`${SUPABASE_URL}/storage/v1/object/${bucket}/${encodeURIComponent(path)}`, {
+    method: "POST",
+    headers: {
+      "apikey": SUPABASE_ANON_KEY,
+      "Authorization": `Bearer ${accessToken}`,
+      "Content-Type": file.type || "application/octet-stream",
+      "x-upsert": "true",
+    },
+    body: file,
+  });
+  if (!res.ok) {
+    const txt = await res.text().catch(() => "");
+    throw new Error(`Caricamento ${res.status} ${txt}`);
+  }
+  return `${SUPABASE_URL}/storage/v1/object/public/${bucket}/${path}`;
+}
+
 // Carica tutti i prodotti da Supabase via REST API (nessuna libreria esterna)
 async function caricaCatalogo(catalogoDemo) {
   try {
@@ -141,6 +164,25 @@ const DEMO_INTERVENTI = [
 // Stati possibili di un preventivo, in ordine di avanzamento del ciclo di vita
 const STATI_PREVENTIVO = ["Bozza","Inviato"];
 const STATO_COLORE = { "Bozza":"steel", "Inviato":"warn", "Convertito in ordine":"primary", "Saltato":"danger" };
+// Ciclo ordine: Convertito in ordine (preventivo) → "In attesa di invio"
+// (chi vende compila il modulo logistico) → "Da evadere" (magazzino) →
+// "Evaso". "Annullato" possibile in qualunque momento.
+function toneOrdine(stato){
+  if(stato==="Annullato") return "danger";
+  if(stato==="In attesa di invio") return "steel";
+  if(stato==="Da evadere") return "warn";
+  return "ok"; // Evaso
+}
+// I 5 casi logistici da definire una volta per l'intero ordine prima
+// dell'invio. "obbligKey" è il campo di categorie_logistica_obbligatoria
+// che rende obbligatoria la risposta se l'ordine contiene quella categoria.
+const CAMPI_LOGISTICA_ORDINE = [
+  {chiave:"rottamazione", obbligKey:"rottamazione", label:"Ritiro per rottamazione", domanda:"Comporta il ritiro di un prodotto da rottamare?"},
+  {chiave:"destinazione_diversa", obbligKey:"destinazione_diversa", label:"Destinazione trasporto diversa dal cliente", domanda:"Va consegnato a un indirizzo diverso da quello del cliente?"},
+  {chiave:"mezzi_movimentazione", obbligKey:"mezzi_movimentazione", label:"Mezzi movimentazione carichi", domanda:"Sono disponibili mezzi di movimentazione allo scarico (es. muletti)?"},
+  {chiave:"installazione", obbligKey:"installazione", label:"Installazione tecnica richiesta", domanda:"È richiesta l'installazione da parte di un tecnico?"},
+  {chiave:"formazione", obbligKey:"formazione", label:"Formazione all'uso", domanda:"È richiesta la formazione all'uso per il cliente?"},
+];
 const MOTIVI_SALTO = {
   prezzo_alto: "Prezzo alto",
   concorrente: "Scelta concorrente",
@@ -591,7 +633,7 @@ export default function App(){
           {area==="clienti" && <Clienti sessione={sessione} preventivi={preventivi} ordini={ordini} attrezzature={attrezzature} setAttrezzature={setAttrezzature} interventi={interventi} setInterventi={setInterventi} catalog={catalog} ruolo={role}/>}
           {area==="promemoria" && <Promemoria sessione={sessione} ruolo={role} preventivi={preventivi} interventi={interventi} promemoria={promemoria} setPromemoria={setPromemoria} setArea={setArea}/>}
           {area==="preventivi" && <Preventivi cart={cart} setCart={setCart} preventivi={preventivi} setPreventivi={setPreventivi} setOrdini={setOrdini} setArea={setArea} ruolo={role} catalog={catalog} sessione={sessione}/>}
-          {area==="ordini" && <Ordini ordini={ordini} setOrdini={setOrdini} sessione={sessione} ruolo={role}/>}
+          {area==="ordini" && <Ordini ordini={ordini} setOrdini={setOrdini} preventivi={preventivi} setPreventivi={setPreventivi} catalog={catalog} sessione={sessione} ruolo={role}/>}
           {area==="interventi" && <Interventi interventi={interventi} setInterventi={setInterventi} attrezzature={attrezzature} sessione={sessione} setArea={setArea} setInterventoDaCompletare={setInterventoDaCompletare}/>}
           {area==="rapporti" && <RapportoDemo sessione={sessione} interventi={interventi} setInterventi={setInterventi} interventoDaCompletare={interventoDaCompletare} setInterventoDaCompletare={setInterventoDaCompletare}/>}
           {area==="analytics" && RUOLI_APPROVATORI.includes(role) && <CondizioniAcquisto/>}
@@ -2552,7 +2594,7 @@ function ClienteDettaglio({cliente, onIndietro, preventivi, ordini, attrezzature
             </div>
             <div style={{textAlign:"right",flexShrink:0}}>
               <div className="tnum" style={{fontWeight:700,fontSize:14,fontFamily:F_MONO}}>€{(o.val||0).toLocaleString("it-IT")}</div>
-              <Tag tone={o.stato==="Annullato"?"danger":o.stato==="Da evadere"?"warn":"ok"} style={{marginTop:5}}>{o.stato}</Tag>
+              <Tag tone={toneOrdine(o.stato)} style={{marginTop:5}}>{o.stato}</Tag>
             </div>
           </div>
         ))
@@ -3437,7 +3479,7 @@ function Preventivi({cart,setCart,preventivi,setPreventivi,setOrdini,setArea,ruo
       cliente_codice: p.cliente_codice || null,
       righe: p.righe,
       val: p.val,
-      stato: "Da evadere",
+      stato: "In attesa di invio",
       firma_cliente: p.firma_cliente,
       firma_data: p.firma_data,
       firma_nome: p.firma_nome,
@@ -4331,7 +4373,7 @@ function PreventiviSaltati({preventivi}){
 }
 
 // ─── ORDINI ───────────────────────────────────────────────────────────────────
-function Ordini({ordini,setOrdini,sessione,ruolo}){
+function Ordini({ordini,setOrdini,preventivi,setPreventivi,catalog,sessione,ruolo}){
   const [selId,setSelId]=useState(null);
   const [erroreSync,setErroreSync]=useState("");
   const [confermaAnnulla,setConfermaAnnulla]=useState(false);
@@ -4339,6 +4381,127 @@ function Ordini({ordini,setOrdini,sessione,ruolo}){
   const selezionato = ordini.find(o=>o.id===selId);
   const accessToken = trovaAccessToken(sessione);
   useEffect(()=>{ setConfermaAnnulla(false); setConfermaEliminaOrdine(false); },[selId]);
+
+  // ── Modulo logistico pre-invio (vedi CAMPI_LOGISTICA_ORDINE) ───────────
+  const [categorieLogistica,setCategorieLogistica] = useState({}); // {categoria: {rottamazione,...}}
+  useEffect(()=>{
+    if(!accessToken) return;
+    sbGetAuth("categorie_logistica_obbligatoria","select=*",accessToken)
+      .then(righe=>{
+        const mappa={};
+        (righe||[]).forEach(r=>{ mappa[r.categoria]=r; });
+        setCategorieLogistica(mappa);
+      })
+      .catch(()=>setCategorieLogistica({}));
+  },[accessToken]);
+
+  const vuotoLogistica = {
+    rottamazione_attiva:null, rottamazione_modello:"", rottamazione_seriale:"", rottamazione_foto_url:"", rottamazione_valore:"", rottamazione_gestione:"",
+    destinazione_diversa_attiva:null, destinazione_diversa_testo:"",
+    mezzi_movimentazione_attiva:null, mezzi_movimentazione_disponibili:null,
+    installazione_attiva:null, installazione_tecnico:"",
+    formazione_attiva:null, formazione_tecnico:"",
+  };
+  const [formLogistica,setFormLogistica] = useState(vuotoLogistica);
+  const [salvandoInvio,setSalvandoInvio] = useState(false);
+  const [erroreInvio,setErroreInvio] = useState("");
+  const [caricandoFoto,setCaricandoFoto] = useState(false);
+  useEffect(()=>{
+    if(!selezionato){ setFormLogistica(vuotoLogistica); return; }
+    setFormLogistica({
+      rottamazione_attiva: selezionato.rottamazione_attiva ?? null,
+      rottamazione_modello: selezionato.rottamazione_modello || "",
+      rottamazione_seriale: selezionato.rottamazione_seriale || "",
+      rottamazione_foto_url: selezionato.rottamazione_foto_url || "",
+      rottamazione_valore: selezionato.rottamazione_valore ?? "",
+      rottamazione_gestione: selezionato.rottamazione_gestione || "",
+      destinazione_diversa_attiva: selezionato.destinazione_diversa_attiva ?? null,
+      destinazione_diversa_testo: selezionato.destinazione_diversa_testo || "",
+      mezzi_movimentazione_attiva: selezionato.mezzi_movimentazione_attiva ?? null,
+      mezzi_movimentazione_disponibili: selezionato.mezzi_movimentazione_disponibili ?? null,
+      installazione_attiva: selezionato.installazione_attiva ?? null,
+      installazione_tecnico: selezionato.installazione_tecnico || "",
+      formazione_attiva: selezionato.formazione_attiva ?? null,
+      formazione_tecnico: selezionato.formazione_tecnico || "",
+    });
+    setErroreInvio("");
+  },[selId]);
+
+  // Categorie dei prodotti dell'ordine, risolte dal catalogo via codice
+  // (le righe salvate sul preventivo/ordine non portano la categoria).
+  const categorieOrdineCorrente = useMemo(()=>{
+    if(!selezionato) return [];
+    const cats = new Set();
+    (selezionato.righe||[]).forEach(r=>{
+      const p = (catalog||[]).find(x=>x.cod===r.cod);
+      if(p?.cat) cats.add(p.cat);
+    });
+    return [...cats];
+  },[selezionato,catalog]);
+  function campoObbligatorio(obbligKey){
+    return categorieOrdineCorrente.some(cat=>categorieLogistica[cat]?.[obbligKey]);
+  }
+
+  async function caricaFotoRottamazione(file){
+    if(!file || !selezionato) return;
+    setCaricandoFoto(true); setErroreInvio("");
+    try{
+      const estensione = (file.name.split(".").pop()||"jpg").toLowerCase().replace(/[^a-z0-9]/g,"")||"jpg";
+      const path = `${selezionato.id}-${Date.now()}.${estensione}`;
+      const url = await sbUploadStorage("ordini-allegati", path, file, accessToken);
+      setFormLogistica(f=>({...f, rottamazione_foto_url:url}));
+    }catch(err){
+      setErroreInvio("Caricamento foto non riuscito: "+err.message);
+    }
+    setCaricandoFoto(false);
+  }
+
+  // Validazione: per ogni campo obbligatorio per categoria, la domanda
+  // sì/no deve essere stata risposta (non null); se la risposta è "sì", i
+  // sotto-campi propri di quel caso sono sempre richiesti (a prescindere
+  // dall'obbligatorietà per categoria — è la logica intrinseca del caso).
+  function erroriValidazioneInvio(){
+    const errori = [];
+    for(const campo of CAMPI_LOGISTICA_ORDINE){
+      const valoreAttiva = formLogistica[`${campo.chiave}_attiva`];
+      if(campoObbligatorio(campo.obbligKey) && valoreAttiva===null){
+        errori.push(`"${campo.label}" è obbligatorio per almeno un prodotto di questo ordine: rispondi sì o no.`);
+      }
+    }
+    if(formLogistica.rottamazione_attiva===true){
+      const haFoto = !!formLogistica.rottamazione_foto_url;
+      const haManuale = formLogistica.rottamazione_modello.trim() && formLogistica.rottamazione_seriale.trim();
+      if(!haFoto && !haManuale) errori.push("Rottamazione: carica una foto oppure inserisci modello e numero di serie a mano.");
+      if(!formLogistica.rottamazione_valore) errori.push("Rottamazione: indica il valore di rottamazione.");
+      if(!formLogistica.rottamazione_gestione) errori.push("Rottamazione: specifica se va gestita a nota credito o sconto merce.");
+    }
+    if(formLogistica.destinazione_diversa_attiva===true && !formLogistica.destinazione_diversa_testo.trim()){
+      errori.push("Destinazione diversa: indica dove va consegnato.");
+    }
+    if(formLogistica.mezzi_movimentazione_attiva===true && formLogistica.mezzi_movimentazione_disponibili===null){
+      errori.push("Mezzi movimentazione: specifica se sono disponibili o no.");
+    }
+    return errori;
+  }
+
+  async function confermaInvio(){
+    const errori = erroriValidazioneInvio();
+    if(errori.length>0){ setErroreInvio(errori[0]); return; }
+    setSalvandoInvio(true); setErroreInvio("");
+    const payload = {
+      ...formLogistica,
+      rottamazione_valore: formLogistica.rottamazione_valore===""?null:Number(formLogistica.rottamazione_valore),
+      dettagli_invio_completati: true,
+      stato: "Da evadere",
+    };
+    try{
+      await sbAuth("PATCH","ordini",`id=eq.${selezionato.id}`,payload,accessToken);
+      setOrdini(prev=>prev.map(o=>o.id===selezionato.id?{...o,...payload}:o));
+    }catch(err){
+      setErroreInvio("Salvataggio non riuscito: "+err.message);
+    }
+    setSalvandoInvio(false);
+  }
 
   async function setStato(id, stato){
     setErroreSync("");
@@ -4362,12 +4525,39 @@ function Ordini({ordini,setOrdini,sessione,ruolo}){
     setErroreSync("");
     setOrdini(prev=>prev.filter(x=>x.id!==id));
     setSelId(null);
+    // Se l'ordine viene da un preventivo confermato, quel preventivo torna
+    // in Bozza — altrimenti resterebbe bloccato su "Convertito in ordine"
+    // senza più un ordine reale dietro, non più modificabile né eliminabile
+    // (da "Inviato" in poi la modifica/eliminazione è riservata a
+    // responsabile/admin, "Bozza" invece è aperta a chiunque).
+    const preventivoCollegato = o.preventivo_id ? (preventivi||[]).find(p=>p.id===o.preventivo_id) : null;
+    if(preventivoCollegato && setPreventivi){
+      setPreventivi(prev=>prev.map(p=>p.id===o.preventivo_id?{...p,stato:"Bozza"}:p));
+    }
     try{
       await sbAuth("DELETE","ordini",`id=eq.${id}`,null,accessToken);
+      if(preventivoCollegato){
+        try{
+          await sbAuth("PATCH","preventivi",`id=eq.${o.preventivo_id}`,{stato:"Bozza"},accessToken);
+        }catch(err){
+          setErroreSync("Ordine eliminato, ma non sono riuscito a riportare il preventivo in Bozza: "+err.message);
+        }
+      }
     }catch(err){
-      setOrdini(prev=>[o,...prev]); // rollback
+      setOrdini(prev=>[o,...prev]); // rollback ordine
+      if(preventivoCollegato && setPreventivi){
+        setPreventivi(prev=>prev.map(p=>p.id===o.preventivo_id?{...p,stato:preventivoCollegato.stato}:p)); // rollback preventivo
+      }
       setErroreSync("Eliminazione non riuscita: "+err.message);
     }
+  }
+  function BottoniSiNo(valore, onSi, onNo){
+    return (
+      <div style={{display:"flex",gap:8}}>
+        <button onClick={onSi} style={{...S.btnS,padding:"7px 14px",flex:1,...(valore===true?{background:C.ink,color:"#fff",borderColor:C.ink}:{})}}>Sì</button>
+        <button onClick={onNo} style={{...S.btnS,padding:"7px 14px",flex:1,...(valore===false?{background:C.ink,color:"#fff",borderColor:C.ink}:{})}}>No</button>
+      </div>
+    );
   }
   function generaOrdinePDF(o){
     const righe = o.righe.map(r => `
@@ -4432,7 +4622,7 @@ ${o.firma_cliente ? `
         {erroreSync && <div style={{fontSize:12,color:C.danger,background:"rgba(200,75,58,0.08)",borderRadius:6,padding:"9px 11px",marginBottom:14}}>⚠ {erroreSync}</div>}
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:6}}>
           <div className="tnum" style={{fontFamily:F_MONO,fontSize:12,color:"#9AA3AB"}}>{codiceOrdine(selezionato)}</div>
-          <Tag tone={selezionato.stato==="Annullato"?"danger":selezionato.stato==="Da evadere"?"warn":"ok"}>{selezionato.stato}</Tag>
+          <Tag tone={toneOrdine(selezionato.stato)}>{selezionato.stato}</Tag>
         </div>
         <div style={{fontFamily:F_DISPLAY,fontSize:19,fontWeight:600,marginBottom:4}}>{selezionato.cliente}</div>
         <div style={{fontSize:11.5,color:"#8A929A",marginBottom:14}}>Da preventivo {codicePreventivoRif(selezionato)} · creato il {selezionato.creato_il ? new Date(selezionato.creato_il).toLocaleDateString("it-IT") : ""}</div>
@@ -4460,6 +4650,136 @@ ${o.firma_cliente ? `
           <span style={{fontWeight:600,fontSize:14}}>Totale</span>
           <span className="tnum" style={{fontWeight:700,fontSize:18,fontFamily:F_MONO,color:C.ink}}>€{selezionato.val.toFixed(2)}</span>
         </div>
+
+        {selezionato.stato==="In attesa di invio" && (
+          <div style={{...S.card,cursor:"default",border:`1px solid ${C.ink}`,marginBottom:16}}>
+            <div style={S.eyebrow}>Prima dell'invio</div>
+            <div style={{fontSize:12.5,color:C.steel,marginTop:4,marginBottom:16,lineHeight:1.6}}>
+              Indica se questo ordine comporta uno di questi casi. I campi segnati "obbligatorio" dipendono dalla
+              categoria dei prodotti in ordine (configurabile da Admin → Logistica).
+            </div>
+
+            {/* Rottamazione */}
+            <div style={{marginBottom:18,paddingBottom:18,borderBottom:`1px solid ${C.paperLine}`}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:8,marginBottom:6}}>
+                <div style={{fontWeight:600,fontSize:13}}>Ritiro per rottamazione</div>
+                {campoObbligatorio("rottamazione") && <Tag tone="warn">obbligatorio</Tag>}
+              </div>
+              <div style={{fontSize:12,color:C.steel,marginBottom:8}}>Comporta il ritiro di un prodotto da rottamare?</div>
+              {BottoniSiNo(formLogistica.rottamazione_attiva,
+                ()=>setFormLogistica(f=>({...f,rottamazione_attiva:true})),
+                ()=>setFormLogistica(f=>({...f,rottamazione_attiva:false})))}
+              {formLogistica.rottamazione_attiva===true && (
+                <div style={{display:"flex",flexDirection:"column",gap:8,marginTop:12}}>
+                  <div style={{fontSize:11,color:"#9AA3AB"}}>Carica una foto del prodotto (con modello e matricola visibili) oppure inseriscili a mano:</div>
+                  <input type="file" accept="image/*" onChange={e=>caricaFotoRottamazione(e.target.files[0])} disabled={caricandoFoto}/>
+                  {caricandoFoto && <div style={{fontSize:11.5,color:C.steel}}>Caricamento…</div>}
+                  {formLogistica.rottamazione_foto_url && (
+                    <div style={{display:"flex",alignItems:"center",gap:8}}>
+                      <img src={formLogistica.rottamazione_foto_url} alt="" style={{width:56,height:56,objectFit:"cover",borderRadius:6,border:`1px solid ${C.paperLine}`}}/>
+                      <button onClick={()=>setFormLogistica(f=>({...f,rottamazione_foto_url:""}))} style={{...S.btnS,padding:"5px 10px",fontSize:11}}>Rimuovi foto</button>
+                    </div>
+                  )}
+                  <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+                    <input value={formLogistica.rottamazione_modello} onChange={e=>setFormLogistica(f=>({...f,rottamazione_modello:e.target.value}))} placeholder="Modello" style={{...S.inp,flex:"1 1 140px"}}/>
+                    <input value={formLogistica.rottamazione_seriale} onChange={e=>setFormLogistica(f=>({...f,rottamazione_seriale:e.target.value}))} placeholder="Matricola" style={{...S.inp,flex:"1 1 140px"}}/>
+                  </div>
+                  <input type="number" step="0.01" value={formLogistica.rottamazione_valore} onChange={e=>setFormLogistica(f=>({...f,rottamazione_valore:e.target.value}))} placeholder="Valore di rottamazione (€)" className="tnum" style={{...S.inp,fontFamily:F_MONO}}/>
+                  <div style={{display:"flex",gap:8}}>
+                    <button onClick={()=>setFormLogistica(f=>({...f,rottamazione_gestione:"nota_credito"}))} style={{...S.btnS,padding:"7px 14px",flex:1,...(formLogistica.rottamazione_gestione==="nota_credito"?{background:C.ink,color:"#fff",borderColor:C.ink}:{})}}>Nota credito</button>
+                    <button onClick={()=>setFormLogistica(f=>({...f,rottamazione_gestione:"sconto_merce"}))} style={{...S.btnS,padding:"7px 14px",flex:1,...(formLogistica.rottamazione_gestione==="sconto_merce"?{background:C.ink,color:"#fff",borderColor:C.ink}:{})}}>Sconto merce</button>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Destinazione diversa */}
+            <div style={{marginBottom:18,paddingBottom:18,borderBottom:`1px solid ${C.paperLine}`}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:8,marginBottom:6}}>
+                <div style={{fontWeight:600,fontSize:13}}>Destinazione trasporto diversa dal cliente</div>
+                {campoObbligatorio("destinazione_diversa") && <Tag tone="warn">obbligatorio</Tag>}
+              </div>
+              <div style={{fontSize:12,color:C.steel,marginBottom:8}}>Va consegnato a un indirizzo diverso da quello del cliente (altra sede, tecnico installatore)?</div>
+              {BottoniSiNo(formLogistica.destinazione_diversa_attiva,
+                ()=>setFormLogistica(f=>({...f,destinazione_diversa_attiva:true})),
+                ()=>setFormLogistica(f=>({...f,destinazione_diversa_attiva:false})))}
+              {formLogistica.destinazione_diversa_attiva===true && (
+                <textarea value={formLogistica.destinazione_diversa_testo} onChange={e=>setFormLogistica(f=>({...f,destinazione_diversa_testo:e.target.value}))} placeholder="Indirizzo o riferimento della destinazione (es. tecnico installatore XY, via...)" rows={2} style={{...S.inp,resize:"vertical",marginTop:10}}/>
+              )}
+            </div>
+
+            {/* Mezzi movimentazione */}
+            <div style={{marginBottom:18,paddingBottom:18,borderBottom:`1px solid ${C.paperLine}`}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:8,marginBottom:6}}>
+                <div style={{fontWeight:600,fontSize:13}}>Mezzi movimentazione carichi</div>
+                {campoObbligatorio("mezzi_movimentazione") && <Tag tone="warn">obbligatorio</Tag>}
+              </div>
+              <div style={{fontSize:12,color:C.steel,marginBottom:8}}>Serve verificare la disponibilità di mezzi allo scarico (es. muletti per scarico ponti)?</div>
+              {BottoniSiNo(formLogistica.mezzi_movimentazione_attiva,
+                ()=>setFormLogistica(f=>({...f,mezzi_movimentazione_attiva:true})),
+                ()=>setFormLogistica(f=>({...f,mezzi_movimentazione_attiva:false})))}
+              {formLogistica.mezzi_movimentazione_attiva===true && (
+                <div style={{marginTop:10}}>
+                  <div style={{fontSize:11.5,color:"#9AA3AB",marginBottom:6}}>Mezzi disponibili presso il cliente?</div>
+                  {BottoniSiNo(formLogistica.mezzi_movimentazione_disponibili,
+                    ()=>setFormLogistica(f=>({...f,mezzi_movimentazione_disponibili:true})),
+                    ()=>setFormLogistica(f=>({...f,mezzi_movimentazione_disponibili:false})))}
+                </div>
+              )}
+            </div>
+
+            {/* Installazione */}
+            <div style={{marginBottom:18,paddingBottom:18,borderBottom:`1px solid ${C.paperLine}`}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:8,marginBottom:6}}>
+                <div style={{fontWeight:600,fontSize:13}}>Installazione tecnica richiesta</div>
+                {campoObbligatorio("installazione") && <Tag tone="warn">obbligatorio</Tag>}
+              </div>
+              <div style={{fontSize:12,color:C.steel,marginBottom:8}}>È richiesta l'installazione da parte di un tecnico?</div>
+              {BottoniSiNo(formLogistica.installazione_attiva,
+                ()=>setFormLogistica(f=>({...f,installazione_attiva:true})),
+                ()=>setFormLogistica(f=>({...f,installazione_attiva:false})))}
+              {formLogistica.installazione_attiva===true && (
+                <input value={formLogistica.installazione_tecnico} onChange={e=>setFormLogistica(f=>({...f,installazione_tecnico:e.target.value}))} placeholder="Tecnico richiesto in particolare (opzionale)" style={{...S.inp,marginTop:10}}/>
+              )}
+            </div>
+
+            {/* Formazione */}
+            <div style={{marginBottom:4}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:8,marginBottom:6}}>
+                <div style={{fontWeight:600,fontSize:13}}>Formazione all'uso</div>
+                {campoObbligatorio("formazione") && <Tag tone="warn">obbligatorio</Tag>}
+              </div>
+              <div style={{fontSize:12,color:C.steel,marginBottom:8}}>È richiesta la formazione all'uso per il cliente?</div>
+              {BottoniSiNo(formLogistica.formazione_attiva,
+                ()=>setFormLogistica(f=>({...f,formazione_attiva:true})),
+                ()=>setFormLogistica(f=>({...f,formazione_attiva:false})))}
+              {formLogistica.formazione_attiva===true && (
+                <input value={formLogistica.formazione_tecnico} onChange={e=>setFormLogistica(f=>({...f,formazione_tecnico:e.target.value}))} placeholder="Tecnico richiesto in particolare (opzionale)" style={{...S.inp,marginTop:10}}/>
+              )}
+            </div>
+
+            {erroreInvio && <div style={{fontSize:12,color:C.danger,background:"rgba(200,75,58,0.08)",borderRadius:6,padding:"9px 11px",marginTop:14,marginBottom:4}}>⚠ {erroreInvio}</div>}
+            <button onClick={confermaInvio} disabled={salvandoInvio||caricandoFoto} style={{...S.btnAccent,width:"100%",padding:"13px",marginTop:14,opacity:(salvandoInvio||caricandoFoto)?0.6:1}}>
+              {salvandoInvio?"Salvo…":"✓ Conferma e invia"}
+            </button>
+          </div>
+        )}
+
+        {selezionato.dettagli_invio_completati && selezionato.stato!=="In attesa di invio" && (
+          <div style={{...S.card,cursor:"default",marginBottom:16}}>
+            <div style={S.eyebrow}>Dettagli invio</div>
+            <div style={{display:"flex",flexDirection:"column",gap:6,marginTop:6,fontSize:12.5,color:C.charcoal}}>
+              {selezionato.rottamazione_attiva && <div>♻ Rottamazione — {selezionato.rottamazione_gestione==="nota_credito"?"nota credito":"sconto merce"}, valore €{Number(selezionato.rottamazione_valore||0).toFixed(2)}{selezionato.rottamazione_foto_url?" · foto allegata":""}</div>}
+              {selezionato.destinazione_diversa_attiva && <div>📍 Destinazione diversa — {selezionato.destinazione_diversa_testo}</div>}
+              {selezionato.mezzi_movimentazione_attiva && <div>🚚 Mezzi movimentazione — {selezionato.mezzi_movimentazione_disponibili?"disponibili":"non disponibili"}</div>}
+              {selezionato.installazione_attiva && <div>🔧 Installazione richiesta{selezionato.installazione_tecnico?` — ${selezionato.installazione_tecnico}`:""}</div>}
+              {selezionato.formazione_attiva && <div>🎓 Formazione richiesta{selezionato.formazione_tecnico?` — ${selezionato.formazione_tecnico}`:""}</div>}
+              {!selezionato.rottamazione_attiva && !selezionato.destinazione_diversa_attiva && !selezionato.mezzi_movimentazione_attiva && !selezionato.installazione_attiva && !selezionato.formazione_attiva && (
+                <div style={{color:"#9AA3AB"}}>Nessun caso particolare segnalato.</div>
+              )}
+            </div>
+          </div>
+        )}
         <div style={{display:"flex",flexDirection:"column",gap:8}}>
           {selezionato.stato==="Da evadere" && (
             <button onClick={()=>setStato(selezionato.id,"Evaso")} style={{...S.btnAccent,padding:"12px",background:C.ok,color:"#fff"}}>✓ Segna come evaso</button>
@@ -4529,7 +4849,7 @@ ${o.firma_cliente ? `
           </div>
           <div style={{textAlign:"right",flexShrink:0}}>
             <div className="tnum" style={{fontWeight:700,fontSize:14,fontFamily:F_MONO}}>€{o.val.toLocaleString("it-IT")}</div>
-            <Tag tone={o.stato==="Annullato"?"danger":o.stato==="Da evadere"?"warn":"ok"} style={{marginTop:5}}>{o.stato}</Tag>
+            <Tag tone={toneOrdine(o.stato)} style={{marginTop:5}}>{o.stato}</Tag>
           </div>
         </div>
       ))}
@@ -5335,6 +5655,95 @@ function GestioneCategorie({ sessione, categorie, ricarica }) {
   );
 }
 
+// ─── GESTIONE LOGISTICA ORDINI ─────────────────────────────────────────────
+// Matrice categoria × campo: per ogni categoria di prodotto, quali dei 5
+// casi logistici (vedi CAMPI_LOGISTICA_ORDINE) diventano obbligatori da
+// compilare quando un ordine contiene almeno un prodotto di quella
+// categoria. Letto da Ordini al momento dell'invio; scritto solo qui.
+// Scrittura riservata all'admin via RLS-role-check (nessuna Edge Function,
+// stesso schema già usato per le eliminazioni per ruolo).
+function GestioneLogisticaOrdini({ sessione, categorie }){
+  const accessToken = trovaAccessToken(sessione);
+  const [config,setConfig] = useState({}); // {categoria: {rottamazione,...}}
+  const [caricando,setCaricando] = useState(true);
+  const [salvando,setSalvando] = useState(false);
+  const [msg,setMsg] = useState("");
+
+  useEffect(()=>{
+    sbGetAuth("categorie_logistica_obbligatoria","select=*",accessToken)
+      .then(righe=>{
+        const mappa={};
+        (righe||[]).forEach(r=>{ mappa[r.categoria]=r; });
+        setConfig(mappa);
+        setCaricando(false);
+      })
+      .catch(()=>setCaricando(false));
+  },[]);
+
+  function valore(categoria, campo){ return !!config[categoria]?.[campo]; }
+
+  async function toggle(categoria, campo){
+    const base = config[categoria] || {categoria, rottamazione:false, destinazione_diversa:false, mezzi_movimentazione:false, installazione:false, formazione:false};
+    const esisteRiga = !!config[categoria];
+    const nuovo = {...base, [campo]: !base[campo]};
+    setConfig(prev=>({...prev,[categoria]:nuovo}));
+    setSalvando(true); setMsg("");
+    try{
+      if(esisteRiga){
+        await sbAuth("PATCH","categorie_logistica_obbligatoria",`categoria=eq.${encodeURIComponent(categoria)}`,{[campo]:nuovo[campo]},accessToken);
+      } else {
+        await sbAuth("POST","categorie_logistica_obbligatoria","",nuovo,accessToken);
+      }
+    }catch(err){
+      setMsg("Errore: "+err.message);
+      setConfig(prev=>({...prev,[categoria]:base})); // rollback
+    }
+    setSalvando(false);
+  }
+
+  return (
+    <div>
+      <div style={{fontSize:13,color:"#5B6770",marginBottom:16,lineHeight:1.6}}>
+        Per ogni categoria di prodotto, scegli quali campi del modulo "Prima dell'invio" (in Ordini)
+        diventano <strong>obbligatori</strong> quando l'ordine contiene almeno un prodotto di quella
+        categoria. Chi prepara l'invio dovrà rispondere sì/no a quei campi prima di poter procedere —
+        gli altri restano facoltativi.
+      </div>
+      {msg && <div style={{fontSize:12,color:C.danger,background:"rgba(200,75,58,0.08)",borderRadius:6,padding:"9px 11px",marginBottom:14}}>⚠ {msg}</div>}
+      {caricando && <div style={{fontSize:12.5,color:C.steel}}>Caricamento…</div>}
+      {!caricando && categorie.length===0 && (
+        <div style={{fontSize:12.5,color:C.steel,padding:"8px 0"}}>Nessuna categoria trovata nel catalogo.</div>
+      )}
+      {!caricando && categorie.length>0 && (
+        <div style={{overflowX:"auto"}}>
+          <table style={{width:"100%",borderCollapse:"collapse",fontSize:12.5}}>
+            <thead>
+              <tr>
+                <th style={{textAlign:"left",padding:"8px 10px 8px 6px",borderBottom:`2px solid ${C.paperLine}`,fontFamily:F_MONO,fontSize:10.5,color:"#9AA3AB",textTransform:"uppercase",whiteSpace:"nowrap"}}>Categoria</th>
+                {CAMPI_LOGISTICA_ORDINE.map(c=>(
+                  <th key={c.chiave} style={{textAlign:"center",padding:"8px 6px",borderBottom:`2px solid ${C.paperLine}`,fontFamily:F_MONO,fontSize:10,color:"#9AA3AB",whiteSpace:"nowrap"}}>{c.label}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {categorie.map(c=>(
+                <tr key={c.categoria}>
+                  <td style={{padding:"9px 6px",borderBottom:`1px solid ${C.paperLine}`,fontWeight:600,whiteSpace:"nowrap"}}>{c.categoria}</td>
+                  {CAMPI_LOGISTICA_ORDINE.map(campo=>(
+                    <td key={campo.chiave} style={{textAlign:"center",padding:"9px 6px",borderBottom:`1px solid ${C.paperLine}`}}>
+                      <input type="checkbox" checked={valore(c.categoria,campo.chiave)} onChange={()=>toggle(c.categoria,campo.chiave)} disabled={salvando} style={{width:16,height:16,cursor:"pointer"}}/>
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function PannelloAdmin({ setCatalog, ruolo, sessione }) {
   const accessToken = trovaAccessToken(sessione);
   const [tab, setTab] = useState("utenti");
@@ -5676,7 +6085,7 @@ function PannelloAdmin({ setCatalog, ruolo, sessione }) {
 
       {/* Tab */}
       <div style={{display:"flex",borderBottom:`1px solid ${C.paperLine}`,marginBottom:18}}>
-        {[["utenti","👤 Utenti"],["import","⬆ Importa"],["export","⬇ Esporta"],["categorie","▤ Categorie"]].map(([id,lbl])=>(
+        {[["utenti","👤 Utenti"],["import","⬆ Importa"],["export","⬇ Esporta"],["categorie","▤ Categorie"],["logistica","⚑ Logistica"]].map(([id,lbl])=>(
           <button key={id} onClick={()=>setTab(id)} style={{
             background:"none",border:"none",borderBottom:`2px solid ${tab===id?C.ink:"transparent"}`,
             padding:"8px 16px",fontSize:13,cursor:"pointer",
@@ -5688,6 +6097,8 @@ function PannelloAdmin({ setCatalog, ruolo, sessione }) {
       {tab==="utenti" && <GestioneUtenti ruolo={ruolo} sessione={sessione}/>}
 
       {tab==="categorie" && <GestioneCategorie sessione={sessione} categorie={categorie} ricarica={()=>{ ricaricaCategorie(); caricaCatalogo(CATALOG).then(d=>setCatalog(d)); }}/>}
+
+      {tab==="logistica" && <GestioneLogisticaOrdini sessione={sessione} categorie={categorie}/>}
 
       {tab==="import" && (
         <div>
