@@ -6517,11 +6517,11 @@ function parsePrezzo(raw){
 function GestionePrezziFornitore({ sessione }){
   const accessToken = trovaAccessToken(sessione);
   const [testo,setTesto] = useState(GEATEK_MAGGIO_2026);
-  const [nettoUguale,setNettoUguale] = useState(true);
+  const [nettoUguale,setNettoUguale] = useState(false);
   const [confermaAperta,setConfermaAperta] = useState(false);
   const [stato,setStato] = useState("idle"); // idle | salvo | fatto | errore
   const [msg,setMsg] = useState("");
-  const [risultato,setRisultato] = useState(null); // {aggiornati, nonTrovati}
+  const [risultato,setRisultato] = useState(null); // {aggiornati, codiciAggiornati, nonTrovati}
 
   const righeTotali = useMemo(()=>testo.split("\n").filter(r=>r.trim()).length,[testo]);
   const righeParsate = useMemo(()=>{
@@ -6540,8 +6540,8 @@ function GestionePrezziFornitore({ sessione }){
     try{
       const payload = { righe: righeParsate };
       if(nettoUguale) payload.impostaCome = "netto_uguale";
-      const { aggiornati, nonTrovati } = await chiamaCatalogAdmin("aggiornaPrezzi", payload, accessToken);
-      setRisultato({ aggiornati, nonTrovati: nonTrovati||[] });
+      const { aggiornati, codiciAggiornati, nonTrovati } = await chiamaCatalogAdmin("aggiornaPrezzi", payload, accessToken);
+      setRisultato({ aggiornati, codiciAggiornati: codiciAggiornati||[], nonTrovati: nonTrovati||[] });
       setStato("fatto");
     }catch(err){
       setStato("errore");
@@ -6562,12 +6562,12 @@ function GestionePrezziFornitore({ sessione }){
 
       <label style={{display:"flex",alignItems:"flex-start",gap:8,fontSize:12.5,marginBottom:14,cursor:"pointer",lineHeight:1.4}}>
         <input type="checkbox" checked={nettoUguale} onChange={e=>setNettoUguale(e.target.checked)} style={{width:16,height:16,marginTop:1,flexShrink:0}}/>
-        <span>Questo prezzo è già il Netto Telos (nessuno sconto ulteriore) — aggiorna anche il Netto, azzera lo sconto e imposta "Listino" come tipo prezzo. Se lasci deselezionato, viene toccato solo il Listino.</span>
+        <span>Questo prezzo è già il Netto Telos (nessuno sconto ulteriore) — aggiorna anche il Netto, azzera lo sconto e imposta "Listino" come tipo prezzo. <strong>Disattivata di default</strong>: se lasci deselezionato, viene toccato solo il Listino (usa questo per fornitori con sconto, es. OMCN 39%).</span>
       </label>
 
       <div style={{fontSize:12,color:C.steel,marginBottom:14}}>
         {righeParsate.length} righe valide riconosciute su {righeTotali} totali
-        {righeParsate.length<righeTotali && <span style={{color:C.warn}}> — {righeTotali-righeParsate.length} righe ignorate (formato non riconosciuto)</span>}.
+        {righeParsate.length<righeTotali && <span style={{color:C.warn}}> — {righeTotali-righeParsate.length} righe ignorate (formato non riconosciuto, es. intestazioni)</span>}.
       </div>
 
       {msg && <div style={{fontSize:12,color:C.danger,background:"rgba(200,75,58,0.08)",borderRadius:6,padding:"9px 11px",marginBottom:14}}>⚠ {msg}</div>}
@@ -6593,17 +6593,142 @@ function GestionePrezziFornitore({ sessione }){
 
       {risultato && (
         <div style={{...S.card,cursor:"default",marginTop:16,border:`1px solid ${C.ok}`}}>
-          <div style={{fontSize:13,fontWeight:600,color:C.ok,marginBottom:6}}>✓ Fatto: {risultato.aggiornati} prodotti aggiornati.</div>
+          <div style={{fontSize:13,fontWeight:600,color:C.ok,marginBottom:10}}>✓ Fatto: {risultato.aggiornati} prodotti aggiornati{nettoUguale?" (Listino + Netto)":" (solo Listino)"}.</div>
+          {risultato.codiciAggiornati.length>0 && (
+            <details style={{marginBottom:12}}>
+              <summary style={{fontSize:12,fontWeight:600,color:C.ok,cursor:"pointer"}}>Vedi i {risultato.codiciAggiornati.length} codici aggiornati</summary>
+              <div style={{maxHeight:180,overflowY:"auto",marginTop:8,padding:"8px 10px",background:C.paper,borderRadius:6,fontSize:11.5,fontFamily:F_MONO,lineHeight:1.7}}>
+                {risultato.codiciAggiornati.join(", ")}
+              </div>
+            </details>
+          )}
           {risultato.nonTrovati.length>0 && (
-            <div style={{fontSize:12,color:"#8a6418",lineHeight:1.5}}>
-              {risultato.nonTrovati.length} codici non trovati nel catalogo (non toccati): {risultato.nonTrovati.slice(0,40).join(", ")}{risultato.nonTrovati.length>40?"…":""}
-            </div>
+            <details>
+              <summary style={{fontSize:12,fontWeight:600,color:"#8a6418",cursor:"pointer"}}>Vedi i {risultato.nonTrovati.length} codici non trovati (non toccati)</summary>
+              <div style={{maxHeight:180,overflowY:"auto",marginTop:8,padding:"8px 10px",background:"rgba(217,164,65,0.08)",borderRadius:6,fontSize:11.5,fontFamily:F_MONO,color:"#8a6418",lineHeight:1.7}}>
+                {risultato.nonTrovati.join(", ")}
+              </div>
+            </details>
           )}
         </div>
       )}
     </div>
   );
 }
+
+// ─── LISTINO FORNITORE COMPLETO (aggiorna esistenti + crea nuovi) ─────────
+// A differenza di GestionePrezziFornitore (solo prezzo, mai crea nulla),
+// questo tab gestisce un listino intero con codici misti — alcuni già a
+// catalogo, altri nuovi — in un solo passaggio, senza il rischio del tab
+// Importa di svuotare categoria/marchio sui prodotti esistenti (vedi
+// commento sull'azione "importaOAggiorna" in catalog-admin.ts).
+function GestioneListinoCompleto({ sessione }){
+  const accessToken = trovaAccessToken(sessione);
+  const [testo,setTesto] = useState("");
+  const [scontoIniziale,setScontoIniziale] = useState("0");
+  const [confermaAperta,setConfermaAperta] = useState(false);
+  const [stato,setStato] = useState("idle");
+  const [msg,setMsg] = useState("");
+  const [risultato,setRisultato] = useState(null);
+
+  const righeTotali = useMemo(()=>testo.split("\n").filter(r=>r.trim()).length,[testo]);
+  const righeParsate = useMemo(()=>{
+    return testo.split("\n").map(riga=>{
+      if(!riga.trim()) return null;
+      const sep = riga.includes("\t") ? "\t" : (riga.includes(";") ? ";" : ",");
+      const parti = riga.split(sep).map(p=>p.trim());
+      if(parti.length<3) return null;
+      const cod = parti[0].replace(/\s+/g,"");
+      const nome = parti[1];
+      const prezzo = parsePrezzo(parti[parti.length-1]);
+      if(!cod || !nome || !isFinite(prezzo) || prezzo<=0) return null;
+      const extra = parti.slice(2,-1); // marchio, categoria, um — in mezzo, opzionali
+      return { cod, nome, marchio:extra[0]||"", categoria:extra[1]||"", um:extra[2]||"", listino:prezzo };
+    }).filter(Boolean);
+  },[testo]);
+  const scontoNum = Math.max(0, Math.min(99, parseFloat(scontoIniziale.replace(",","."))||0));
+
+  async function applica(){
+    setStato("salvo"); setMsg(""); setConfermaAperta(false);
+    try{
+      const payload = { righe: righeParsate, scontoIniziale: scontoNum };
+      const { aggiornati, codiciAggiornati, inseriti, codiciInseriti } = await chiamaCatalogAdmin("importaOAggiorna", payload, accessToken);
+      setRisultato({ aggiornati, codiciAggiornati: codiciAggiornati||[], inseriti, codiciInseriti: codiciInseriti||[] });
+      setStato("fatto");
+    }catch(err){
+      setStato("errore");
+      setMsg("Errore: "+err.message);
+    }
+  }
+
+  return (
+    <div>
+      <div style={{fontSize:13,color:"#5B6770",marginBottom:16,lineHeight:1.6}}>
+        Per un listino fornitore intero, con codici sia già a catalogo sia nuovi. Incolla una riga per
+        articolo nel formato <strong>codice, nome, marchio, categoria, um, listino</strong> (marchio/categoria/um
+        facoltativi, l'importante è che l'ultimo valore sia sempre il prezzo — usa tab o punto e virgola come
+        separatore se nome o descrizione contengono virgole). Per ogni riga: se il codice <strong>esiste già</strong>,
+        viene toccato <strong>solo il listino</strong> — nome, categoria, marchio restano quelli che hai già. Se il
+        codice <strong>non esiste</strong>, viene creato per intero; se lasci la categoria vuota, il prodotto comparirà
+        sotto "DA COMPLETARE" nel Catalogo.
+      </div>
+
+      <textarea value={testo} onChange={e=>{setTesto(e.target.value); setRisultato(null); setStato("idle"); setConfermaAperta(false);}} rows={10} placeholder={"GEA99001;KLEAN X200;GEATEK;;PZ;450.00\nGEA10030;KAMBIO KNX;GEATEK;;PZ;3850.00"} className="tnum" style={{...S.inp,fontFamily:F_MONO,fontSize:11.5,resize:"vertical",marginBottom:10}}/>
+
+      <div style={{marginBottom:14}}>
+        <label style={{fontSize:11,fontFamily:F_MONO,color:"#9AA3AB",textTransform:"uppercase",letterSpacing:"0.05em",display:"block",marginBottom:4}}>
+          Sconto iniziale sui prodotti NUOVI (%) — il Netto Telos si calcola da qui, i prodotti esistenti non vengono toccati
+        </label>
+        <input value={scontoIniziale} onChange={e=>setScontoIniziale(e.target.value)} placeholder="0" style={{...S.inp,maxWidth:120}}/>
+      </div>
+
+      <div style={{fontSize:12,color:C.steel,marginBottom:14}}>
+        {righeParsate.length} righe valide riconosciute su {righeTotali} totali
+        {righeParsate.length<righeTotali && <span style={{color:C.warn}}> — {righeTotali-righeParsate.length} righe ignorate (formato non riconosciuto)</span>}.
+      </div>
+
+      {msg && <div style={{fontSize:12,color:C.danger,background:"rgba(200,75,58,0.08)",borderRadius:6,padding:"9px 11px",marginBottom:14}}>⚠ {msg}</div>}
+
+      {!confermaAperta ? (
+        <button onClick={()=>setConfermaAperta(true)} disabled={righeParsate.length===0||stato==="salvo"} style={{...S.btnAccent,padding:"11px 18px",opacity:righeParsate.length===0?0.4:1}}>
+          Applica a {righeParsate.length} righe
+        </button>
+      ) : (
+        <div style={{...S.card,cursor:"default",border:`1px solid ${C.warn}`,background:"rgba(217,164,65,0.06)"}}>
+          <div style={{fontSize:13.5,fontWeight:600,marginBottom:8}}>Confermi?</div>
+          <div style={{fontSize:12.5,color:C.steel,marginBottom:12}}>
+            Aggiorna il Listino dei codici già presenti, e crea per intero quelli nuovi (Netto = Listino
+            {scontoNum>0?` scontato del ${scontoNum}%`:""}). L'operazione va corretta manualmente se sbagliata.
+          </div>
+          <div style={{display:"flex",gap:8}}>
+            <button onClick={applica} disabled={stato==="salvo"} style={{...S.btnAccent,padding:"9px 15px"}}>{stato==="salvo"?"Applico…":"Sì, applica"}</button>
+            <button onClick={()=>setConfermaAperta(false)} style={{...S.btnS,padding:"9px 15px"}}>Annulla</button>
+          </div>
+        </div>
+      )}
+
+      {risultato && (
+        <div style={{...S.card,cursor:"default",marginTop:16,border:`1px solid ${C.ok}`}}>
+          <div style={{fontSize:13,fontWeight:600,color:C.ok,marginBottom:4}}>✓ {risultato.aggiornati} prodotti aggiornati (solo listino), {risultato.inseriti} prodotti nuovi creati.</div>
+          {risultato.inseriti>0 && <div style={{fontSize:11.5,color:"#8a6418",marginBottom:10}}>I nuovi senza categoria sono già visibili sotto "DA COMPLETARE" nel Catalogo.</div>}
+          {risultato.codiciAggiornati.length>0 && (
+            <details style={{marginBottom:10}}>
+              <summary style={{fontSize:12,fontWeight:600,color:C.ok,cursor:"pointer"}}>Vedi i {risultato.codiciAggiornati.length} codici aggiornati</summary>
+              <div style={{maxHeight:180,overflowY:"auto",marginTop:8,padding:"8px 10px",background:C.paper,borderRadius:6,fontSize:11.5,fontFamily:F_MONO,lineHeight:1.7}}>{risultato.codiciAggiornati.join(", ")}</div>
+            </details>
+          )}
+          {risultato.codiciInseriti.length>0 && (
+            <details>
+              <summary style={{fontSize:12,fontWeight:600,color:C.ink,cursor:"pointer"}}>Vedi i {risultato.codiciInseriti.length} codici nuovi creati</summary>
+              <div style={{maxHeight:180,overflowY:"auto",marginTop:8,padding:"8px 10px",background:"rgba(22,39,88,0.06)",borderRadius:6,fontSize:11.5,fontFamily:F_MONO,lineHeight:1.7}}>{risultato.codiciInseriti.join(", ")}</div>
+            </details>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 
 function PannelloAdmin({ setCatalog, ruolo, sessione }) {
   const accessToken = trovaAccessToken(sessione);
@@ -6946,7 +7071,7 @@ function PannelloAdmin({ setCatalog, ruolo, sessione }) {
 
       {/* Tab */}
       <div style={{display:"flex",borderBottom:`1px solid ${C.paperLine}`,marginBottom:18}}>
-        {[["utenti","👤 Utenti"],["import","⬆ Importa"],["export","⬇ Esporta"],["categorie","▤ Categorie"],["prezzi","💶 Prezzi"],["logistica","⚑ Logistica"]].map(([id,lbl])=>(
+        {[["utenti","👤 Utenti"],["import","⬆ Importa"],["export","⬇ Esporta"],["categorie","▤ Categorie"],["prezzi","💶 Prezzi"],["listino","🧾 Listino"],["logistica","⚑ Logistica"]].map(([id,lbl])=>(
           <button key={id} onClick={()=>setTab(id)} style={{
             background:"none",border:"none",borderBottom:`2px solid ${tab===id?C.ink:"transparent"}`,
             padding:"8px 16px",fontSize:13,cursor:"pointer",
@@ -6962,6 +7087,8 @@ function PannelloAdmin({ setCatalog, ruolo, sessione }) {
       {tab==="logistica" && <GestioneLogisticaOrdini sessione={sessione} categorie={categorie}/>}
 
       {tab==="prezzi" && <GestionePrezziFornitore sessione={sessione}/>}
+
+      {tab==="listino" && <GestioneListinoCompleto sessione={sessione}/>}
 
       {tab==="import" && (
         <div>
