@@ -573,7 +573,7 @@ export default function App(){
           {area==="prodotti" && <Prodotti cart={cart} setCart={setCart} catalog={catalog} catalogLoading={catalogLoading} sessione={sessione} ruolo={role} setCatalog={setCatalog} setArea={setArea}/>}
           {area==="clienti" && <Clienti sessione={sessione} preventivi={preventivi} ordini={ordini} attrezzature={attrezzature} setAttrezzature={setAttrezzature} interventi={interventi} setInterventi={setInterventi} catalog={catalog} ruolo={role}/>}
           {area==="preventivi" && <Preventivi cart={cart} setCart={setCart} preventivi={preventivi} setPreventivi={setPreventivi} setOrdini={setOrdini} setArea={setArea} ruolo={role} catalog={catalog} sessione={sessione}/>}
-          {area==="ordini" && <Ordini ordini={ordini} setOrdini={setOrdini} sessione={sessione}/>}
+          {area==="ordini" && <Ordini ordini={ordini} setOrdini={setOrdini} sessione={sessione} ruolo={role}/>}
           {area==="interventi" && <Interventi interventi={interventi} setInterventi={setInterventi} sessione={sessione} setArea={setArea} setInterventoDaCompletare={setInterventoDaCompletare}/>}
           {area==="rapporti" && <RapportoDemo sessione={sessione} interventi={interventi} setInterventi={setInterventi} interventoDaCompletare={interventoDaCompletare} setInterventoDaCompletare={setInterventoDaCompletare}/>}
           {area==="analytics" && RUOLI_APPROVATORI.includes(role) && <CondizioniAcquisto/>}
@@ -1629,7 +1629,7 @@ function ClienteDettaglio({cliente, onIndietro, preventivi, ordini, attrezzature
             </div>
             <div style={{textAlign:"right",flexShrink:0}}>
               <div className="tnum" style={{fontWeight:700,fontSize:14,fontFamily:F_MONO}}>€{(o.val||0).toLocaleString("it-IT")}</div>
-              <Tag tone={o.stato==="Da evadere"?"warn":"ok"} style={{marginTop:5}}>{o.stato}</Tag>
+              <Tag tone={o.stato==="Annullato"?"danger":o.stato==="Da evadere"?"warn":"ok"} style={{marginTop:5}}>{o.stato}</Tag>
             </div>
           </div>
         ))
@@ -2531,7 +2531,7 @@ function Preventivi({cart,setCart,preventivi,setPreventivi,setOrdini,setArea,ruo
   async function eliminaPreventivo(id){
     setConfermaEliminazione(false);
     if(id==="__nuovo__"){
-      // mai salvata su Supabase: basta scartare la bozza locale
+      // mai salvata su Supabase: basta scartare la bozza locale, chiunque può farlo
       setBozzaNonSalvata(null);
       setSelId(null);
       setView("lista");
@@ -2539,6 +2539,7 @@ function Preventivi({cart,setCart,preventivi,setPreventivi,setOrdini,setArea,ruo
     }
     const p = preventivi.find(x=>x.id===id);
     if(!p || p.stato==="Convertito in ordine") return;
+    if(p.stato!=="Bozza" && !RUOLI_APPROVATORI.includes(ruolo)) return; // da "Inviato" in poi solo responsabile/admin — bloccato anche a livello di RLS
     setErroreSync("");
     setPreventivi(prev=>prev.filter(x=>x.id!==id));
     setSelId(null);
@@ -3025,7 +3026,7 @@ function Preventivi({cart,setCart,preventivi,setPreventivi,setOrdini,setArea,ruo
           </div>
         )}
 
-        {editable && (
+        {editable && (selezionato.stato==="Bozza" || RUOLI_APPROVATORI.includes(ruolo)) && (
           <div style={{marginTop:20,paddingTop:20,borderTop:`1px solid ${C.paperLine}`}}>
             {!confermaEliminazione ? (
               <button onClick={()=>setConfermaEliminazione(true)} style={{width:"100%",padding:"14px",background:C.danger,color:"#fff",border:"none",borderRadius:9,fontSize:14,fontWeight:700,cursor:"pointer"}}>
@@ -3330,11 +3331,14 @@ function PreventiviSaltati({preventivi}){
 }
 
 // ─── ORDINI ───────────────────────────────────────────────────────────────────
-function Ordini({ordini,setOrdini,sessione}){
+function Ordini({ordini,setOrdini,sessione,ruolo}){
   const [selId,setSelId]=useState(null);
   const [erroreSync,setErroreSync]=useState("");
+  const [confermaAnnulla,setConfermaAnnulla]=useState(false);
+  const [confermaEliminaOrdine,setConfermaEliminaOrdine]=useState(false);
   const selezionato = ordini.find(o=>o.id===selId);
   const accessToken = trovaAccessToken(sessione);
+  useEffect(()=>{ setConfermaAnnulla(false); setConfermaEliminaOrdine(false); },[selId]);
 
   async function setStato(id, stato){
     setErroreSync("");
@@ -3343,6 +3347,26 @@ function Ordini({ordini,setOrdini,sessione}){
       await sbAuth("PATCH","ordini",`id=eq.${id}`,{stato},accessToken);
     }catch(err){
       setErroreSync("Modifica non salvata sul server: "+err.message);
+    }
+  }
+  function annullaOrdine(id){
+    if(!RUOLI_APPROVATORI.includes(ruolo)) return;
+    setConfermaAnnulla(false);
+    setStato(id,"Annullato");
+  }
+  async function eliminaOrdine(id){
+    setConfermaEliminaOrdine(false);
+    if(!RUOLI_APPROVATORI.includes(ruolo)) return; // solo responsabile/admin — bloccato anche a livello di RLS
+    const o = ordini.find(x=>x.id===id);
+    if(!o) return;
+    setErroreSync("");
+    setOrdini(prev=>prev.filter(x=>x.id!==id));
+    setSelId(null);
+    try{
+      await sbAuth("DELETE","ordini",`id=eq.${id}`,null,accessToken);
+    }catch(err){
+      setOrdini(prev=>[o,...prev]); // rollback
+      setErroreSync("Eliminazione non riuscita: "+err.message);
     }
   }
   function generaOrdinePDF(o){
@@ -3408,7 +3432,7 @@ ${o.firma_cliente ? `
         {erroreSync && <div style={{fontSize:12,color:C.danger,background:"rgba(200,75,58,0.08)",borderRadius:6,padding:"9px 11px",marginBottom:14}}>⚠ {erroreSync}</div>}
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:6}}>
           <div className="tnum" style={{fontFamily:F_MONO,fontSize:12,color:"#9AA3AB"}}>{codiceOrdine(selezionato)}</div>
-          <Tag tone={selezionato.stato==="Da evadere"?"warn":"ok"}>{selezionato.stato}</Tag>
+          <Tag tone={selezionato.stato==="Annullato"?"danger":selezionato.stato==="Da evadere"?"warn":"ok"}>{selezionato.stato}</Tag>
         </div>
         <div style={{fontFamily:F_DISPLAY,fontSize:19,fontWeight:600,marginBottom:4}}>{selezionato.cliente}</div>
         <div style={{fontSize:11.5,color:"#8A929A",marginBottom:14}}>Da preventivo {codicePreventivoRif(selezionato)} · creato il {selezionato.creato_il ? new Date(selezionato.creato_il).toLocaleDateString("it-IT") : ""}</div>
@@ -3442,6 +3466,45 @@ ${o.firma_cliente ? `
           )}
           <button onClick={()=>generaOrdinePDF(selezionato)} style={{...S.btnAccent,padding:"12px"}}>📄 Invia ordine in PDF</button>
         </div>
+
+        {RUOLI_APPROVATORI.includes(ruolo) && selezionato.stato!=="Annullato" && (
+          <div style={{marginTop:20}}>
+            {!confermaAnnulla ? (
+              <button onClick={()=>setConfermaAnnulla(true)} style={{width:"100%",padding:"12px",background:"#fff",color:C.danger,border:`1px solid ${C.danger}`,borderRadius:9,fontSize:13,fontWeight:700,cursor:"pointer"}}>
+                ⊘ Annulla ordine
+              </button>
+            ) : (
+              <div style={{background:"rgba(200,75,58,0.08)",border:`1px solid ${C.danger}`,borderRadius:9,padding:16}}>
+                <div style={{fontSize:13.5,fontWeight:700,color:C.danger,marginBottom:10}}>Confermi l'annullamento dell'ordine?</div>
+                <div style={{display:"flex",gap:10}}>
+                  <button onClick={()=>annullaOrdine(selezionato.id)} style={{flex:1,padding:"12px",background:C.danger,color:"#fff",border:"none",borderRadius:8,fontSize:13.5,fontWeight:700,cursor:"pointer"}}>Sì, annulla</button>
+                  <button onClick={()=>setConfermaAnnulla(false)} style={{flex:1,padding:"12px",background:"#fff",color:C.steel,border:`1px solid ${C.paperLine}`,borderRadius:8,fontSize:13.5,fontWeight:600,cursor:"pointer"}}>Torna indietro</button>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {RUOLI_APPROVATORI.includes(ruolo) && (
+          <div style={{marginTop:12,paddingTop:16,borderTop:`1px solid ${C.paperLine}`}}>
+            {!confermaEliminaOrdine ? (
+              <button onClick={()=>setConfermaEliminaOrdine(true)} style={{width:"100%",padding:"14px",background:C.danger,color:"#fff",border:"none",borderRadius:9,fontSize:14,fontWeight:700,cursor:"pointer"}}>
+                🗑 Elimina ordine
+              </button>
+            ) : (
+              <div style={{background:"rgba(200,75,58,0.08)",border:`1px solid ${C.danger}`,borderRadius:9,padding:16}}>
+                <div style={{fontSize:13.5,fontWeight:700,color:C.danger,marginBottom:6}}>Confermi l'eliminazione definitiva?</div>
+                <div style={{fontSize:12.5,color:C.steel,marginBottom:14}}>
+                  L'ordine {codiceOrdine(selezionato)}{selezionato.cliente?` (${selezionato.cliente})`:""} verrà cancellato per sempre. L'operazione non è reversibile.
+                </div>
+                <div style={{display:"flex",gap:10}}>
+                  <button onClick={()=>eliminaOrdine(selezionato.id)} style={{flex:1,padding:"12px",background:C.danger,color:"#fff",border:"none",borderRadius:8,fontSize:13.5,fontWeight:700,cursor:"pointer"}}>Sì, elimina definitivamente</button>
+                  <button onClick={()=>setConfermaEliminaOrdine(false)} style={{flex:1,padding:"12px",background:"#fff",color:C.steel,border:`1px solid ${C.paperLine}`,borderRadius:8,fontSize:13.5,fontWeight:600,cursor:"pointer"}}>Annulla</button>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
       </div>
     );
   }
@@ -3466,7 +3529,7 @@ ${o.firma_cliente ? `
           </div>
           <div style={{textAlign:"right",flexShrink:0}}>
             <div className="tnum" style={{fontWeight:700,fontSize:14,fontFamily:F_MONO}}>€{o.val.toLocaleString("it-IT")}</div>
-            <Tag tone={o.stato==="Da evadere"?"warn":"ok"} style={{marginTop:5}}>{o.stato}</Tag>
+            <Tag tone={o.stato==="Annullato"?"danger":o.stato==="Da evadere"?"warn":"ok"} style={{marginTop:5}}>{o.stato}</Tag>
           </div>
         </div>
       ))}
