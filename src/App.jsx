@@ -6673,7 +6673,7 @@ function GestioneListinoCompleto({ sessione }){
         sotto "DA COMPLETARE" nel Catalogo.
       </div>
 
-      <textarea value={testo} onChange={e=>{setTesto(e.target.value); setRisultato(null); setStato("idle"); setConfermaAperta(false);}} rows={10} placeholder={"GEA99001;KLEAN X200;GEATEK;;PZ;450.00\nGEA10030;KAMBIO KNX;GEATEK;;PZ;3850.00"} className="tnum" style={{...S.inp,fontFamily:F_MONO,fontSize:11.5,resize:"vertical",marginBottom:10}}/>
+      <textarea value={testo} onChange={e=>{setTesto(e.target.value); setRisultato(null); setStato("idle"); setConfermaAperta(false);}} rows={10} placeholder={"Esempio — incolla qui il tuo elenco:\nGEA99001;KLEAN X200;GEATEK;;PZ;450.00\nGEA10030;KAMBIO KNX;GEATEK;;PZ;3850.00"} className="tnum" style={{...S.inp,fontFamily:F_MONO,fontSize:11.5,resize:"vertical",marginBottom:10}}/>
 
       <div style={{marginBottom:14}}>
         <label style={{fontSize:11,fontFamily:F_MONO,color:"#9AA3AB",textTransform:"uppercase",letterSpacing:"0.05em",display:"block",marginBottom:4}}>
