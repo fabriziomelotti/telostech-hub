@@ -164,14 +164,18 @@ const DEMO_INTERVENTI = [
 // Stati possibili di un preventivo, in ordine di avanzamento del ciclo di vita
 const STATI_PREVENTIVO = ["Bozza","Inviato"];
 const STATO_COLORE = { "Bozza":"steel", "Inviato":"warn", "Convertito in ordine":"primary", "Saltato":"danger", "Sospeso":"warn" };
-// Ciclo ordine: Convertito in ordine (preventivo) → "In attesa di invio"
-// (chi vende compila il modulo logistico) → "Da evadere" (magazzino) →
-// "Evaso". "Annullato" possibile in qualunque momento.
+// Ciclo ordine: Convertito in ordine (preventivo) o creazione manuale →
+// "Inserito" (chi vende compila il modulo logistico e "Segna come
+// inviato") → "Inviato" (in attesa che un responsabile lo prenda in
+// carico) → "In gestione" (responsabile al lavoro: date previste,
+// eventuali modifiche, assegnazione tecnico) → "Evaso". "Sospeso" e
+// "Annullato" possibili in qualunque momento.
 function toneOrdine(stato){
   if(stato==="Annullato") return "danger";
   if(stato==="Sospeso") return "warn";
-  if(stato==="In attesa di invio") return "steel";
-  if(stato==="Da evadere") return "warn";
+  if(stato==="Inserito") return "steel";
+  if(stato==="Inviato") return "primary";
+  if(stato==="In gestione") return "warn";
   return "ok"; // Evaso
 }
 // I 5 casi logistici da definire una volta per l'intero ordine prima
@@ -632,9 +636,9 @@ export default function App(){
           {area==="ai" && <AIChat msgs={msgs} msgInput={msgInput} setMsgInput={setMsgInput} sendMsg={sendMsg} aiTyping={aiTyping}/>}
           {area==="prodotti" && <Prodotti cart={cart} setCart={setCart} catalog={catalog} catalogLoading={catalogLoading} sessione={sessione} ruolo={role} setCatalog={setCatalog} setArea={setArea}/>}
           {area==="clienti" && <Clienti sessione={sessione} preventivi={preventivi} ordini={ordini} attrezzature={attrezzature} setAttrezzature={setAttrezzature} interventi={interventi} setInterventi={setInterventi} catalog={catalog} ruolo={role}/>}
-          {area==="promemoria" && <Promemoria sessione={sessione} ruolo={role} preventivi={preventivi} interventi={interventi} promemoria={promemoria} setPromemoria={setPromemoria} setArea={setArea}/>}
+          {area==="promemoria" && <Promemoria sessione={sessione} ruolo={role} preventivi={preventivi} interventi={interventi} ordini={ordini} promemoria={promemoria} setPromemoria={setPromemoria} setArea={setArea}/>}
           {area==="preventivi" && <Preventivi cart={cart} setCart={setCart} preventivi={preventivi} setPreventivi={setPreventivi} setOrdini={setOrdini} setArea={setArea} ruolo={role} catalog={catalog} sessione={sessione}/>}
-          {area==="ordini" && <Ordini ordini={ordini} setOrdini={setOrdini} preventivi={preventivi} setPreventivi={setPreventivi} catalog={catalog} sessione={sessione} ruolo={role}/>}
+          {area==="ordini" && <Ordini ordini={ordini} setOrdini={setOrdini} preventivi={preventivi} setPreventivi={setPreventivi} setInterventi={setInterventi} catalog={catalog} sessione={sessione} ruolo={role}/>}
           {area==="interventi" && <Interventi interventi={interventi} setInterventi={setInterventi} attrezzature={attrezzature} sessione={sessione} setArea={setArea} setInterventoDaCompletare={setInterventoDaCompletare}/>}
           {area==="rapporti" && <RapportoDemo sessione={sessione} interventi={interventi} setInterventi={setInterventi} interventoDaCompletare={interventoDaCompletare} setInterventoDaCompletare={setInterventoDaCompletare}/>}
           {area==="analytics" && RUOLI_APPROVATORI.includes(role) && <CondizioniAcquisto/>}
@@ -2001,7 +2005,7 @@ function Clienti({sessione, preventivi, ordini, attrezzature, setAttrezzature, i
 // admin — stesso schema di visibilità già usato per "Saltati"). A questi si
 // affiancano le sezioni automatiche, calcolate al volo da preventivi/
 // interventi (vedi funzioni sopra Home) e non salvate da nessuna parte.
-function Promemoria({sessione, ruolo, preventivi, interventi, promemoria, setPromemoria, setArea}){
+function Promemoria({sessione, ruolo, preventivi, interventi, ordini, promemoria, setPromemoria, setArea}){
   const accessToken = trovaAccessToken(sessione);
   const puoVedereTeam = ruolo==="responsabile" || ruolo==="admin";
   const [vistaTeam,setVistaTeam] = useState(false);
@@ -2031,6 +2035,10 @@ function Promemoria({sessione, ruolo, preventivi, interventi, promemoria, setPro
   const mostraTecnico = ruolo==="tecnico" || ruolo==="responsabile" || ruolo==="admin";
   const daGestirePrev = useMemo(()=>preventiviDaGestire(preventivi),[preventivi]);
   const daRecuperareVicine = useMemo(()=>trattativeDaRecuperareVicine(preventivi),[preventivi]);
+  // Ordini con una segnalazione del responsabile ancora da leggere, creati
+  // dall'utente corrente (vedi "nota_responsabile"/"avviso_commerciale" in
+  // Ordini → In gestione).
+  const ordiniConAvviso = useMemo(()=>(ordini||[]).filter(o=>o.avviso_commerciale && o.creato_da_nome===sessione?.nome),[ordini,sessione]);
   const interventiGestireList = useMemo(()=>interventiDaGestire(interventi),[interventi]);
   const interventiScadenzaList = useMemo(()=>interventiScadenzaVicina(interventi),[interventi]);
   const interventiMancaList = useMemo(()=>interventiMancaInfo(interventi),[interventi]);
@@ -2152,6 +2160,19 @@ function Promemoria({sessione, ruolo, preventivi, interventi, promemoria, setPro
       </div>
     );
   }
+  function rigaOrdineAvviso(o){
+    return (
+      <div key={o.id} onClick={()=>setArea("ordini")} style={{...S.card,borderLeft:`3px solid ${C.warn}`}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:10}}>
+          <div style={{minWidth:0}}>
+            <div style={{fontWeight:600,fontSize:13.5}}>{o.cliente || "Cliente non specificato"}</div>
+            <div style={{fontSize:11.5,color:"#8a6418",marginTop:2}}>ⓘ {o.nota_responsabile}</div>
+          </div>
+          <span className="tnum" style={{fontFamily:F_MONO,fontSize:13,fontWeight:600,flexShrink:0}}>€{o.val.toLocaleString("it-IT")}</span>
+        </div>
+      </div>
+    );
+  }
   function rigaIntervento(i, badgeTesto, tono){
     return (
       <div key={i.id} onClick={()=>setArea("interventi")} style={{...S.card,borderLeft:`3px solid ${tono}`}}>
@@ -2167,7 +2188,7 @@ function Promemoria({sessione, ruolo, preventivi, interventi, promemoria, setPro
     );
   }
 
-  const tuttoVuoto = aperti.length===0 && !(mostraCommerciale && (daRecuperareVicine.length>0||daGestirePrev.length>0))
+  const tuttoVuoto = aperti.length===0 && !(mostraCommerciale && (daRecuperareVicine.length>0||daGestirePrev.length>0||ordiniConAvviso.length>0))
     && !(mostraTecnico && (interventiMancaList.length>0||interventiScadenzaList.length>0||interventiGestireList.length>0));
 
   return (
@@ -2216,6 +2237,10 @@ function Promemoria({sessione, ruolo, preventivi, interventi, promemoria, setPro
       {aperti.length===0 && <div style={{fontSize:12.5,color:"#9AA3AB",padding:"4px 0 8px"}}>Nessun promemoria aperto.</div>}
       {aperti.map(rigaPromemoria)}
 
+      {mostraCommerciale && ordiniConAvviso.length>0 && (<>
+        <div style={{...S.eyebrow,marginTop:22,marginBottom:8}}>Ordini con una segnalazione ({ordiniConAvviso.length})</div>
+        {ordiniConAvviso.map(rigaOrdineAvviso)}
+      </>)}
       {mostraCommerciale && daRecuperareVicine.length>0 && (<>
         <div style={{...S.eyebrow,marginTop:22,marginBottom:8}}>Trattative da recuperare a breve ({daRecuperareVicine.length})</div>
         {daRecuperareVicine.map(rigaTrattativa)}
@@ -3480,7 +3505,8 @@ function Preventivi({cart,setCart,preventivi,setPreventivi,setOrdini,setArea,ruo
       cliente_codice: p.cliente_codice || null,
       righe: p.righe,
       val: p.val,
-      stato: "In attesa di invio",
+      stato: "Inserito",
+      creato_da_nome: sessione?.nome || null,
       firma_cliente: p.firma_cliente,
       firma_data: p.firma_data,
       firma_nome: p.firma_nome,
@@ -4378,7 +4404,7 @@ function PreventiviSaltati({preventivi}){
 }
 
 // ─── ORDINI ───────────────────────────────────────────────────────────────────
-function Ordini({ordini,setOrdini,preventivi,setPreventivi,catalog,sessione,ruolo}){
+function Ordini({ordini,setOrdini,preventivi,setPreventivi,setInterventi,catalog,sessione,ruolo}){
   const [selId,setSelId]=useState(null);
   const [erroreSync,setErroreSync]=useState("");
   const [confermaSospendi,setConfermaSospendi]=useState(false);
@@ -4420,7 +4446,8 @@ function Ordini({ordini,setOrdini,preventivi,setPreventivi,catalog,sessione,ruol
       cliente_codice: nuovoClienteLibero ? null : (nuovoCliente?.codice || null),
       righe: nuoveRighe,
       val: ricalcolaVal(nuoveRighe),
-      stato: "In attesa di invio",
+      stato: "Inserito",
+      creato_da_nome: sessione?.nome || null,
     };
     try{
       const [salvato] = await sbAuth("POST","ordini","",payload,accessToken);
@@ -4431,6 +4458,118 @@ function Ordini({ordini,setOrdini,preventivi,setPreventivi,catalog,sessione,ruol
       setErroreNuovo("Salvataggio non riuscito: "+err.message);
     }
     setSalvandoNuovo(false);
+  }
+
+  // ── "In gestione": presa in carico da responsabile/admin ────────────────
+  async function prendiInCarico(id){
+    if(!RUOLI_APPROVATORI.includes(ruolo)) return;
+    setErroreSync("");
+    const o = ordini.find(x=>x.id===id);
+    if(!o) return;
+    const nome = sessione?.nome || null;
+    setOrdini(prev=>prev.map(x=>x.id===id?{...x,stato:"In gestione",gestito_da_nome:nome}:x));
+    try{
+      await sbAuth("PATCH","ordini",`id=eq.${id}`,{stato:"In gestione",gestito_da_nome:nome},accessToken);
+    }catch(err){
+      setOrdini(prev=>prev.map(x=>x.id===id?{...x,stato:o.stato,gestito_da_nome:o.gestito_da_nome}:x)); // rollback
+      setErroreSync("Non sono riuscito a mettere in carico l'ordine: "+err.message);
+    }
+  }
+
+  // Date previste, nota per il commerciale, assegnazione tecnico per
+  // l'installazione — tutto compilabile da responsabile/admin mentre
+  // l'ordine è "In gestione". Stato locale reinizializzato a ogni
+  // selezione (vedi useEffect più sotto).
+  const [dataFornitoreForm,setDataFornitoreForm] = useState("");
+  const [dataClienteForm,setDataClienteForm] = useState("");
+  const [notaResponsabileForm,setNotaResponsabileForm] = useState("");
+  const [salvandoGestione,setSalvandoGestione] = useState(false);
+  const [msgGestione,setMsgGestione] = useState("");
+  const [utentiTelos,setUtentiTelos] = useState(null);
+  const [tecnicoScelto,setTecnicoScelto] = useState("");
+  const [interventoCreato,setInterventoCreato] = useState(false);
+  useEffect(()=>{
+    if(!selezionato){
+      setDataFornitoreForm(""); setDataClienteForm(""); setNotaResponsabileForm("");
+      setTecnicoScelto(""); setInterventoCreato(false); setMsgGestione("");
+      return;
+    }
+    setDataFornitoreForm(selezionato.data_consegna_fornitore_prevista || "");
+    setDataClienteForm(selezionato.data_consegna_cliente_prevista || "");
+    setNotaResponsabileForm("");
+    setTecnicoScelto("");
+    setInterventoCreato(false);
+    setMsgGestione("");
+  },[selId]);
+  useEffect(()=>{
+    if(!RUOLI_APPROVATORI.includes(ruolo) || utentiTelos!==null) return;
+    chiamaUtentiInfo(accessToken).then(d=>setUtentiTelos(d?.utenti ?? [])).catch(()=>setUtentiTelos([]));
+  },[ruolo]);
+
+  async function salvaDateGestione(){
+    if(!selezionato) return;
+    setSalvandoGestione(true); setMsgGestione("");
+    const payload = {
+      data_consegna_fornitore_prevista: dataFornitoreForm || null,
+      data_consegna_cliente_prevista: dataClienteForm || null,
+    };
+    try{
+      await sbAuth("PATCH","ordini",`id=eq.${selezionato.id}`,payload,accessToken);
+      setOrdini(prev=>prev.map(o=>o.id===selezionato.id?{...o,...payload}:o));
+      setMsgGestione("Date salvate.");
+    }catch(err){
+      setMsgGestione("Errore: "+err.message);
+    }
+    setSalvandoGestione(false);
+  }
+  // Segnala una modifica al commerciale che ha inviato l'ordine (banner al
+  // prossimo accesso, vedi "avviso_commerciale" nel dettaglio ordine).
+  async function segnalaAlCommerciale(){
+    if(!selezionato || !notaResponsabileForm.trim()) return;
+    setSalvandoGestione(true); setMsgGestione("");
+    const payload = { nota_responsabile: notaResponsabileForm.trim(), avviso_commerciale: true };
+    try{
+      await sbAuth("PATCH","ordini",`id=eq.${selezionato.id}`,payload,accessToken);
+      setOrdini(prev=>prev.map(o=>o.id===selezionato.id?{...o,...payload}:o));
+      setNotaResponsabileForm("");
+      setMsgGestione("Segnalazione inviata.");
+    }catch(err){
+      setMsgGestione("Errore: "+err.message);
+    }
+    setSalvandoGestione(false);
+  }
+  function chiudiAvvisoCommerciale(){
+    if(!selezionato) return;
+    const payload = { avviso_commerciale: false };
+    setOrdini(prev=>prev.map(o=>o.id===selezionato.id?{...o,...payload}:o));
+    sbAuth("PATCH","ordini",`id=eq.${selezionato.id}`,payload,accessToken).catch(()=>{});
+  }
+  // Crea l'intervento pianificato di installazione, assegnato al tecnico
+  // scelto — compare da subito nel menu Interventi.
+  async function creaInterventoInstallazione(){
+    if(!selezionato || !tecnicoScelto) return;
+    setSalvandoGestione(true); setMsgGestione("");
+    const payload = {
+      tipo: "installazione",
+      cliente_codice: selezionato.cliente_codice || null,
+      cliente_nome: selezionato.cliente,
+      stato: "Pianificato",
+      priorita: "media",
+      data_pianificata: dataClienteForm || null,
+      note: `Installazione da ordine ${codiceOrdine(selezionato)}`,
+      tecnico_assegnato_nome: tecnicoScelto,
+      ordine_id: selezionato.id,
+      creato_da_nome: sessione?.nome || null,
+    };
+    try{
+      const [salvato] = await sbAuth("POST","interventi","",payload,accessToken);
+      if(setInterventi) setInterventi(prev=>[salvato,...prev]);
+      setInterventoCreato(true);
+      setMsgGestione(`Intervento creato e assegnato a ${tecnicoScelto}.`);
+    }catch(err){
+      setMsgGestione("Errore: "+err.message);
+    }
+    setSalvandoGestione(false);
   }
 
   // ── Modulo logistico pre-invio (vedi CAMPI_LOGISTICA_ORDINE) ───────────
@@ -4543,7 +4682,7 @@ function Ordini({ordini,setOrdini,preventivi,setPreventivi,catalog,sessione,ruol
       ...formLogistica,
       rottamazione_valore: formLogistica.rottamazione_valore===""?null:Number(formLogistica.rottamazione_valore),
       dettagli_invio_completati: true,
-      stato: "Da evadere",
+      stato: "Inviato",
     };
     try{
       await sbAuth("PATCH","ordini",`id=eq.${selezionato.id}`,payload,accessToken);
@@ -4606,7 +4745,7 @@ function Ordini({ordini,setOrdini,preventivi,setPreventivi,catalog,sessione,ruol
     setErroreSync("");
     const o = ordini.find(x=>x.id===id);
     if(!o) return;
-    const statoRipristinato = o.stato_prima_sospensione || "Da evadere";
+    const statoRipristinato = o.stato_prima_sospensione || "Inserito";
     setOrdini(prev=>prev.map(x=>x.id===id?{...x,stato:statoRipristinato,stato_prima_sospensione:null}:x));
     const preventivoCollegato = o.preventivo_id ? (preventivi||[]).find(p=>p.id===o.preventivo_id) : null;
     if(preventivoCollegato && setPreventivi){
@@ -4758,16 +4897,32 @@ ${o.firma_cliente ? `
   }
 
   if(selezionato){
+    // Righe modificabili: sempre mentre "Sospeso", oppure mentre "In
+    // gestione" ma solo per chi la sta gestendo (responsabile/admin) — un
+    // commerciale che riapre un ordine in gestione lo vede in sola lettura.
+    const righeEditabili = selezionato.stato==="Sospeso" || (selezionato.stato==="In gestione" && RUOLI_APPROVATORI.includes(ruolo));
     return (
       <div>
         <button onClick={()=>setSelId(null)} style={{...S.btnS,marginBottom:14}}>← Tutti gli ordini</button>
         {erroreSync && <div style={{fontSize:12,color:C.danger,background:"rgba(200,75,58,0.08)",borderRadius:6,padding:"9px 11px",marginBottom:14}}>⚠ {erroreSync}</div>}
+        {selezionato.avviso_commerciale && (
+          <div style={{background:"rgba(217,164,65,0.14)",border:`1px solid ${C.warn}`,borderRadius:9,padding:14,marginBottom:16}}>
+            <div style={{fontSize:12.5,fontWeight:700,color:"#8a6418",marginBottom:6}}>⚠ Il responsabile ha segnalato una modifica</div>
+            <div style={{fontSize:12.5,color:"#3A4248",marginBottom:10,lineHeight:1.5}}>{selezionato.nota_responsabile}</div>
+            <button onClick={chiudiAvvisoCommerciale} style={{...S.btnS,padding:"7px 12px",fontSize:12}}>Ho visto</button>
+          </div>
+        )}
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:6}}>
           <div className="tnum" style={{fontFamily:F_MONO,fontSize:12,color:"#9AA3AB"}}>{codiceOrdine(selezionato)}</div>
           <Tag tone={toneOrdine(selezionato.stato)}>{selezionato.stato}</Tag>
         </div>
         <div style={{fontFamily:F_DISPLAY,fontSize:19,fontWeight:600,marginBottom:4}}>{selezionato.cliente}</div>
-        <div style={{fontSize:11.5,color:"#8A929A",marginBottom:14}}>Da preventivo {codicePreventivoRif(selezionato)} · creato il {selezionato.creato_il ? new Date(selezionato.creato_il).toLocaleDateString("it-IT") : ""}</div>
+        <div style={{fontSize:11.5,color:"#8A929A",marginBottom:4}}>
+          {selezionato.preventivo_id ? `Da preventivo ${codicePreventivoRif(selezionato)}` : "Creato manualmente"} · creato il {selezionato.creato_il ? new Date(selezionato.creato_il).toLocaleDateString("it-IT") : ""}{selezionato.creato_da_nome?` da ${selezionato.creato_da_nome}`:""}
+        </div>
+        {selezionato.gestito_da_nome && (
+          <div style={{fontSize:11.5,color:"#8A929A",marginBottom:14}}>In gestione da <strong>{selezionato.gestito_da_nome}</strong></div>
+        )}
 
         {selezionato.firma_cliente && (
           <div style={{...S.card,cursor:"default",marginBottom:16}}>
@@ -4778,12 +4933,17 @@ ${o.firma_cliente ? `
           </div>
         )}
         <div style={S.eyebrow}>Articoli ({selezionato.righe.length})</div>
-        {selezionato.stato==="Sospeso" && (
+        {righeEditabili && selezionato.stato==="Sospeso" && (
           <div style={{fontSize:11.5,color:"#8a6418",background:"rgba(217,164,65,0.14)",borderRadius:6,padding:"9px 11px",marginBottom:10}}>
             ⓘ Ordine sospeso: articoli, quantità e prezzi sono modificabili finché non lo riattivi.
           </div>
         )}
-        {selezionato.stato==="Sospeso" && (
+        {righeEditabili && selezionato.stato==="In gestione" && (
+          <div style={{fontSize:11.5,color:"#8a6418",background:"rgba(217,164,65,0.14)",borderRadius:6,padding:"9px 11px",marginBottom:10}}>
+            ⓘ Puoi correggere articoli, quantità e prezzi mentre gestisci l'ordine.
+          </div>
+        )}
+        {righeEditabili && (
           <RicercaProdottiInline onSeleziona={aggiungiRigaOrdine} righeEsistenti={selezionato.righe} ruolo={ruolo} catalog={catalog} sessione={sessione}/>
         )}
         {selezionato.righe.map(r=>(
@@ -4792,11 +4952,11 @@ ${o.firma_cliente ? `
               <div>
                 <Tag tone="steel">{r.mar}</Tag>
                 <div style={{fontWeight:600,fontSize:13,marginTop:4}}>{r.nome}</div>
-                {selezionato.stato!=="Sospeso" && <div className="tnum" style={{fontSize:11,color:"#9AA3AB",marginTop:2}}>€{r.netto.toFixed(2)} × {r.qty||1}</div>}
+                {!righeEditabili && <div className="tnum" style={{fontSize:11,color:"#9AA3AB",marginTop:2}}>€{r.netto.toFixed(2)} × {r.qty||1}</div>}
               </div>
               <span className="tnum" style={{fontWeight:700,fontFamily:F_MONO,fontSize:14}}>€{(r.netto*(r.qty||1)).toFixed(2)}</span>
             </div>
-            {selezionato.stato==="Sospeso" && (
+            {righeEditabili && (
               <div style={{display:"flex",gap:8,alignItems:"center",marginTop:10,paddingTop:10,borderTop:`1px solid ${C.paperLine}`}}>
                 <div style={{flex:"0 0 70px"}}>
                   <label style={{fontSize:10,fontFamily:F_MONO,color:"#9AA3AB"}}>Qtà</label>
@@ -4816,7 +4976,7 @@ ${o.firma_cliente ? `
           <span className="tnum" style={{fontWeight:700,fontSize:18,fontFamily:F_MONO,color:C.ink}}>€{selezionato.val.toFixed(2)}</span>
         </div>
 
-        {selezionato.stato==="In attesa di invio" && (
+        {selezionato.stato==="Inserito" && (
           <div style={{...S.card,cursor:"default",border:`1px solid ${C.ink}`,marginBottom:16}}>
             <div style={S.eyebrow}>Prima dell'invio</div>
             <div style={{fontSize:12.5,color:C.steel,marginTop:4,marginBottom:16,lineHeight:1.6}}>
@@ -4925,12 +5085,12 @@ ${o.firma_cliente ? `
 
             {erroreInvio && <div style={{fontSize:12,color:C.danger,background:"rgba(200,75,58,0.08)",borderRadius:6,padding:"9px 11px",marginTop:14,marginBottom:4}}>⚠ {erroreInvio}</div>}
             <button onClick={confermaInvio} disabled={salvandoInvio||caricandoFoto} style={{...S.btnAccent,width:"100%",padding:"13px",marginTop:14,opacity:(salvandoInvio||caricandoFoto)?0.6:1}}>
-              {salvandoInvio?"Salvo…":"✓ Conferma e invia"}
+              {salvandoInvio?"Salvo…":"✓ Segna come inviato"}
             </button>
           </div>
         )}
 
-        {selezionato.dettagli_invio_completati && selezionato.stato!=="In attesa di invio" && (
+        {selezionato.dettagli_invio_completati && selezionato.stato!=="Inserito" && (
           <div style={{...S.card,cursor:"default",marginBottom:16}}>
             <div style={S.eyebrow}>Dettagli invio</div>
             <div style={{display:"flex",flexDirection:"column",gap:6,marginTop:6,fontSize:12.5,color:C.charcoal}}>
@@ -4945,8 +5105,54 @@ ${o.firma_cliente ? `
             </div>
           </div>
         )}
+        {RUOLI_APPROVATORI.includes(ruolo) && selezionato.stato==="In gestione" && (
+          <div style={{...S.card,cursor:"default",border:`1px solid ${C.ink}`,marginBottom:16}}>
+            <div style={S.eyebrow}>Gestione ordine</div>
+            <div style={{display:"flex",gap:10,flexWrap:"wrap",marginTop:8,marginBottom:14}}>
+              <div style={{flex:"1 1 160px"}}>
+                <label style={{fontSize:11,fontFamily:F_MONO,color:"#9AA3AB",textTransform:"uppercase",letterSpacing:"0.05em",display:"block",marginBottom:4}}>Consegna prevista dal fornitore</label>
+                <input type="date" value={dataFornitoreForm} onChange={e=>setDataFornitoreForm(e.target.value)} style={S.inp}/>
+                <div style={{fontSize:10.5,color:"#9AA3AB",marginTop:3}}>Solo per tuo promemoria</div>
+              </div>
+              <div style={{flex:"1 1 160px"}}>
+                <label style={{fontSize:11,fontFamily:F_MONO,color:"#9AA3AB",textTransform:"uppercase",letterSpacing:"0.05em",display:"block",marginBottom:4}}>Consegna prevista al cliente</label>
+                <input type="date" value={dataClienteForm} onChange={e=>setDataClienteForm(e.target.value)} style={S.inp}/>
+              </div>
+            </div>
+            <button onClick={salvaDateGestione} disabled={salvandoGestione} style={{...S.btnS,padding:"8px 14px",fontSize:12,marginBottom:18}}>Salva date</button>
+
+            <div style={{paddingTop:14,borderTop:`1px solid ${C.paperLine}`,marginBottom:18}}>
+              <div style={{fontSize:12.5,fontWeight:600,marginBottom:8}}>Segnala qualcosa al commerciale</div>
+              <textarea value={notaResponsabileForm} onChange={e=>setNotaResponsabileForm(e.target.value)} placeholder="Es. manca l'indirizzo di consegna, verificare disponibilità…" rows={2} style={{...S.inp,resize:"vertical",marginBottom:8}}/>
+              <button onClick={segnalaAlCommerciale} disabled={!notaResponsabileForm.trim()||salvandoGestione} style={{...S.btnS,padding:"8px 14px",fontSize:12,opacity:notaResponsabileForm.trim()?1:0.5}}>Invia segnalazione</button>
+            </div>
+
+            {selezionato.installazione_attiva && (
+              <div style={{paddingTop:14,borderTop:`1px solid ${C.paperLine}`}}>
+                <div style={{fontSize:12.5,fontWeight:600,marginBottom:8}}>Assegna installazione a un tecnico</div>
+                {interventoCreato ? (
+                  <div style={{fontSize:12,color:C.ok}}>✓ Intervento creato — visibile nel menu Interventi.</div>
+                ) : (
+                  <>
+                    <select value={tecnicoScelto} onChange={e=>setTecnicoScelto(e.target.value)} style={{...S.inp,marginBottom:8}}>
+                      <option value="">— scegli un tecnico —</option>
+                      {(utentiTelos||[]).map(u=>(<option key={u.id} value={`${u.nome} ${u.cognome||""}`.trim()}>{u.nome} {u.cognome} {u.ruolo?`(${u.ruolo})`:""}</option>))}
+                    </select>
+                    <button onClick={creaInterventoInstallazione} disabled={!tecnicoScelto||salvandoGestione} style={{...S.btnAccent,padding:"9px 15px",fontSize:12.5,opacity:tecnicoScelto?1:0.5}}>Crea intervento pianificato</button>
+                  </>
+                )}
+              </div>
+            )}
+
+            {msgGestione && <div style={{fontSize:12,color:C.steel,marginTop:12}}>{msgGestione}</div>}
+          </div>
+        )}
+
         <div style={{display:"flex",flexDirection:"column",gap:8}}>
-          {selezionato.stato==="Da evadere" && (
+          {RUOLI_APPROVATORI.includes(ruolo) && selezionato.stato==="Inviato" && (
+            <button onClick={()=>prendiInCarico(selezionato.id)} style={{...S.btnAccent,padding:"13px"}}>📋 Prendi in carico</button>
+          )}
+          {selezionato.stato==="In gestione" && (
             <button onClick={()=>setStato(selezionato.id,"Evaso")} style={{...S.btnAccent,padding:"12px",background:C.ok,color:"#fff"}}>✓ Segna come evaso</button>
           )}
           <button onClick={()=>generaOrdinePDF(selezionato)} style={{...S.btnAccent,padding:"12px"}}>📄 Invia ordine in PDF</button>
@@ -5031,7 +5237,7 @@ ${o.firma_cliente ? `
           <div style={S.eyebrow}>Nuovo ordine (senza preventivo)</div>
           <div style={{fontSize:11.5,color:"#9AA3AB",marginTop:4,marginBottom:12,lineHeight:1.5}}>
             Per ordini nati fuori dal normale ciclo preventivo → conferma. Entrerà comunque in
-            "In attesa di invio", con lo stesso modulo logistico degli altri.
+            "Inserito", con lo stesso modulo logistico degli altri.
           </div>
 
           {nuovoClienteLibero ? (
