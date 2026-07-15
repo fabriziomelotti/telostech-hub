@@ -2877,7 +2877,6 @@ function generaPreventivoPDF(righe, total, meta={}){
     ${meta.finanziamento_tipo==="noleggio" && meta.finanziamento_riscatto!=null ? `<div class="finanziamento-nota">Riscatto finale (1% imponibile): €${meta.finanziamento_riscatto.toFixed(2)}</div>` : ""}
   ` : "";
 
-  const w = window.open("", "_blank");
   const html = `<!DOCTYPE html><html><head><meta charset="utf-8"/><title>Preventivo ${codiceMostrato}</title>
 <style>
   @page{size:A4;margin:0}
@@ -2886,6 +2885,12 @@ function generaPreventivoPDF(righe, total, meta={}){
   body{font-family:Arial,sans-serif;color:#232323;font-size:12.5px}
   .pagina{width:210mm;min-height:297mm;padding:14mm 16mm;page-break-after:always;display:flex;flex-direction:column}
   .pagina:last-child{page-break-after:auto}
+
+  .barra-azioni{position:fixed;bottom:0;left:0;right:0;display:flex;gap:10px;justify-content:center;padding:12px 16px calc(env(safe-area-inset-bottom) + 12px);background:rgba(14,26,64,0.92);backdrop-filter:blur(6px);z-index:999}
+  .barra-azioni button{font-family:Arial,sans-serif;font-size:14px;font-weight:600;padding:10px 20px;border-radius:8px;border:none;cursor:pointer}
+  .barra-azioni .btn-stampa{background:#57CECA;color:#0E1A40}
+  .barra-azioni .btn-chiudi{background:rgba(255,255,255,0.15);color:#fff}
+  @media print{ .barra-azioni{display:none} body{padding-bottom:0} }
 
   /* ── Copertina ── */
   .cover{text-align:center;align-items:center;padding-top:0}
@@ -2954,6 +2959,10 @@ function generaPreventivoPDF(righe, total, meta={}){
   .firma-digitale img{max-width:200px;max-height:80px;display:block;margin-top:6px}
   .firma-digitale-nota{font-size:9.5px;color:#7C879E;margin-top:6px;font-style:italic}
 </style></head><body>
+<div class="barra-azioni no-print">
+  <button class="btn-stampa" onclick="window.print()">🖶 Stampa / Salva PDF</button>
+  <button class="btn-chiudi" onclick="window.close()">✕ Chiudi</button>
+</div>
 
 ${meta.includi_copertina!==false ? `
 <div class="pagina cover">
@@ -3057,8 +3066,15 @@ ${meta.includi_copertina!==false ? `
 })();
 </script>
 </body></html>`;
-  w.document.write(html);
-  w.document.close();
+  // Su iOS Safari, window.open("","_blank") + document.write() produce una
+  // scheda "orfana" senza la normale barra degli strumenti (niente
+  // condividi/stampa/indietro): la pagina resta intrappolata. Navigando
+  // invece verso un vero URL blob:, Safari la tratta come una pagina web
+  // normale con tutti i controlli. Il pulsante "Stampa/Salva PDF" nella
+  // pagina resta comunque disponibile come innesco esplicito, più
+  // affidabile dell'avvio automatico su mobile.
+  const url = URL.createObjectURL(new Blob([html], {type:"text/html"}));
+  window.open(url, "_blank");
 }
 
 // ─── RICERCA PRODOTTI INLINE (per aggiungere articoli a un preventivo bozza) ──
@@ -4870,7 +4886,6 @@ function Ordini({ordini,setOrdini,preventivi,setPreventivi,setInterventi,catalog
       <td style="padding:8px 6px;border-bottom:1px solid #E3E5EA;font-size:12px;font-family:monospace">${r.cod}</td>
       <td style="padding:8px 6px;border-bottom:1px solid #E3E5EA;font-size:12px;text-align:center">${r.qty||1}</td>
       <td style="padding:8px 6px;border-bottom:1px solid #E3E5EA;font-size:12px;text-align:right">€${(r.netto*(r.qty||1)).toFixed(2)}</td></tr>`).join("");
-    const w = window.open("", "_blank");
     const html = `<!DOCTYPE html><html><head><title>Ordine ${codiceOrdine(o)}</title>
 <style>
   *{box-sizing:border-box;margin:0;padding:0}
@@ -4885,7 +4900,16 @@ function Ordini({ordini,setOrdini,preventivi,setPreventivi,setInterventi,catalog
   .firma img{max-width:200px;max-height:80px;display:block}
   .firma-nota{font-size:10px;color:#7C879E;margin-top:6px;font-style:italic}
   .footer{margin-top:32px;font-size:10px;color:#9AA3AB;border-top:1px solid #E3E5EA;padding-top:10px}
+  .barra-azioni{position:fixed;bottom:0;left:0;right:0;display:flex;gap:10px;justify-content:center;padding:12px 16px calc(env(safe-area-inset-bottom) + 12px);background:rgba(14,26,64,0.92);backdrop-filter:blur(6px);z-index:999}
+  .barra-azioni button{font-family:Arial,sans-serif;font-size:14px;font-weight:600;padding:10px 20px;border-radius:8px;border:none;cursor:pointer}
+  .barra-azioni .btn-stampa{background:#57CECA;color:#0E1A40}
+  .barra-azioni .btn-chiudi{background:rgba(255,255,255,0.15);color:#fff}
+  @media print{ .barra-azioni{display:none} body{padding-bottom:0} }
 </style></head><body>
+<div class="barra-azioni">
+  <button class="btn-stampa" onclick="window.print()">🖶 Stampa / Salva PDF</button>
+  <button class="btn-chiudi" onclick="window.close()">✕ Chiudi</button>
+</div>
 <div class="hd"><div><div class="brand">Telos Tech</div><div style="font-size:11px;color:#7C879E">Conferma d'ordine</div></div>
 <div class="meta"><div>N° ${codiceOrdine(o)}</div><div>Rif. preventivo ${codicePreventivoRif(o)}</div><div>Data: ${o.creato_il ? new Date(o.creato_il).toLocaleDateString("it-IT") : ""}</div></div></div>
 <div style="font-size:15px;font-weight:600;margin-bottom:6px">${o.cliente}</div>
@@ -4917,7 +4941,8 @@ ${o.firma_cliente ? `
 })();
 </script>
 </body></html>`;
-    w.document.write(html); w.document.close();
+    const url = URL.createObjectURL(new Blob([html], {type:"text/html"}));
+    window.open(url, "_blank");
   }
 
   if(selezionato){
