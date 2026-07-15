@@ -2941,6 +2941,7 @@ async function generaPdfBlob(htmlContenuto){
       // quella distribuzione (visto nel PDF di prova: copertina schiacciata).
       const styleOriginale = { width: pagina.style.width, transform: pagina.style.transform, transformOrigin: pagina.style.transformOrigin };
       let ridimensionata = false;
+      let footer = null, styleFooterOriginale = null;
       if(altezzaMm(pagina) > A4_ALTEZZA_MM + TOLLERANZA_MM){
         ridimensionata = true;
         pagina.style.transformOrigin = "top left";
@@ -2952,12 +2953,33 @@ async function generaPdfBlob(htmlContenuto){
           altezza = altezzaMm(pagina);
           tentativi++;
         }
+
+        // I dati societari in fondo pagina (".footer-legale") devono restare
+        // alla stessa dimensione su ogni pagina del documento — se lasciati
+        // dentro la trasformazione della pagina, si rimpicciolirebbero solo
+        // su questa pagina e risulterebbero incoerenti rispetto alle altre.
+        // Applichiamo quindi una trasformazione inversa che ne annulla
+        // l'effetto sul solo footer, pur restando dentro una pagina scalata.
+        footer = pagina.querySelector(":scope > .footer-legale");
+        if(footer){
+          styleFooterOriginale = { width: footer.style.width, transform: footer.style.transform, transformOrigin: footer.style.transformOrigin };
+          const stilePagina = getComputedStyle(pagina);
+          const larghezzaContenutoPx = pagina.clientWidth - parseFloat(stilePagina.paddingLeft) - parseFloat(stilePagina.paddingRight);
+          footer.style.transformOrigin = "top left";
+          footer.style.width = `${larghezzaContenutoPx * fattore}px`;
+          footer.style.transform = `scale(${1/fattore})`;
+        }
       }
 
       const canvas = await html2canvas(pagina, {
         scale: 2, useCORS: true, backgroundColor: "#ffffff", logging: false,
       });
 
+      if(footer && styleFooterOriginale){
+        footer.style.width = styleFooterOriginale.width;
+        footer.style.transform = styleFooterOriginale.transform;
+        footer.style.transformOrigin = styleFooterOriginale.transformOrigin;
+      }
       if(ridimensionata){
         pagina.style.width = styleOriginale.width;
         pagina.style.transform = styleOriginale.transform;
