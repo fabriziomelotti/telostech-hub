@@ -7078,7 +7078,7 @@ function PannelloAdmin({ setCatalog, ruolo, sessione }) {
         Prodotti in catalogo: <strong>{conteggio ?? "…"}</strong>
       </div>
 
-      <ImportClienti ruolo={ruolo}/>
+      <ImportClienti ruolo={ruolo} sessione={sessione}/>
 
       <div style={{height:8}}/>
       <CreaProdotto ruolo={ruolo} onCreato={()=>{ caricaCatalogo(CATALOG).then(d=>setCatalog(d)); ricaricaCategorie(); ricaricaTipologieMarchi(); }} categorieEsistenti={categorie.map(c=>c.categoria)} tipologieEsistenti={tipologie} marchiEsistenti={marchi} sessione={sessione}/>
