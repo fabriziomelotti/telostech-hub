@@ -2917,6 +2917,8 @@ async function generaPdfBlob(htmlContenuto){
     const A4_LARGHEZZA_MM = 210, A4_ALTEZZA_MM = 297;
     const PX_PER_MM = 96/25.4; // mappatura standard px↔mm usata dai browser per le unità fisiche in CSS
     const FATTORE_MINIMO = 0.65; // non scendere sotto il 65% del carattere originale, per restare leggibile
+    const TOLLERANZA_MM = 2; // margine per non scattare su pagine essenzialmente già a misura (es. la copertina, con arrotondamenti del layout flessibile)
+    const OBIETTIVO_MM = A4_ALTEZZA_MM - 3; // puntiamo leggermente sotto i 297mm, per avere margine contro arrotondamenti nella cattura successiva
     const altezzaMm = el => el.getBoundingClientRect().height / PX_PER_MM;
 
     const pdf = new jsPDF({ unit: "mm", format: "a4", orientation: "portrait" });
@@ -2930,19 +2932,23 @@ async function generaPdfBlob(htmlContenuto){
       // pagina fisica, rimpiccioliamo uniformemente tutto il contenuto
       // (font compreso, come uno zoom-out) finché non ci sta in un'unica
       // pagina, invece di spezzarlo su più fogli.
-      let wrapperRidimensionamento = null;
-      if(altezzaMm(pagina) > A4_ALTEZZA_MM){
-        const wrapper = document.createElement("div");
-        while(pagina.firstChild) wrapper.appendChild(pagina.firstChild);
-        pagina.appendChild(wrapper);
-        wrapper.style.transformOrigin = "top left";
-        wrapperRidimensionamento = wrapper;
-
+      //
+      // IMPORTANTE: agiamo con transform+width direttamente sull'elemento
+      // ".pagina" stesso, senza spostarne i figli dentro un wrapper — pagine
+      // come la copertina usano internamente un layout flessibile
+      // (".cover-spacer{flex:1}") che si affida al fatto che i suoi elementi
+      // siano figli diretti; avvolgerli in un contenitore intermedio rompe
+      // quella distribuzione (visto nel PDF di prova: copertina schiacciata).
+      const styleOriginale = { width: pagina.style.width, transform: pagina.style.transform, transformOrigin: pagina.style.transformOrigin };
+      let ridimensionata = false;
+      if(altezzaMm(pagina) > A4_ALTEZZA_MM + TOLLERANZA_MM){
+        ridimensionata = true;
+        pagina.style.transformOrigin = "top left";
         let fattore = 1, altezza = altezzaMm(pagina), tentativi = 0;
-        while(altezza > A4_ALTEZZA_MM && fattore > FATTORE_MINIMO && tentativi < 8){
-          fattore = Math.max(fattore * (A4_ALTEZZA_MM/altezza) * 0.98, FATTORE_MINIMO);
-          wrapper.style.width = `${100/fattore}%`;
-          wrapper.style.transform = `scale(${fattore})`;
+        while(altezza > OBIETTIVO_MM && fattore > FATTORE_MINIMO && tentativi < 8){
+          fattore = Math.max(fattore * (OBIETTIVO_MM/altezza) * 0.98, FATTORE_MINIMO);
+          pagina.style.width = `${A4_LARGHEZZA_MM/fattore}mm`;
+          pagina.style.transform = `scale(${fattore})`;
           altezza = altezzaMm(pagina);
           tentativi++;
         }
@@ -2952,9 +2958,10 @@ async function generaPdfBlob(htmlContenuto){
         scale: 2, useCORS: true, backgroundColor: "#ffffff", logging: false,
       });
 
-      if(wrapperRidimensionamento){
-        while(wrapperRidimensionamento.firstChild) pagina.appendChild(wrapperRidimensionamento.firstChild);
-        pagina.removeChild(wrapperRidimensionamento);
+      if(ridimensionata){
+        pagina.style.width = styleOriginale.width;
+        pagina.style.transform = styleOriginale.transform;
+        pagina.style.transformOrigin = styleOriginale.transformOrigin;
       }
 
       const pxPerMm = canvas.width / A4_LARGHEZZA_MM;
