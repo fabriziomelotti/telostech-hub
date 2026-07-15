@@ -2919,6 +2919,7 @@ async function generaPdfBlob(htmlContenuto){
     const FATTORE_MINIMO = 0.65; // non scendere sotto il 65% del carattere originale, per restare leggibile
     const TOLLERANZA_MM = 2; // margine per non scattare su pagine essenzialmente già a misura (es. la copertina, con arrotondamenti del layout flessibile)
     const OBIETTIVO_MM = A4_ALTEZZA_MM - 3; // puntiamo leggermente sotto i 297mm, per avere margine contro arrotondamenti nella cattura successiva
+    const FATTORE_FOOTER = 0.72; // dimensione dei dati societari in fondo pagina: fissa e uguale su ogni pagina del documento, non solo su quelle rimpicciolite per intero
     const altezzaMm = el => el.getBoundingClientRect().height / PX_PER_MM;
 
     const pdf = new jsPDF({ unit: "mm", format: "a4", orientation: "portrait" });
@@ -2941,11 +2942,11 @@ async function generaPdfBlob(htmlContenuto){
       // quella distribuzione (visto nel PDF di prova: copertina schiacciata).
       const styleOriginale = { width: pagina.style.width, transform: pagina.style.transform, transformOrigin: pagina.style.transformOrigin };
       let ridimensionata = false;
-      let footer = null, styleFooterOriginale = null;
+      let fattore = 1;
       if(altezzaMm(pagina) > A4_ALTEZZA_MM + TOLLERANZA_MM){
         ridimensionata = true;
         pagina.style.transformOrigin = "top left";
-        let fattore = 1, altezza = altezzaMm(pagina), tentativi = 0;
+        let altezza = altezzaMm(pagina), tentativi = 0;
         while(altezza > OBIETTIVO_MM && fattore > FATTORE_MINIMO && tentativi < 8){
           fattore = Math.max(fattore * (OBIETTIVO_MM/altezza) * 0.98, FATTORE_MINIMO);
           pagina.style.width = `${A4_LARGHEZZA_MM/fattore}mm`;
@@ -2953,22 +2954,27 @@ async function generaPdfBlob(htmlContenuto){
           altezza = altezzaMm(pagina);
           tentativi++;
         }
+      }
 
-        // I dati societari in fondo pagina (".footer-legale") devono restare
-        // alla stessa dimensione su ogni pagina del documento — se lasciati
-        // dentro la trasformazione della pagina, si rimpicciolirebbero solo
-        // su questa pagina e risulterebbero incoerenti rispetto alle altre.
-        // Applichiamo quindi una trasformazione inversa che ne annulla
-        // l'effetto sul solo footer, pur restando dentro una pagina scalata.
-        footer = pagina.querySelector(":scope > .footer-legale");
-        if(footer){
-          styleFooterOriginale = { width: footer.style.width, transform: footer.style.transform, transformOrigin: footer.style.transformOrigin };
-          const stilePagina = getComputedStyle(pagina);
-          const larghezzaContenutoPx = pagina.clientWidth - parseFloat(stilePagina.paddingLeft) - parseFloat(stilePagina.paddingRight);
-          footer.style.transformOrigin = "top left";
-          footer.style.width = `${larghezzaContenutoPx * fattore}px`;
-          footer.style.transform = `scale(${1/fattore})`;
-        }
+      // I dati societari in fondo pagina (".footer-legale") vanno tenuti
+      // alla STESSA dimensione ridotta (FATTORE_FOOTER) su ogni pagina del
+      // documento — anche su pagine che di per sé stanno già in un foglio
+      // (es. la pagina prodotti) e quindi non passano dal ridimensionamento
+      // sopra. Il footer eredita automaticamente il fattore già applicato
+      // alla pagina (se presente); qui applichiamo solo la correzione
+      // necessaria per arrivare a FATTORE_FOOTER, qualunque sia il punto di
+      // partenza.
+      const footer = pagina.querySelector(":scope > .footer-legale");
+      let styleFooterOriginale = null;
+      if(footer){
+        styleFooterOriginale = { width: footer.style.width, transform: footer.style.transform, transformOrigin: footer.style.transformOrigin };
+        const stilePagina = getComputedStyle(pagina);
+        const paddingOrizzontalePx = parseFloat(stilePagina.paddingLeft) + parseFloat(stilePagina.paddingRight);
+        const larghezzaNormalePx = A4_LARGHEZZA_MM*PX_PER_MM - paddingOrizzontalePx; // larghezza "piena" del contenuto, fissa e uguale per ogni pagina
+        const correzione = FATTORE_FOOTER / fattore;
+        footer.style.transformOrigin = "top left";
+        footer.style.width = `${larghezzaNormalePx / correzione}px`;
+        footer.style.transform = `scale(${correzione})`;
       }
 
       const canvas = await html2canvas(pagina, {
