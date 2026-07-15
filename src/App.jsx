@@ -2911,22 +2911,52 @@ async function generaPdfBlob(htmlContenuto){
     // prevedibile e verificabile passo per passo. Se il template non usa
     // ".pagina" (es. la conferma d'ordine, che è un unico flusso) si cattura
     // tutto il contenitore come pagina singola.
-    // Un ".pagina" ha solo min-height:297mm, non un limite massimo: se il
-    // contenuto (es. il testo delle condizioni) è più lungo di una pagina
-    // fisica, il canvas catturato sarà più alto di 297mm. Comprimerlo in
-    // un'unica pagina lo distorcerebbe (visto nel PDF di prova) — va invece
-    // tagliato in più pagine fisiche, una fetta alla volta.
     const pagine = Array.from(corpo.querySelectorAll(".pagina"));
     const daCatturare = pagine.length ? pagine : [corpo];
 
     const A4_LARGHEZZA_MM = 210, A4_ALTEZZA_MM = 297;
+    const PX_PER_MM = 96/25.4; // mappatura standard px↔mm usata dai browser per le unità fisiche in CSS
+    const FATTORE_MINIMO = 0.65; // non scendere sotto il 65% del carattere originale, per restare leggibile
+    const altezzaMm = el => el.getBoundingClientRect().height / PX_PER_MM;
+
     const pdf = new jsPDF({ unit: "mm", format: "a4", orientation: "portrait" });
     let primaPaginaCreata = false; // false finché non abbiamo ancora usato la pagina iniziale che jsPDF crea da sé
 
     for(let i=0; i<daCatturare.length; i++){
-      const canvas = await html2canvas(daCatturare[i], {
+      const pagina = daCatturare[i];
+
+      // Un ".pagina" ha solo min-height:297mm, non un limite massimo: se il
+      // contenuto (tipicamente il testo delle condizioni) è più lungo di una
+      // pagina fisica, rimpiccioliamo uniformemente tutto il contenuto
+      // (font compreso, come uno zoom-out) finché non ci sta in un'unica
+      // pagina, invece di spezzarlo su più fogli.
+      let wrapperRidimensionamento = null;
+      if(altezzaMm(pagina) > A4_ALTEZZA_MM){
+        const wrapper = document.createElement("div");
+        while(pagina.firstChild) wrapper.appendChild(pagina.firstChild);
+        pagina.appendChild(wrapper);
+        wrapper.style.transformOrigin = "top left";
+        wrapperRidimensionamento = wrapper;
+
+        let fattore = 1, altezza = altezzaMm(pagina), tentativi = 0;
+        while(altezza > A4_ALTEZZA_MM && fattore > FATTORE_MINIMO && tentativi < 8){
+          fattore = Math.max(fattore * (A4_ALTEZZA_MM/altezza) * 0.98, FATTORE_MINIMO);
+          wrapper.style.width = `${100/fattore}%`;
+          wrapper.style.transform = `scale(${fattore})`;
+          altezza = altezzaMm(pagina);
+          tentativi++;
+        }
+      }
+
+      const canvas = await html2canvas(pagina, {
         scale: 2, useCORS: true, backgroundColor: "#ffffff", logging: false,
       });
+
+      if(wrapperRidimensionamento){
+        while(wrapperRidimensionamento.firstChild) pagina.appendChild(wrapperRidimensionamento.firstChild);
+        pagina.removeChild(wrapperRidimensionamento);
+      }
+
       const pxPerMm = canvas.width / A4_LARGHEZZA_MM;
       const altezzaTotaleMm = canvas.height / pxPerMm;
 
@@ -2937,8 +2967,10 @@ async function generaPdfBlob(htmlContenuto){
         continue;
       }
 
-      // Contenuto più alto di una pagina: tagliamo il canvas sorgente in
-      // fette verticali, una per ogni pagina fisica.
+      // Ripiego residuo: anche al fattore minimo di riduzione il contenuto
+      // non ci sta in una pagina (es. un preventivo con moltissime righe
+      // prodotto) — tagliamo il canvas sorgente in fette verticali, una per
+      // ogni pagina fisica, piuttosto che comprimerlo in modo illeggibile.
       const altezzaFettaPx = Math.round(A4_ALTEZZA_MM * pxPerMm);
       let offset = 0;
       while(offset < canvas.height){
