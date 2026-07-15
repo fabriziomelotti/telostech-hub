@@ -1,4 +1,5 @@
 import { useState, useMemo, useEffect, useRef } from "react";
+import html2pdf from "html2pdf.js";
 import { ImportClienti, SelezioneCliente, CreaProdotto, EditaProdotto } from "./ClientiComponenti";
 import { useAuth, LoginReale } from "./Auth";
 
@@ -2831,6 +2832,120 @@ const TESTO_CONDIZIONI = `
 <p>Il contratto è regolato dalla legge italiana. Per ogni controversia derivante dall'interpretazione o esecuzione del presente preventivo è competente in via esclusiva il Foro di Torino, salvo, ove inderogabilmente previsto dalla legge, il foro del consumatore.</p>
 `;
 
+// ─── GENERAZIONE PDF REALE (client-side, per condivisione nativa su mobile) ──
+// Il browser non genera mai un file PDF vero da solo: la stampa nativa apre
+// un dialogo del sistema operativo, e su iOS Safari l'icona "condividi" della
+// scheda condivide l'URL della pagina (inutile per un blob:), non un file
+// allegabile. Per poter condividere un vero .pdf con le app del dispositivo
+// (mail, WhatsApp, stampanti…) lo generiamo noi in memoria con html2pdf.js
+// (html2canvas + jsPDF sotto il cofano), rendendo l'html in un iframe nascosto
+// per riusare esattamente lo stesso template/CSS della versione stampabile.
+async function generaPdfBlob(htmlContenuto){
+  return new Promise((resolve, reject) => {
+    const iframe = document.createElement("iframe");
+    iframe.style.cssText = "position:fixed;left:-99999px;top:0;width:210mm;height:297mm;border:0;";
+    document.body.appendChild(iframe);
+    const pulisci = () => { if(iframe.parentNode) iframe.parentNode.removeChild(iframe); };
+    iframe.onload = async () => {
+      try{
+        const doc = iframe.contentDocument;
+        const imgs = Array.from(doc.images);
+        await Promise.all(imgs.map(im => im.complete ? Promise.resolve() : new Promise(res=>{
+          im.addEventListener("load", res); im.addEventListener("error", res);
+        })));
+        await new Promise(r => setTimeout(r, 200)); // margine per il rendering dei font
+        const opt = {
+          margin: 0,
+          image: { type: "jpeg", quality: 0.95 },
+          html2canvas: { scale: 2, useCORS: true, backgroundColor: "#ffffff" },
+          jsPDF: { unit: "mm", format: "a4", orientation: "portrait" },
+          pagebreak: { mode: ["css"] },
+        };
+        const blob = await html2pdf().set(opt).from(doc.body).outputPdf("blob");
+        pulisci();
+        resolve(blob);
+      }catch(err){ pulisci(); reject(err); }
+    };
+    iframe.onerror = (err) => { pulisci(); reject(err); };
+    iframe.srcdoc = htmlContenuto;
+  });
+}
+
+// Aggiunge alla pagina stampabile una piccola barra fissa con i pulsanti
+// "Stampa/Salva PDF" e "Chiudi" — usata solo come alternativa quando la
+// condivisione nativa del file non è disponibile (es. desktop).
+function iniettaControlliStampa(html){
+  const barra = `
+<div class="barra-azioni">
+  <button class="btn-stampa" onclick="window.print()">🖶 Stampa / Salva PDF</button>
+  <button class="btn-chiudi" onclick="window.close()">✕ Chiudi</button>
+</div>`;
+  const stileBarra = `
+  .barra-azioni{position:fixed;bottom:0;left:0;right:0;display:flex;gap:10px;justify-content:center;padding:12px 16px calc(env(safe-area-inset-bottom) + 12px);background:rgba(14,26,64,0.92);backdrop-filter:blur(6px);z-index:999}
+  .barra-azioni button{font-family:Arial,sans-serif;font-size:14px;font-weight:600;padding:10px 20px;border-radius:8px;border:none;cursor:pointer}
+  .barra-azioni .btn-stampa{background:#57CECA;color:#0E1A40}
+  .barra-azioni .btn-chiudi{background:rgba(255,255,255,0.15);color:#fff}
+  @media print{ .barra-azioni{display:none} }`;
+  const script = `
+<script>
+(function(){
+  var stampato = false;
+  function stampaUnaVolta(){ if(stampato) return; stampato = true; window.print(); }
+  var imgs = Array.prototype.slice.call(document.images);
+  var rimanenti = imgs.filter(function(im){ return !im.complete; }).length;
+  if(rimanenti===0){ setTimeout(stampaUnaVolta, 150); }
+  else {
+    imgs.forEach(function(im){
+      if(im.complete) return;
+      im.addEventListener('load', function(){ rimanenti--; if(rimanenti<=0) stampaUnaVolta(); });
+      im.addEventListener('error', function(){ rimanenti--; if(rimanenti<=0) stampaUnaVolta(); });
+    });
+  }
+  setTimeout(stampaUnaVolta, 4000);
+})();
+</script>`;
+  return html
+    .replace("</style>", `${stileBarra}\n</style>`)
+    .replace("<body>", `<body>\n${barra}`)
+    .replace("</body>", `${script}\n</body>`);
+}
+
+// Fallback quando la condivisione file non è disponibile (tipicamente
+// desktop): apre una scheda vera (navigazione a blob:, non document.write —
+// così su Safari mantiene la barra strumenti normale) con stampa automatica
+// e pulsante manuale di riserva.
+function apriPerStampa(htmlContenuto){
+  const html = iniettaControlliStampa(htmlContenuto);
+  const url = URL.createObjectURL(new Blob([html], {type:"text/html"}));
+  window.open(url, "_blank");
+}
+
+// Punto d'ingresso unico: genera il PDF vero e prova a condividerlo con le
+// app native del dispositivo (mail, WhatsApp, stampa, AirDrop…). Se il
+// dispositivo/browser non supporta la condivisione di file, propone il
+// download diretto del PDF; se la generazione stessa fallisce per qualche
+// motivo, ripiega sulla vecchia modalità (scheda + stampa del browser) così
+// il documento resta comunque ottenibile.
+async function condividiOStampaPdf(htmlContenuto, nomeFile, { titolo, testo } = {}){
+  try{
+    const blob = await generaPdfBlob(htmlContenuto);
+    const file = new File([blob], nomeFile, { type: "application/pdf" });
+    if(navigator.canShare && navigator.canShare({ files: [file] })){
+      await navigator.share({ files: [file], title: titolo, text: testo });
+      return;
+    }
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = nomeFile;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    setTimeout(()=>URL.revokeObjectURL(url), 30000);
+  }catch(err){
+    if(err && err.name === "AbortError") return; // utente ha annullato la condivisione: non è un errore
+    console.error("Generazione/condivisione PDF fallita, ripiego sulla stampa del browser:", err);
+    apriPerStampa(htmlContenuto);
+  }
+}
+
 // Genera il PDF del preventivo in tre parti: copertina, pagina/e contenuto
 // (intestazione Telos SPA, tabella articoli con foto dal catalogo, totali,
 // finanziamento/noleggio se scelto, note), pagina condizioni + firma —
@@ -2838,7 +2953,7 @@ const TESTO_CONDIZIONI = `
 // "righe": array di {cod, mar, nome, netto, listino, qty, img, desc_prev} —
 // img/desc_prev vanno arricchiti dal chiamante pescandoli dal catalogo,
 // perché le righe salvate nel preventivo non li contengono.
-function generaPreventivoPDF(righe, total, meta={}){
+async function generaPreventivoPDF(righe, total, meta={}){
   const iva = total * 0.22;
   const totaleIva = total + iva;
   const oggi = new Date().toLocaleDateString("it-IT");
@@ -2885,12 +3000,6 @@ function generaPreventivoPDF(righe, total, meta={}){
   body{font-family:Arial,sans-serif;color:#232323;font-size:12.5px}
   .pagina{width:210mm;min-height:297mm;padding:14mm 16mm;page-break-after:always;display:flex;flex-direction:column}
   .pagina:last-child{page-break-after:auto}
-
-  .barra-azioni{position:fixed;bottom:0;left:0;right:0;display:flex;gap:10px;justify-content:center;padding:12px 16px calc(env(safe-area-inset-bottom) + 12px);background:rgba(14,26,64,0.92);backdrop-filter:blur(6px);z-index:999}
-  .barra-azioni button{font-family:Arial,sans-serif;font-size:14px;font-weight:600;padding:10px 20px;border-radius:8px;border:none;cursor:pointer}
-  .barra-azioni .btn-stampa{background:#57CECA;color:#0E1A40}
-  .barra-azioni .btn-chiudi{background:rgba(255,255,255,0.15);color:#fff}
-  @media print{ .barra-azioni{display:none} body{padding-bottom:0} }
 
   /* ── Copertina ── */
   .cover{text-align:center;align-items:center;padding-top:0}
@@ -2959,10 +3068,6 @@ function generaPreventivoPDF(righe, total, meta={}){
   .firma-digitale img{max-width:200px;max-height:80px;display:block;margin-top:6px}
   .firma-digitale-nota{font-size:9.5px;color:#7C879E;margin-top:6px;font-style:italic}
 </style></head><body>
-<div class="barra-azioni no-print">
-  <button class="btn-stampa" onclick="window.print()">🖶 Stampa / Salva PDF</button>
-  <button class="btn-chiudi" onclick="window.close()">✕ Chiudi</button>
-</div>
 
 ${meta.includi_copertina!==false ? `
 <div class="pagina cover">
@@ -3044,37 +3149,8 @@ ${meta.includi_copertina!==false ? `
   </div>
 </div>
 
-<script>
-(function(){
-  // Aspetta che tutte le immagini (loghi, foto prodotto) siano davvero
-  // caricate prima di stampare — con un timeout fisso, alla primissima
-  // apertura (prima che il browser avesse le immagini in cache) la stampa
-  // partiva prima che i loghi finissero di caricare, e restavano bianchi.
-  var stampato = false;
-  function stampaUnaVolta(){ if(stampato) return; stampato = true; window.print(); }
-  var imgs = Array.prototype.slice.call(document.images);
-  var rimanenti = imgs.filter(function(im){ return !im.complete; }).length;
-  if(rimanenti===0){ setTimeout(stampaUnaVolta, 150); }
-  else {
-    imgs.forEach(function(im){
-      if(im.complete) return;
-      im.addEventListener('load', function(){ rimanenti--; if(rimanenti<=0) stampaUnaVolta(); });
-      im.addEventListener('error', function(){ rimanenti--; if(rimanenti<=0) stampaUnaVolta(); });
-    });
-  }
-  setTimeout(stampaUnaVolta, 4000); // rete di sicurezza se qualcosa si blocca
-})();
-</script>
 </body></html>`;
-  // Su iOS Safari, window.open("","_blank") + document.write() produce una
-  // scheda "orfana" senza la normale barra degli strumenti (niente
-  // condividi/stampa/indietro): la pagina resta intrappolata. Navigando
-  // invece verso un vero URL blob:, Safari la tratta come una pagina web
-  // normale con tutti i controlli. Il pulsante "Stampa/Salva PDF" nella
-  // pagina resta comunque disponibile come innesco esplicito, più
-  // affidabile dell'avvio automatico su mobile.
-  const url = URL.createObjectURL(new Blob([html], {type:"text/html"}));
-  window.open(url, "_blank");
+  await condividiOStampaPdf(html, `Preventivo_${codiceMostrato}.pdf`, { titolo: `Preventivo ${codiceMostrato}`, testo: meta.cliente || "" });
 }
 
 // ─── RICERCA PRODOTTI INLINE (per aggiungere articoli a un preventivo bozza) ──
@@ -3342,6 +3418,7 @@ function SchedaProdottoSelezione({p, ruolo, giaPresente, onConferma, onClose}){
 
 function Preventivi({cart,setCart,preventivi,setPreventivi,setOrdini,setArea,ruolo,catalog,sessione}){
   const [view,setView]=useState("lista"); // lista | nuovo | dettaglio
+  const [generandoPdf,setGenerandoPdf]=useState(false);
   const [selId,setSelId]=useState(null);
   const [confermaEliminazione,setConfermaEliminazione]=useState(false);
   const [confermaSalto,setConfermaSalto]=useState(false);
@@ -3969,31 +4046,34 @@ function Preventivi({cart,setCart,preventivi,setPreventivi,setOrdini,setArea,ruo
           {selezionato.stato==="Bozza" && inAttesaApprovazione && !puoApprovare && (
             <button disabled style={{...S.btnAccent,padding:"12px",opacity:0.4}}>In attesa di approvazione</button>
           )}
-          <button onClick={()=>{
-            const righeArricchite = selezionato.righe.map(r=>{
-              const prodottoCatalogo = (catalog||[]).find(p=>p.cod===r.cod);
-              return { ...r, img: prodottoCatalogo?.img, desc: prodottoCatalogo?.desc, desc_prev: prodottoCatalogo?.desc_prev };
-            });
-            generaPreventivoPDF(righeArricchite, selezionato.val, {
-              codice: codicePreventivo(selezionato),
-              cliente: selezionato.cliente,
-              scadenza: selezionato.scadenza,
-              pagamento_modalita: selezionato.pagamento_modalita,
-              pagamento_dettagli: selezionato.pagamento_dettagli,
-              referente_telos: selezionato.referente_telos,
-              note: selezionato.note,
-              finanziamento_tipo: selezionato.finanziamento_tipo,
-              finanziamento_mesi: selezionato.finanziamento_mesi,
-              finanziamento_rata: selezionato.finanziamento_rata,
-              finanziamento_spese_contratto: selezionato.finanziamento_spese_contratto,
-              finanziamento_riscatto: selezionato.finanziamento_riscatto,
-              includi_copertina: selezionato.includi_copertina,
-              firma_cliente: selezionato.firma_cliente,
-              firma_data: selezionato.firma_data,
-              firma_nome: selezionato.firma_nome,
-            });
-          }} style={{...S.btnAccent,padding:"14px",fontSize:14,fontWeight:700,background:C.cyan,color:C.inkDeep}}>
-            📄 Genera preventivo PDF
+          <button disabled={generandoPdf} onClick={async ()=>{
+            setGenerandoPdf(true);
+            try{
+              const righeArricchite = selezionato.righe.map(r=>{
+                const prodottoCatalogo = (catalog||[]).find(p=>p.cod===r.cod);
+                return { ...r, img: prodottoCatalogo?.img, desc: prodottoCatalogo?.desc, desc_prev: prodottoCatalogo?.desc_prev };
+              });
+              await generaPreventivoPDF(righeArricchite, selezionato.val, {
+                codice: codicePreventivo(selezionato),
+                cliente: selezionato.cliente,
+                scadenza: selezionato.scadenza,
+                pagamento_modalita: selezionato.pagamento_modalita,
+                pagamento_dettagli: selezionato.pagamento_dettagli,
+                referente_telos: selezionato.referente_telos,
+                note: selezionato.note,
+                finanziamento_tipo: selezionato.finanziamento_tipo,
+                finanziamento_mesi: selezionato.finanziamento_mesi,
+                finanziamento_rata: selezionato.finanziamento_rata,
+                finanziamento_spese_contratto: selezionato.finanziamento_spese_contratto,
+                finanziamento_riscatto: selezionato.finanziamento_riscatto,
+                includi_copertina: selezionato.includi_copertina,
+                firma_cliente: selezionato.firma_cliente,
+                firma_data: selezionato.firma_data,
+                firma_nome: selezionato.firma_nome,
+              });
+            } finally { setGenerandoPdf(false); }
+          }} style={{...S.btnAccent,padding:"14px",fontSize:14,fontWeight:700,background:C.cyan,color:C.inkDeep,opacity:generandoPdf?0.6:1}}>
+            {generandoPdf ? "Generazione PDF…" : "📄 Genera preventivo PDF"}
           </button>
           {selezionato.stato==="Inviato" && (
             <div style={{...S.card,cursor:"default"}}>
@@ -4446,6 +4526,7 @@ function PreventiviSaltati({preventivi}){
 // ─── ORDINI ───────────────────────────────────────────────────────────────────
 function Ordini({ordini,setOrdini,preventivi,setPreventivi,setInterventi,catalog,sessione,ruolo}){
   const [selId,setSelId]=useState(null);
+  const [generandoPdf,setGenerandoPdf]=useState(false);
   const [erroreSync,setErroreSync]=useState("");
   const [confermaSospendi,setConfermaSospendi]=useState(false);
   const [confermaRiattiva,setConfermaRiattiva]=useState(false);
@@ -4880,7 +4961,7 @@ function Ordini({ordini,setOrdini,preventivi,setPreventivi,setInterventi,catalog
     try{ await sbAuth("PATCH","ordini",`id=eq.${selezionato.id}`,{righe,val},accessToken); }
     catch(err){ setErroreSync("Modifica non salvata: "+err.message); }
   }
-  function generaOrdinePDF(o){
+  async function generaOrdinePDF(o){
     const righe = o.righe.map(r => `
       <tr><td style="padding:8px 6px;border-bottom:1px solid #E3E5EA;font-size:12px">${r.mar} ${r.nome}</td>
       <td style="padding:8px 6px;border-bottom:1px solid #E3E5EA;font-size:12px;font-family:monospace">${r.cod}</td>
@@ -4900,16 +4981,7 @@ function Ordini({ordini,setOrdini,preventivi,setPreventivi,setInterventi,catalog
   .firma img{max-width:200px;max-height:80px;display:block}
   .firma-nota{font-size:10px;color:#7C879E;margin-top:6px;font-style:italic}
   .footer{margin-top:32px;font-size:10px;color:#9AA3AB;border-top:1px solid #E3E5EA;padding-top:10px}
-  .barra-azioni{position:fixed;bottom:0;left:0;right:0;display:flex;gap:10px;justify-content:center;padding:12px 16px calc(env(safe-area-inset-bottom) + 12px);background:rgba(14,26,64,0.92);backdrop-filter:blur(6px);z-index:999}
-  .barra-azioni button{font-family:Arial,sans-serif;font-size:14px;font-weight:600;padding:10px 20px;border-radius:8px;border:none;cursor:pointer}
-  .barra-azioni .btn-stampa{background:#57CECA;color:#0E1A40}
-  .barra-azioni .btn-chiudi{background:rgba(255,255,255,0.15);color:#fff}
-  @media print{ .barra-azioni{display:none} body{padding-bottom:0} }
 </style></head><body>
-<div class="barra-azioni">
-  <button class="btn-stampa" onclick="window.print()">🖶 Stampa / Salva PDF</button>
-  <button class="btn-chiudi" onclick="window.close()">✕ Chiudi</button>
-</div>
 <div class="hd"><div><div class="brand">Telos Tech</div><div style="font-size:11px;color:#7C879E">Conferma d'ordine</div></div>
 <div class="meta"><div>N° ${codiceOrdine(o)}</div><div>Rif. preventivo ${codicePreventivoRif(o)}</div><div>Data: ${o.creato_il ? new Date(o.creato_il).toLocaleDateString("it-IT") : ""}</div></div></div>
 <div style="font-size:15px;font-weight:600;margin-bottom:6px">${o.cliente}</div>
@@ -4923,26 +4995,8 @@ ${o.firma_cliente ? `
 </div>
 ` : ""}
 <div class="footer">Telos Tech S.r.l. · Documento generato il ${new Date().toLocaleDateString("it-IT")}</div>
-<script>
-(function(){
-  var stampato = false;
-  function stampaUnaVolta(){ if(stampato) return; stampato = true; window.print(); }
-  var imgs = Array.prototype.slice.call(document.images);
-  var rimanenti = imgs.filter(function(im){ return !im.complete; }).length;
-  if(rimanenti===0){ setTimeout(stampaUnaVolta, 150); }
-  else {
-    imgs.forEach(function(im){
-      if(im.complete) return;
-      im.addEventListener('load', function(){ rimanenti--; if(rimanenti<=0) stampaUnaVolta(); });
-      im.addEventListener('error', function(){ rimanenti--; if(rimanenti<=0) stampaUnaVolta(); });
-    });
-  }
-  setTimeout(stampaUnaVolta, 4000);
-})();
-</script>
 </body></html>`;
-    const url = URL.createObjectURL(new Blob([html], {type:"text/html"}));
-    window.open(url, "_blank");
+    await condividiOStampaPdf(html, `Ordine_${codiceOrdine(o)}.pdf`, { titolo: `Ordine ${codiceOrdine(o)}`, testo: o.cliente || "" });
   }
 
   if(selezionato){
@@ -5204,7 +5258,7 @@ ${o.firma_cliente ? `
           {selezionato.stato==="In gestione" && (
             <button onClick={()=>setStato(selezionato.id,"Evaso")} style={{...S.btnAccent,padding:"12px",background:C.ok,color:"#fff"}}>✓ Segna come evaso</button>
           )}
-          <button onClick={()=>generaOrdinePDF(selezionato)} style={{...S.btnAccent,padding:"12px"}}>📄 Invia ordine in PDF</button>
+          <button disabled={generandoPdf} onClick={async ()=>{ setGenerandoPdf(true); try{ await generaOrdinePDF(selezionato); } finally { setGenerandoPdf(false); } }} style={{...S.btnAccent,padding:"12px",opacity:generandoPdf?0.6:1}}>{generandoPdf?"Generazione PDF…":"📄 Invia ordine in PDF"}</button>
         </div>
 
         {RUOLI_APPROVATORI.includes(ruolo) && selezionato.stato==="Sospeso" && (
