@@ -1,5 +1,6 @@
 import { useState, useMemo, useEffect, useRef } from "react";
-import html2pdf from "html2pdf.js";
+import html2canvas from "html2canvas";
+import jsPDF from "jspdf";
 import { ImportClienti, SelezioneCliente, CreaProdotto, EditaProdotto } from "./ClientiComponenti";
 import { useAuth, LoginReale } from "./Auth";
 
@@ -2837,8 +2838,9 @@ const TESTO_CONDIZIONI = `
 // un dialogo del sistema operativo, e su iOS Safari l'icona "condividi" della
 // scheda condivide l'URL della pagina (inutile per un blob:), non un file
 // allegabile. Per poter condividere un vero .pdf con le app del dispositivo
-// (mail, WhatsApp, stampanti…) lo generiamo noi in memoria con html2pdf.js
-// (html2canvas + jsPDF sotto il cofano).
+// (mail, WhatsApp, stampanti…) lo generiamo noi in memoria con html2canvas
+// (rasterizza ogni pagina del template) + jsPDF (assembla le pagine in un
+// vero file .pdf).
 //
 // IMPORTANTE: html2canvas va usato su un elemento dello STESSO documento
 // della pagina — un iframe con un document separato produce una resa senza
@@ -2878,7 +2880,14 @@ async function generaPdfBlob(htmlContenuto){
   // <body> (font, colore, sfondo, larghezza pagina A4): la regola CSS
   // "body{...}" non ha più un vero elemento <body> da colpire una volta
   // scopata, quindi le impostiamo direttamente sul contenitore.
-  contenitore.style.cssText = "position:fixed;left:-99999px;top:0;width:210mm;background:#fff;font-family:Arial,sans-serif;color:#232323;font-size:12.5px;";
+  //
+  // Nota su opacity:0 invece di un offset tipo "left:-99999px": Safari su
+  // iOS può saltare il calcolo completo del layout per elementi posizionati
+  // molto lontano dalla viewport (li tratta come non visibili e ottimizza),
+  // producendo esattamente una cattura senza stili — indipendentemente da
+  // quale documento ospiti l'elemento. opacity:0 resta invece pienamente
+  // impaginato dal browser pur restando invisibile e non interattivo.
+  contenitore.style.cssText = "position:fixed;top:0;left:0;z-index:-1;width:210mm;opacity:0;pointer-events:none;background:#fff;font-family:Arial,sans-serif;color:#232323;font-size:12.5px;";
   document.body.appendChild(contenitore);
 
   const styleTag = document.createElement("style");
@@ -2896,14 +2905,29 @@ async function generaPdfBlob(htmlContenuto){
     })));
     await new Promise(r => setTimeout(r, 200)); // margine per il rendering dei font
 
-    const opt = {
-      margin: 0,
-      image: { type: "jpeg", quality: 0.95 },
-      html2canvas: { scale: 2, useCORS: true, backgroundColor: "#ffffff" },
-      jsPDF: { unit: "mm", format: "a4", orientation: "portrait" },
-      pagebreak: { mode: ["css"] },
-    };
-    return await html2pdf().set(opt).from(corpo).outputPdf("blob");
+    // Catturiamo ogni ".pagina" separatamente (una per pagina A4 del
+    // documento) invece di affidarci all'impaginazione automatica di una
+    // libreria di più alto livello: più codice, ma il risultato è
+    // prevedibile e verificabile passo per passo. Se il template non usa
+    // ".pagina" (es. la conferma d'ordine, che è un unico flusso) si cattura
+    // tutto il contenitore come pagina singola.
+    const pagine = Array.from(corpo.querySelectorAll(".pagina"));
+    const daCatturare = pagine.length ? pagine : [corpo];
+
+    const A4_LARGHEZZA_MM = 210, A4_ALTEZZA_MM = 297;
+    const pdf = new jsPDF({ unit: "mm", format: "a4", orientation: "portrait" });
+
+    for(let i=0; i<daCatturare.length; i++){
+      const canvas = await html2canvas(daCatturare[i], {
+        scale: 2, useCORS: true, backgroundColor: "#ffffff", logging: false,
+      });
+      const immagine = canvas.toDataURL("image/jpeg", 0.95);
+      const altezzaResa = Math.min(canvas.height * A4_LARGHEZZA_MM / canvas.width, A4_ALTEZZA_MM);
+      if(i>0) pdf.addPage();
+      pdf.addImage(immagine, "JPEG", 0, 0, A4_LARGHEZZA_MM, altezzaResa);
+    }
+
+    return pdf.output("blob");
   } finally {
     document.body.removeChild(contenitore);
   }
