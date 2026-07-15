@@ -1723,10 +1723,139 @@ function CompletaCategoria({ prodotti, categorieEsistenti, tipologieEsistenti, m
 }
 
 // ─── SCHEDA PRODOTTO (dettaglio) ──────────────────────────────────────────────
+// Mostra un'immagine a schermo intero, sopra qualsiasi altro contenuto.
+// Zoom e trascinamento sono gestiti direttamente qui (non affidati al
+// pinch-zoom nativo del browser, che dentro un overlay "position:fixed" a
+// schermo intero spesso non funziona bene): doppio tocco/doppio click per
+// ingrandire centrando sul punto toccato, pizzico con due dita o
+// trascinamento per muoversi una volta ingranditi.
+function VisualizzatoreImmagine({src, alt, onClose}){
+  const [scala, setScala] = useState(1);
+  const [pos, setPos] = useState({x:0, y:0});
+  const gesto = useRef({
+    puntatori: new Map(),
+    distanzaIniziale: 0,
+    scalaIniziale: 1,
+    posIniziale: {x:0,y:0},
+    trascinamento: false,
+    origineTrascinamento: {x:0,y:0},
+    pinchAvvenuto: false,
+  });
+  const ultimoTapRef = useRef(0);
+  const SCALA_MAX = 4, SCALA_DOPPIO_TOCCO = 2.5;
+
+  useEffect(()=>{
+    const onEsc = e=>{ if(e.key==="Escape") onClose(); };
+    window.addEventListener("keydown", onEsc);
+    return ()=>window.removeEventListener("keydown", onEsc);
+  },[onClose]);
+
+  function limita(nuovaScala, nuovaPos){
+    if(nuovaScala<=1) return {x:0,y:0};
+    const limite = (nuovaScala-1) * 220; // margine generoso: non serve essere precisi al pixel
+    return {
+      x: Math.max(-limite, Math.min(limite, nuovaPos.x)),
+      y: Math.max(-limite, Math.min(limite, nuovaPos.y)),
+    };
+  }
+
+  function alDoppioTocco(clientX, clientY){
+    if(scala>1){ setScala(1); setPos({x:0,y:0}); return; }
+    const cx = window.innerWidth/2, cy = window.innerHeight/2;
+    const nuovaPos = { x:(cx-clientX)*(SCALA_DOPPIO_TOCCO-1)/SCALA_DOPPIO_TOCCO, y:(cy-clientY)*(SCALA_DOPPIO_TOCCO-1)/SCALA_DOPPIO_TOCCO };
+    setScala(SCALA_DOPPIO_TOCCO);
+    setPos(limita(SCALA_DOPPIO_TOCCO, nuovaPos));
+  }
+
+  function onTouchStart(e){
+    const g = gesto.current;
+    for(const t of e.changedTouches) g.puntatori.set(t.identifier, {x:t.clientX,y:t.clientY});
+    if(g.puntatori.size===2){
+      const [a,b] = [...g.puntatori.values()];
+      g.distanzaIniziale = Math.hypot(a.x-b.x, a.y-b.y);
+      g.scalaIniziale = scala;
+      g.posIniziale = pos;
+    } else if(g.puntatori.size===1 && scala>1){
+      g.trascinamento = true;
+      const t = e.changedTouches[0];
+      g.origineTrascinamento = {x:t.clientX-pos.x, y:t.clientY-pos.y};
+    }
+  }
+
+  function onTouchMove(e){
+    const g = gesto.current;
+    for(const t of e.changedTouches) if(g.puntatori.has(t.identifier)) g.puntatori.set(t.identifier, {x:t.clientX,y:t.clientY});
+
+    if(g.puntatori.size===2){
+      e.preventDefault();
+      g.pinchAvvenuto = true;
+      const [a,b] = [...g.puntatori.values()];
+      const distanza = Math.hypot(a.x-b.x, a.y-b.y);
+      const nuovaScala = Math.max(1, Math.min(SCALA_MAX, g.scalaIniziale * (distanza/(g.distanzaIniziale||distanza))));
+      setScala(nuovaScala);
+      setPos(limita(nuovaScala, g.posIniziale));
+    } else if(g.trascinamento && g.puntatori.size===1){
+      e.preventDefault();
+      const t = e.changedTouches[0];
+      const o = g.origineTrascinamento;
+      setPos(limita(scala, {x:t.clientX-o.x, y:t.clientY-o.y}));
+    }
+  }
+
+  function onTouchEnd(e){
+    const g = gesto.current;
+    for(const t of e.changedTouches) g.puntatori.delete(t.identifier);
+    if(g.puntatori.size===0){
+      const ora = Date.now();
+      if(!g.pinchAvvenuto && !g.trascinamento && ora-ultimoTapRef.current < 300){
+        alDoppioTocco(e.changedTouches[0].clientX, e.changedTouches[0].clientY);
+      }
+      ultimoTapRef.current = ora;
+      g.trascinamento = false;
+      g.pinchAvvenuto = false;
+    }
+  }
+
+  function onMouseDown(e){
+    if(scala<=1) return;
+    gesto.current.trascinamento = true;
+    gesto.current.origineTrascinamento = {x:e.clientX-pos.x, y:e.clientY-pos.y};
+  }
+  function onMouseMove(e){
+    if(!gesto.current.trascinamento) return;
+    const o = gesto.current.origineTrascinamento;
+    setPos(limita(scala, {x:e.clientX-o.x, y:e.clientY-o.y}));
+  }
+  function onMouseUp(){ gesto.current.trascinamento = false; }
+
+  return (
+    <div
+      onClick={e=>{ if(e.target===e.currentTarget && scala<=1) onClose(); }}
+      onTouchStart={onTouchStart} onTouchMove={onTouchMove} onTouchEnd={onTouchEnd}
+      onMouseMove={onMouseMove} onMouseUp={onMouseUp} onMouseLeave={onMouseUp}
+      style={{position:"fixed",inset:0,background:"rgba(14,26,64,.92)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:300,padding:"env(safe-area-inset-top) 16px env(safe-area-inset-bottom)",overflow:"hidden",touchAction:"none"}}
+    >
+      <button onClick={onClose} style={{position:"fixed",top:"calc(env(safe-area-inset-top) + 14px)",right:16,background:"rgba(255,255,255,0.14)",border:"none",borderRadius:"50%",width:36,height:36,fontSize:18,color:"#fff",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",zIndex:2}}>✕</button>
+      <img
+        src={src} alt={alt||""} draggable={false}
+        onDoubleClick={e=>{e.stopPropagation(); alDoppioTocco(e.clientX, e.clientY);}}
+        onMouseDown={onMouseDown}
+        style={{
+          maxWidth:"100%", maxHeight:"100%", objectFit:"contain",
+          transform:`translate(${pos.x}px, ${pos.y}px) scale(${scala})`,
+          transition: gesto.current.trascinamento ? "none" : "transform 0.2s ease",
+          cursor: scala>1 ? "grab" : "zoom-in", userSelect:"none",
+        }}
+      />
+    </div>
+  );
+}
+
 function SchedaProdotto({p, isIn, onToggleCart, onClose, ruolo, onModifica}){
   const scontoPerc = p.listino>0 ? Math.round((1 - p.netto/p.listino)*100) : 0;
   // Spezza la descrizione preventivo in righe — ogni riga è una caratteristica
   const righeCaratteristiche = (p.desc_prev || p.desc || "").split(/\n|;/).map(r=>r.trim()).filter(Boolean);
+  const [immagineIngrandita, setImmagineIngrandita] = useState(false);
 
   return (
     <div onClick={e=>{if(e.target===e.currentTarget)onClose();}} style={{position:"fixed",inset:0,background:"rgba(14,26,64,.55)",display:"flex",alignItems:"flex-end",justifyContent:"center",zIndex:50}}>
@@ -1752,11 +1881,14 @@ function SchedaProdotto({p, isIn, onToggleCart, onClose, ruolo, onModifica}){
             <span className="tnum" style={{fontSize:11.5,color:"#8A929A",fontFamily:F_MONO}}>{p.cod} · {p.mar} · {p.cat}</span>
           </div>
 
-          {/* Foto prodotto */}
+          {/* Foto prodotto — cliccabile per ingrandire */}
           {p.img && (
-            <div style={{background:C.paper,border:`1px solid ${C.paperLine}`,borderRadius:10,padding:16,marginBottom:18,display:"flex",alignItems:"center",justifyContent:"center",minHeight:180}}>
-              <img src={p.img} alt={p.nome} style={{maxWidth:"100%",maxHeight:240,objectFit:"contain"}} onError={e=>{e.target.style.display="none";}}/>
+            <div onClick={()=>setImmagineIngrandita(true)} style={{background:C.paper,border:`1px solid ${C.paperLine}`,borderRadius:10,padding:16,marginBottom:18,display:"flex",alignItems:"center",justifyContent:"center",minHeight:180,cursor:"zoom-in"}}>
+              <img src={p.img} alt={p.nome} style={{maxWidth:"100%",maxHeight:240,objectFit:"contain"}} onError={e=>{e.target.parentNode.style.display="none";}}/>
             </div>
+          )}
+          {immagineIngrandita && p.img && (
+            <VisualizzatoreImmagine src={p.img} alt={p.nome} onClose={()=>setImmagineIngrandita(false)}/>
           )}
 
           {/* Descrizione generica */}
@@ -3439,6 +3571,7 @@ function SchedaProdottoSelezione({p, ruolo, giaPresente, onConferma, onClose}){
   const [costoEsclusivo,setCostoEsclusivo]=useState(COSTI_ESCLUSIVI[p.cod]?.costo ?? null);
   const [noteCosto,setNoteCosto]=useState(COSTI_ESCLUSIVI[p.cod]?.note ?? "");
   const [editCosto,setEditCosto]=useState(false);
+  const [immagineIngrandita, setImmagineIngrandita] = useState(false);
 
   const puoModificare = puoModificarePrezzoLiberamente(ruolo);
   const vediCosti = puoModificare; // stessa condizione — solo responsabile/admin
@@ -3485,9 +3618,12 @@ function SchedaProdottoSelezione({p, ruolo, giaPresente, onConferma, onClose}){
           </div>
 
           {p.img && (
-            <div style={{background:C.paper,border:`1px solid ${C.paperLine}`,borderRadius:10,padding:14,marginBottom:16,display:"flex",alignItems:"center",justifyContent:"center",minHeight:140}}>
-              <img src={p.img} alt={p.nome} style={{maxWidth:"100%",maxHeight:180,objectFit:"contain"}} onError={e=>{e.target.style.display="none";}}/>
+            <div onClick={()=>setImmagineIngrandita(true)} style={{background:C.paper,border:`1px solid ${C.paperLine}`,borderRadius:10,padding:14,marginBottom:16,display:"flex",alignItems:"center",justifyContent:"center",minHeight:140,cursor:"zoom-in"}}>
+              <img src={p.img} alt={p.nome} style={{maxWidth:"100%",maxHeight:180,objectFit:"contain"}} onError={e=>{e.target.parentNode.style.display="none";}}/>
             </div>
+          )}
+          {immagineIngrandita && p.img && (
+            <VisualizzatoreImmagine src={p.img} alt={p.nome} onClose={()=>setImmagineIngrandita(false)}/>
           )}
 
           {p.desc && <div style={{fontSize:13,color:"#5B6770",marginBottom:16,lineHeight:1.55}}>{p.desc}</div>}
