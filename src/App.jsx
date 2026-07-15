@@ -2838,37 +2838,75 @@ const TESTO_CONDIZIONI = `
 // scheda condivide l'URL della pagina (inutile per un blob:), non un file
 // allegabile. Per poter condividere un vero .pdf con le app del dispositivo
 // (mail, WhatsApp, stampanti…) lo generiamo noi in memoria con html2pdf.js
-// (html2canvas + jsPDF sotto il cofano), rendendo l'html in un iframe nascosto
-// per riusare esattamente lo stesso template/CSS della versione stampabile.
+// (html2canvas + jsPDF sotto il cofano).
+//
+// IMPORTANTE: html2canvas va usato su un elemento dello STESSO documento
+// della pagina — un iframe con un document separato produce una resa senza
+// stili (è quello che si vedeva nei primi PDF generati). Montiamo quindi il
+// contenuto in un contenitore nascosto nella pagina corrente; per evitare che
+// il <style> del documento stampabile (che include regole generiche come
+// "body{...}" o "*{...}") si applichi per errore anche al resto dell'app
+// mentre generiamo il PDF, lo "scopiamo" anteponendo una classe univoca ad
+// ogni selettore.
+function scopaCss(css, classeScope){
+  return css
+    .replace(/@page[^{]*\{[^}]*\}/g, "")   // rilevante solo per la stampa nativa, non per la cattura schermo
+    .replace(/@media print\s*\{[\s\S]*\}\s*\}/g, m => {
+      // riscopa anche le regole dentro @media print, lasciando la media query intatta
+      const inner = m.replace(/^@media print\s*\{/, "").replace(/\}\s*$/, "");
+      return `@media print{${scopaCss(inner, classeScope)}}`;
+    })
+    .split("}")
+    .map(blocco => {
+      const i = blocco.indexOf("{");
+      if(i === -1) return blocco;
+      const selettori = blocco.slice(0,i).split(",").map(s=>s.trim()).filter(Boolean);
+      if(!selettori.length) return blocco;
+      return selettori.map(s=>`.${classeScope} ${s}`).join(", ") + "{" + blocco.slice(i+1);
+    })
+    .join("}");
+}
+
 async function generaPdfBlob(htmlContenuto){
-  return new Promise((resolve, reject) => {
-    const iframe = document.createElement("iframe");
-    iframe.style.cssText = "position:fixed;left:-99999px;top:0;width:210mm;height:297mm;border:0;";
-    document.body.appendChild(iframe);
-    const pulisci = () => { if(iframe.parentNode) iframe.parentNode.removeChild(iframe); };
-    iframe.onload = async () => {
-      try{
-        const doc = iframe.contentDocument;
-        const imgs = Array.from(doc.images);
-        await Promise.all(imgs.map(im => im.complete ? Promise.resolve() : new Promise(res=>{
-          im.addEventListener("load", res); im.addEventListener("error", res);
-        })));
-        await new Promise(r => setTimeout(r, 200)); // margine per il rendering dei font
-        const opt = {
-          margin: 0,
-          image: { type: "jpeg", quality: 0.95 },
-          html2canvas: { scale: 2, useCORS: true, backgroundColor: "#ffffff" },
-          jsPDF: { unit: "mm", format: "a4", orientation: "portrait" },
-          pagebreak: { mode: ["css"] },
-        };
-        const blob = await html2pdf().set(opt).from(doc.body).outputPdf("blob");
-        pulisci();
-        resolve(blob);
-      }catch(err){ pulisci(); reject(err); }
+  const dom = new DOMParser().parseFromString(htmlContenuto, "text/html");
+  const styleOriginale = Array.from(dom.querySelectorAll("style")).map(s=>s.textContent).join("\n");
+  const classeScope = `pdf-render-${Date.now()}`;
+
+  const contenitore = document.createElement("div");
+  contenitore.className = classeScope;
+  // Replica qui le proprietà che nel documento originale stavano sul tag
+  // <body> (font, colore, sfondo, larghezza pagina A4): la regola CSS
+  // "body{...}" non ha più un vero elemento <body> da colpire una volta
+  // scopata, quindi le impostiamo direttamente sul contenitore.
+  contenitore.style.cssText = "position:fixed;left:-99999px;top:0;width:210mm;background:#fff;font-family:Arial,sans-serif;color:#232323;font-size:12.5px;";
+  document.body.appendChild(contenitore);
+
+  const styleTag = document.createElement("style");
+  styleTag.textContent = scopaCss(styleOriginale, classeScope);
+  contenitore.appendChild(styleTag);
+
+  const corpo = document.createElement("div");
+  corpo.innerHTML = dom.body.innerHTML;
+  contenitore.appendChild(corpo);
+
+  try{
+    const imgs = Array.from(contenitore.querySelectorAll("img"));
+    await Promise.all(imgs.map(im => im.complete ? Promise.resolve() : new Promise(res=>{
+      im.addEventListener("load", res); im.addEventListener("error", res);
+    })));
+    await new Promise(r => setTimeout(r, 200)); // margine per il rendering dei font
+
+    const opt = {
+      margin: 0,
+      image: { type: "jpeg", quality: 0.95 },
+      html2canvas: { scale: 2, useCORS: true, backgroundColor: "#ffffff" },
+      jsPDF: { unit: "mm", format: "a4", orientation: "portrait" },
+      pagebreak: { mode: ["css"] },
     };
-    iframe.onerror = (err) => { pulisci(); reject(err); };
-    iframe.srcdoc = htmlContenuto;
-  });
+    return await html2pdf().set(opt).from(corpo).outputPdf("blob");
+  } finally {
+    document.body.removeChild(contenitore);
+  }
 }
 
 // Aggiunge alla pagina stampabile una piccola barra fissa con i pulsanti
@@ -2920,13 +2958,27 @@ function apriPerStampa(htmlContenuto){
   window.open(url, "_blank");
 }
 
-// Punto d'ingresso unico: genera il PDF vero e prova a condividerlo con le
-// app native del dispositivo (mail, WhatsApp, stampa, AirDrop…). Se il
-// dispositivo/browser non supporta la condivisione di file, propone il
+// Molti browser desktop (Safari su macOS in particolare) dichiarano
+// supporto alla Web Share API con file quanto un telefono, ma su desktop
+// vogliamo comunque la scheda normale con stampa nativa (qualità migliore,
+// nessuna attesa per il rendering) — la condivisione va offerta solo su
+// dispositivi con schermo touch come input principale.
+function dispositivoTouchPrincipale(){
+  return typeof window !== "undefined" && !!window.matchMedia && window.matchMedia("(pointer: coarse)").matches;
+}
+
+// Punto d'ingresso unico: su desktop apre la stampa nativa del browser
+// (comportamento invariato). Su mobile genera il PDF vero e prova a
+// condividerlo con le app native del dispositivo (mail, WhatsApp, stampa,
+// AirDrop…); se il browser non supporta la condivisione di file propone il
 // download diretto del PDF; se la generazione stessa fallisce per qualche
-// motivo, ripiega sulla vecchia modalità (scheda + stampa del browser) così
-// il documento resta comunque ottenibile.
+// motivo, ripiega sulla stampa del browser così il documento resta comunque
+// ottenibile.
 async function condividiOStampaPdf(htmlContenuto, nomeFile, { titolo, testo } = {}){
+  if(!dispositivoTouchPrincipale()){
+    apriPerStampa(htmlContenuto);
+    return;
+  }
   try{
     const blob = await generaPdfBlob(htmlContenuto);
     const file = new File([blob], nomeFile, { type: "application/pdf" });
