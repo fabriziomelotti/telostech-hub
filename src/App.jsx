@@ -2898,6 +2898,21 @@ async function generaPdfBlob(htmlContenuto){
   corpo.innerHTML = dom.body.innerHTML;
   contenitore.appendChild(corpo);
 
+  const A4_LARGHEZZA_MM = 210, A4_ALTEZZA_MM = 297;
+  const FATTORE_FOOTER = 0.72; // dimensione dei dati societari in fondo pagina: fissa e uguale su ogni pagina del documento
+  const LARGHEZZA_CONTENUTO_MM = A4_LARGHEZZA_MM - 32; // corrisponde al padding orizzontale di 16mm per lato di ".pagina"
+
+  // Contenitore isolato e riutilizzabile per catturare il footer con i dati
+  // societari sempre nello stesso identico modo, indipendentemente dalla
+  // pagina di provenienza. Una trasformazione applicata al footer mentre è
+  // ancora dentro una ".pagina" già essa stessa trasformata (per il
+  // rimpicciolimento) dà risultati incoerenti con html2canvas — qui invece
+  // il footer viene staccato e reso in totale isolamento, sempre alla stessa
+  // identica larghezza e scala.
+  const capsulaFooter = document.createElement("div");
+  capsulaFooter.style.cssText = `width:${LARGHEZZA_CONTENUTO_MM/FATTORE_FOOTER}mm;transform:scale(${FATTORE_FOOTER});transform-origin:top left;background:#fff;`;
+  contenitore.appendChild(capsulaFooter);
+
   try{
     const imgs = Array.from(contenitore.querySelectorAll("img"));
     await Promise.all(imgs.map(im => im.complete ? Promise.resolve() : new Promise(res=>{
@@ -2914,12 +2929,11 @@ async function generaPdfBlob(htmlContenuto){
     const pagine = Array.from(corpo.querySelectorAll(".pagina"));
     const daCatturare = pagine.length ? pagine : [corpo];
 
-    const A4_LARGHEZZA_MM = 210, A4_ALTEZZA_MM = 297;
     const PX_PER_MM = 96/25.4; // mappatura standard px↔mm usata dai browser per le unità fisiche in CSS
     const FATTORE_MINIMO = 0.65; // non scendere sotto il 65% del carattere originale, per restare leggibile
     const TOLLERANZA_MM = 2; // margine per non scattare su pagine essenzialmente già a misura (es. la copertina, con arrotondamenti del layout flessibile)
     const OBIETTIVO_MM = A4_ALTEZZA_MM - 3; // puntiamo leggermente sotto i 297mm, per avere margine contro arrotondamenti nella cattura successiva
-    const FATTORE_FOOTER = 0.72; // dimensione dei dati societari in fondo pagina: fissa e uguale su ogni pagina del documento, non solo su quelle rimpicciolite per intero
+    const MARGINE_INFERIORE_FOOTER_MM = 8; // spazio dal bordo inferiore del foglio
     const altezzaMm = el => el.getBoundingClientRect().height / PX_PER_MM;
 
     const pdf = new jsPDF({ unit: "mm", format: "a4", orientation: "portrait" });
@@ -2927,6 +2941,18 @@ async function generaPdfBlob(htmlContenuto){
 
     for(let i=0; i<daCatturare.length; i++){
       const pagina = daCatturare[i];
+
+      // Il footer va staccato PRIMA di misurare/rimpicciolire la pagina, sia
+      // perché va catturato isolato (vedi sopra), sia perché la sua altezza
+      // non deve contribuire al calcolo di quanto rimpicciolire il resto.
+      const footer = pagina.querySelector(":scope > .footer-legale");
+      let footerCanvas = null;
+      if(footer){
+        capsulaFooter.appendChild(footer);
+        footerCanvas = await html2canvas(capsulaFooter, {
+          scale: 2, useCORS: true, backgroundColor: "#ffffff", logging: false,
+        });
+      }
 
       // Un ".pagina" ha solo min-height:297mm, non un limite massimo: se il
       // contenuto (tipicamente il testo delle condizioni) è più lungo di una
@@ -2942,11 +2968,10 @@ async function generaPdfBlob(htmlContenuto){
       // quella distribuzione (visto nel PDF di prova: copertina schiacciata).
       const styleOriginale = { width: pagina.style.width, transform: pagina.style.transform, transformOrigin: pagina.style.transformOrigin };
       let ridimensionata = false;
-      let fattore = 1;
       if(altezzaMm(pagina) > A4_ALTEZZA_MM + TOLLERANZA_MM){
         ridimensionata = true;
         pagina.style.transformOrigin = "top left";
-        let altezza = altezzaMm(pagina), tentativi = 0;
+        let fattore = 1, altezza = altezzaMm(pagina), tentativi = 0;
         while(altezza > OBIETTIVO_MM && fattore > FATTORE_MINIMO && tentativi < 8){
           fattore = Math.max(fattore * (OBIETTIVO_MM/altezza) * 0.98, FATTORE_MINIMO);
           pagina.style.width = `${A4_LARGHEZZA_MM/fattore}mm`;
@@ -2956,41 +2981,16 @@ async function generaPdfBlob(htmlContenuto){
         }
       }
 
-      // I dati societari in fondo pagina (".footer-legale") vanno tenuti
-      // alla STESSA dimensione ridotta (FATTORE_FOOTER) su ogni pagina del
-      // documento — anche su pagine che di per sé stanno già in un foglio
-      // (es. la pagina prodotti) e quindi non passano dal ridimensionamento
-      // sopra. Il footer eredita automaticamente il fattore già applicato
-      // alla pagina (se presente); qui applichiamo solo la correzione
-      // necessaria per arrivare a FATTORE_FOOTER, qualunque sia il punto di
-      // partenza.
-      const footer = pagina.querySelector(":scope > .footer-legale");
-      let styleFooterOriginale = null;
-      if(footer){
-        styleFooterOriginale = { width: footer.style.width, transform: footer.style.transform, transformOrigin: footer.style.transformOrigin };
-        const stilePagina = getComputedStyle(pagina);
-        const paddingOrizzontalePx = parseFloat(stilePagina.paddingLeft) + parseFloat(stilePagina.paddingRight);
-        const larghezzaNormalePx = A4_LARGHEZZA_MM*PX_PER_MM - paddingOrizzontalePx; // larghezza "piena" del contenuto, fissa e uguale per ogni pagina
-        const correzione = FATTORE_FOOTER / fattore;
-        footer.style.transformOrigin = "top left";
-        footer.style.width = `${larghezzaNormalePx / correzione}px`;
-        footer.style.transform = `scale(${correzione})`;
-      }
-
       const canvas = await html2canvas(pagina, {
         scale: 2, useCORS: true, backgroundColor: "#ffffff", logging: false,
       });
 
-      if(footer && styleFooterOriginale){
-        footer.style.width = styleFooterOriginale.width;
-        footer.style.transform = styleFooterOriginale.transform;
-        footer.style.transformOrigin = styleFooterOriginale.transformOrigin;
-      }
       if(ridimensionata){
         pagina.style.width = styleOriginale.width;
         pagina.style.transform = styleOriginale.transform;
         pagina.style.transformOrigin = styleOriginale.transformOrigin;
       }
+      if(footer) pagina.appendChild(footer); // ripristina la struttura originale
 
       const pxPerMm = canvas.width / A4_LARGHEZZA_MM;
       const altezzaTotaleMm = canvas.height / pxPerMm;
@@ -2999,28 +2999,38 @@ async function generaPdfBlob(htmlContenuto){
         if(primaPaginaCreata) pdf.addPage();
         pdf.addImage(canvas.toDataURL("image/jpeg", 0.95), "JPEG", 0, 0, A4_LARGHEZZA_MM, altezzaTotaleMm);
         primaPaginaCreata = true;
-        continue;
+      } else {
+        // Ripiego residuo: anche al fattore minimo di riduzione il contenuto
+        // non ci sta in una pagina (es. un preventivo con moltissime righe
+        // prodotto) — tagliamo il canvas sorgente in fette verticali, una per
+        // ogni pagina fisica, piuttosto che comprimerlo in modo illeggibile.
+        const altezzaFettaPx = Math.round(A4_ALTEZZA_MM * pxPerMm);
+        let offset = 0;
+        while(offset < canvas.height){
+          const altezzaQuestaFettaPx = Math.min(altezzaFettaPx, canvas.height - offset);
+          const fetta = document.createElement("canvas");
+          fetta.width = canvas.width;
+          fetta.height = altezzaQuestaFettaPx;
+          const ctx = fetta.getContext("2d");
+          ctx.fillStyle = "#ffffff";
+          ctx.fillRect(0, 0, fetta.width, fetta.height);
+          ctx.drawImage(canvas, 0, offset, canvas.width, altezzaQuestaFettaPx, 0, 0, canvas.width, altezzaQuestaFettaPx);
+          if(primaPaginaCreata) pdf.addPage();
+          pdf.addImage(fetta.toDataURL("image/jpeg", 0.95), "JPEG", 0, 0, A4_LARGHEZZA_MM, altezzaQuestaFettaPx / pxPerMm);
+          primaPaginaCreata = true;
+          offset += altezzaQuestaFettaPx;
+        }
       }
 
-      // Ripiego residuo: anche al fattore minimo di riduzione il contenuto
-      // non ci sta in una pagina (es. un preventivo con moltissime righe
-      // prodotto) — tagliamo il canvas sorgente in fette verticali, una per
-      // ogni pagina fisica, piuttosto che comprimerlo in modo illeggibile.
-      const altezzaFettaPx = Math.round(A4_ALTEZZA_MM * pxPerMm);
-      let offset = 0;
-      while(offset < canvas.height){
-        const altezzaQuestaFettaPx = Math.min(altezzaFettaPx, canvas.height - offset);
-        const fetta = document.createElement("canvas");
-        fetta.width = canvas.width;
-        fetta.height = altezzaQuestaFettaPx;
-        const ctx = fetta.getContext("2d");
-        ctx.fillStyle = "#ffffff";
-        ctx.fillRect(0, 0, fetta.width, fetta.height);
-        ctx.drawImage(canvas, 0, offset, canvas.width, altezzaQuestaFettaPx, 0, 0, canvas.width, altezzaQuestaFettaPx);
-        if(primaPaginaCreata) pdf.addPage();
-        pdf.addImage(fetta.toDataURL("image/jpeg", 0.95), "JPEG", 0, 0, A4_LARGHEZZA_MM, altezzaQuestaFettaPx / pxPerMm);
-        primaPaginaCreata = true;
-        offset += altezzaQuestaFettaPx;
+      // Il footer (se presente) va sempre sull'ULTIMA pagina fisica generata
+      // per questo ".pagina" (l'unica pagina, o l'ultima fetta in caso di
+      // ripiego) — jsPDF opera sempre sulla pagina "corrente", che a questo
+      // punto è già quella giusta.
+      if(footerCanvas){
+        const footerPxPerMm = footerCanvas.width / LARGHEZZA_CONTENUTO_MM;
+        const footerAltezzaMm = footerCanvas.height / footerPxPerMm;
+        const yFooterMm = A4_ALTEZZA_MM - footerAltezzaMm - MARGINE_INFERIORE_FOOTER_MM;
+        pdf.addImage(footerCanvas.toDataURL("image/jpeg", 0.95), "JPEG", 16, yFooterMm, LARGHEZZA_CONTENUTO_MM, footerAltezzaMm);
       }
     }
 
