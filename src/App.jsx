@@ -364,6 +364,16 @@ const G = `
   ::selection{ background:${C.cyan}; color:${C.inkDeep}; }
   input,select,textarea{ font-family:${F_BODY}; }
   .tnum{ font-variant-numeric: tabular-nums; }
+  /* Safari (e in misura minore Chrome Android) zoomano automaticamente la
+     pagina quando un campo con font-size sotto i 16px riceve il focus, e non
+     sempre tornano indietro da soli: risultato, l'interfaccia resta "zoomata"
+     e i pulsanti fissi (es. barra in basso) escono dallo schermo. Sotto la
+     soglia di 860px (lo stesso breakpoint usato per isMobile in JS) forziamo
+     16px su tutti i campi, che elimina il trigger dello zoom senza toccare
+     le dimensioni dei campi su desktop.  */
+  @media (max-width: 860px){
+    input, select, textarea { font-size:16px !important; }
+  }
   @media (prefers-reduced-motion: reduce){ *{ transition:none !important; animation:none !important; } }
 `;
 
