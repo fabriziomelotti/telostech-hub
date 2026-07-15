@@ -2911,20 +2911,50 @@ async function generaPdfBlob(htmlContenuto){
     // prevedibile e verificabile passo per passo. Se il template non usa
     // ".pagina" (es. la conferma d'ordine, che è un unico flusso) si cattura
     // tutto il contenitore come pagina singola.
+    // Un ".pagina" ha solo min-height:297mm, non un limite massimo: se il
+    // contenuto (es. il testo delle condizioni) è più lungo di una pagina
+    // fisica, il canvas catturato sarà più alto di 297mm. Comprimerlo in
+    // un'unica pagina lo distorcerebbe (visto nel PDF di prova) — va invece
+    // tagliato in più pagine fisiche, una fetta alla volta.
     const pagine = Array.from(corpo.querySelectorAll(".pagina"));
     const daCatturare = pagine.length ? pagine : [corpo];
 
     const A4_LARGHEZZA_MM = 210, A4_ALTEZZA_MM = 297;
     const pdf = new jsPDF({ unit: "mm", format: "a4", orientation: "portrait" });
+    let primaPaginaCreata = false; // false finché non abbiamo ancora usato la pagina iniziale che jsPDF crea da sé
 
     for(let i=0; i<daCatturare.length; i++){
       const canvas = await html2canvas(daCatturare[i], {
         scale: 2, useCORS: true, backgroundColor: "#ffffff", logging: false,
       });
-      const immagine = canvas.toDataURL("image/jpeg", 0.95);
-      const altezzaResa = Math.min(canvas.height * A4_LARGHEZZA_MM / canvas.width, A4_ALTEZZA_MM);
-      if(i>0) pdf.addPage();
-      pdf.addImage(immagine, "JPEG", 0, 0, A4_LARGHEZZA_MM, altezzaResa);
+      const pxPerMm = canvas.width / A4_LARGHEZZA_MM;
+      const altezzaTotaleMm = canvas.height / pxPerMm;
+
+      if(altezzaTotaleMm <= A4_ALTEZZA_MM + 0.5){
+        if(primaPaginaCreata) pdf.addPage();
+        pdf.addImage(canvas.toDataURL("image/jpeg", 0.95), "JPEG", 0, 0, A4_LARGHEZZA_MM, altezzaTotaleMm);
+        primaPaginaCreata = true;
+        continue;
+      }
+
+      // Contenuto più alto di una pagina: tagliamo il canvas sorgente in
+      // fette verticali, una per ogni pagina fisica.
+      const altezzaFettaPx = Math.round(A4_ALTEZZA_MM * pxPerMm);
+      let offset = 0;
+      while(offset < canvas.height){
+        const altezzaQuestaFettaPx = Math.min(altezzaFettaPx, canvas.height - offset);
+        const fetta = document.createElement("canvas");
+        fetta.width = canvas.width;
+        fetta.height = altezzaQuestaFettaPx;
+        const ctx = fetta.getContext("2d");
+        ctx.fillStyle = "#ffffff";
+        ctx.fillRect(0, 0, fetta.width, fetta.height);
+        ctx.drawImage(canvas, 0, offset, canvas.width, altezzaQuestaFettaPx, 0, 0, canvas.width, altezzaQuestaFettaPx);
+        if(primaPaginaCreata) pdf.addPage();
+        pdf.addImage(fetta.toDataURL("image/jpeg", 0.95), "JPEG", 0, 0, A4_LARGHEZZA_MM, altezzaQuestaFettaPx / pxPerMm);
+        primaPaginaCreata = true;
+        offset += altezzaQuestaFettaPx;
+      }
     }
 
     return pdf.output("blob");
