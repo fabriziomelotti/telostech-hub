@@ -664,7 +664,7 @@ export default function App(){
           {area==="promemoria" && <Promemoria sessione={sessione} ruolo={role} preventivi={preventivi} interventi={interventi} ordini={ordini} promemoria={promemoria} setPromemoria={setPromemoria} setArea={setArea}/>}
           {area==="preventivi" && <Preventivi cart={cart} setCart={setCart} preventivi={preventivi} setPreventivi={setPreventivi} setOrdini={setOrdini} setArea={setArea} ruolo={role} catalog={catalog} sessione={sessione}/>}
           {area==="ordini" && <Ordini ordini={ordini} setOrdini={setOrdini} preventivi={preventivi} setPreventivi={setPreventivi} setInterventi={setInterventi} catalog={catalog} sessione={sessione} ruolo={role}/>}
-          {area==="interventi" && <Interventi interventi={interventi} setInterventi={setInterventi} attrezzature={attrezzature} sessione={sessione} setArea={setArea} setInterventoDaCompletare={setInterventoDaCompletare}/>}
+          {area==="interventi" && <Interventi interventi={interventi} setInterventi={setInterventi} attrezzature={attrezzature} sessione={sessione} setArea={setArea} setInterventoDaCompletare={setInterventoDaCompletare} catalog={catalog} ruolo={role}/>}
           {area==="rapporti" && <RapportoDemo sessione={sessione} interventi={interventi} setInterventi={setInterventi} interventoDaCompletare={interventoDaCompletare} setInterventoDaCompletare={setInterventoDaCompletare}/>}
           {area==="analytics" && RUOLI_APPROVATORI.includes(role) && <CondizioniAcquisto/>}
           {area==="analytics" && !RUOLI_APPROVATORI.includes(role) && <Placeholder area={area} setArea={setArea}/>}
@@ -6433,10 +6433,234 @@ ${o.firma_cliente ? `
 }
 
 // ─── INTERVENTI ───────────────────────────────────────────────────────────────
-function Interventi({interventi, setInterventi, attrezzature, sessione, setArea, setInterventoDaCompletare}){
+// ─── PREVENTIVI PER INTERVENTI TECNICI ───────────────────────────────────────
+// Diversi dai preventivi di vendita materiale (tabella "preventivi"): qui
+// l'oggetto è un intervento tecnico, con ricambi (dal catalogo o inseriti a
+// mano) e manodopera/trasferta (dal listino di Telos interno, di
+// un'assistenza esterna, o inserita a mano) — vedi tabella
+// "preventivi_intervento" e "assistenze".
+function FormPreventivoIntervento({ preventivo, catalog, attrezzature, sessione, onSalvato, onAnnulla }){
+  const accessToken = trovaAccessToken(sessione);
+  const [cliente, setCliente] = useState(preventivo ? { codice: preventivo.cliente_codice, ragione_sociale: preventivo.cliente } : null);
+  const [attrezzaturaId, setAttrezzaturaId] = useState(preventivo?.attrezzatura_id || "");
+  const [assistenze, setAssistenze] = useState(null);
+  const [assistenzaId, setAssistenzaId] = useState(preventivo?.assistenza_id || "");
+  const [oggetto, setOggetto] = useState(preventivo?.oggetto || "");
+  const [descrizioneAttivita, setDescrizioneAttivita] = useState(preventivo?.descrizione_attivita || "");
+  const [righeRicambi, setRigheRicambi] = useState(preventivo?.righe_ricambi || []);
+  const [righeManodopera, setRigheManodopera] = useState(preventivo?.righe_manodopera || []);
+  const [salvando, setSalvando] = useState(false);
+  const [errore, setErrore] = useState("");
+
+  const [ricercaRicambio, setRicercaRicambio] = useState("");
+  const [manRicNome, setManRicNome] = useState("");
+  const [manRicPrezzo, setManRicPrezzo] = useState("");
+  const [manManDescrizione, setManManDescrizione] = useState("");
+  const [manManPrezzo, setManManPrezzo] = useState("");
+  const [manManUnita, setManManUnita] = useState("");
+
+  useEffect(()=>{
+    sbGetAuth("assistenze", "select=*&attivo=eq.true&order=interno.desc,nome.asc", accessToken)
+      .then(setAssistenze)
+      .catch(()=>setAssistenze([]));
+  },[]);
+
+  const attrezzatureCliente = useMemo(()=>{
+    if(!cliente) return [];
+    return (attrezzature||[]).filter(a=>a.cliente_codice===cliente.codice && a.stato!=="Dismessa");
+  },[attrezzature, cliente]);
+
+  const assistenzaSelezionata = useMemo(()=>(assistenze||[]).find(a=>a.id===assistenzaId), [assistenze, assistenzaId]);
+
+  const risultatiRicambi = useMemo(()=>{
+    const q = ricercaRicambio.trim().toLowerCase();
+    if(q.length<2) return [];
+    return (catalog||[])
+      .filter(p=>(p.cod||"").toLowerCase().includes(q) || (p.nome||"").toLowerCase().includes(q))
+      .slice(0,12);
+  },[ricercaRicambio, catalog]);
+
+  function aggiungiRicambioCatalogo(p){
+    setRigheRicambi(prev=>{
+      const esiste = prev.some(r=>r.tipo==="catalogo" && r.cod===p.cod);
+      if(esiste) return prev.map(r=> (r.tipo==="catalogo" && r.cod===p.cod) ? {...r, qty:(r.qty||1)+1} : r);
+      return [...prev, { tipo:"catalogo", cod:p.cod, nome:p.nome||p.desc, prezzo:p.netto, qty:1 }];
+    });
+    setRicercaRicambio("");
+  }
+  function aggiungiRicambioManuale(){
+    if(!manRicNome.trim() || !manRicPrezzo) return;
+    setRigheRicambi(prev=>[...prev, { tipo:"manuale", nome:manRicNome.trim(), prezzo:parseFloat(manRicPrezzo)||0, qty:1 }]);
+    setManRicNome(""); setManRicPrezzo("");
+  }
+  function rimuoviRicambio(i){ setRigheRicambi(prev=>prev.filter((_,idx)=>idx!==i)); }
+  function cambiaQtyRicambio(i, qty){ setRigheRicambi(prev=>prev.map((r,idx)=>idx===i?{...r,qty:Math.max(1,qty)}:r)); }
+
+  function aggiungiManodoperaDaListino(voce){
+    setRigheManodopera(prev=>[...prev, { tipo:"listino", descrizione:voce.descrizione, prezzo:voce.prezzo, unita:voce.unita, qty:1 }]);
+  }
+  function aggiungiManodoperaManuale(){
+    if(!manManDescrizione.trim() || !manManPrezzo) return;
+    setRigheManodopera(prev=>[...prev, { tipo:"manuale", descrizione:manManDescrizione.trim(), prezzo:parseFloat(manManPrezzo)||0, unita:manManUnita.trim()||"nr", qty:1 }]);
+    setManManDescrizione(""); setManManPrezzo(""); setManManUnita("");
+  }
+  function rimuoviManodopera(i){ setRigheManodopera(prev=>prev.filter((_,idx)=>idx!==i)); }
+  function cambiaQtyManodopera(i, qty){ setRigheManodopera(prev=>prev.map((r,idx)=>idx===i?{...r,qty:Math.max(1,qty)}:r)); }
+
+  const totale = [...righeRicambi, ...righeManodopera].reduce((s,r)=>s+(r.prezzo||0)*(r.qty||1), 0);
+
+  async function salva(){
+    if(!cliente){ setErrore("Seleziona un cliente."); return; }
+    if(!oggetto.trim()){ setErrore("Inserisci l'oggetto del preventivo."); return; }
+    setErrore(""); setSalvando(true);
+    const payload = {
+      cliente: cliente.ragione_sociale, cliente_codice: cliente.codice || null,
+      attrezzatura_id: attrezzaturaId || null,
+      oggetto: oggetto.trim(),
+      descrizione_attivita: descrizioneAttivita.trim() || null,
+      assistenza_id: assistenzaId || null,
+      righe_ricambi: righeRicambi,
+      righe_manodopera: righeManodopera,
+      val: totale,
+      aggiornato_il: new Date().toISOString(),
+    };
+    try{
+      if(preventivo) await sbAuth("PATCH","preventivi_intervento",`id=eq.${preventivo.id}`,payload,accessToken);
+      else await sbAuth("POST","preventivi_intervento","",{...payload, stato:"Bozza", creato_da_nome:sessione?.nome||null},accessToken);
+      onSalvato();
+    }catch(err){
+      setErrore("Salvataggio non riuscito: "+err.message);
+    }
+    setSalvando(false);
+  }
+
+  return (
+    <div>
+      <button onClick={onAnnulla} style={{...S.btnS,marginBottom:14}}>← Torna agli interventi</button>
+      <div style={{fontFamily:F_DISPLAY,fontSize:17,fontWeight:600,marginBottom:16}}>{preventivo?"Modifica preventivo intervento":"Nuovo preventivo intervento"}</div>
+
+      <div style={S.eyebrow}>Cliente *</div>
+      <div style={{marginBottom:16}}>
+        <SelezioneCliente sessione={sessione} clienteSelezionato={cliente} onSeleziona={c=>{ setCliente(c); setAttrezzaturaId(""); }}/>
+        {cliente && <button onClick={()=>{ setCliente(null); setAttrezzaturaId(""); }} style={{...S.btnS,marginTop:8,padding:"5px 10px",fontSize:11.5}}>Cambia cliente</button>}
+      </div>
+
+      {cliente && attrezzatureCliente.length>0 && (
+        <>
+          <div style={S.eyebrow}>Strumento su cui intervenire (facoltativo)</div>
+          <select value={attrezzaturaId} onChange={e=>setAttrezzaturaId(e.target.value)} style={{...S.inp,marginBottom:16}}>
+            <option value="">— Nessuno / non specificato —</option>
+            {attrezzatureCliente.map(a=>(
+              <option key={a.id} value={a.id}>{a.nome_prodotto}{a.numero_serie?` · S/N ${a.numero_serie}`:""}</option>
+            ))}
+          </select>
+        </>
+      )}
+
+      <div style={S.eyebrow}>Oggetto del preventivo *</div>
+      <input value={oggetto} onChange={e=>setOggetto(e.target.value)} placeholder="es. Manutenzione straordinaria ponte sollevatore" style={{...S.inp,marginBottom:16}}/>
+
+      <div style={S.eyebrow}>Descrizione dell'attività</div>
+      <textarea value={descrizioneAttivita} onChange={e=>setDescrizioneAttivita(e.target.value)} rows={3} placeholder="Cosa si andrà a fare, in dettaglio" style={{...S.inp,resize:"vertical",marginBottom:16}}/>
+
+      <div style={S.eyebrow}>Chi esegue l'intervento</div>
+      <select value={assistenzaId} onChange={e=>setAssistenzaId(e.target.value)} style={{...S.inp,marginBottom:16}}>
+        <option value="">— Da definire —</option>
+        {(assistenze||[]).map(a=>(
+          <option key={a.id} value={a.id}>{a.interno?"Telos (interno)":a.nome}</option>
+        ))}
+      </select>
+
+      {/* Ricambi */}
+      <div style={S.eyebrow}>Ricambi</div>
+      {righeRicambi.length===0 && <div style={{fontSize:12.5,color:"#9AA3AB",padding:"6px 0"}}>Nessun ricambio ancora.</div>}
+      {righeRicambi.map((r,i)=>(
+        <div key={i} style={{...S.card,cursor:"default",display:"flex",alignItems:"center",gap:8,marginBottom:6}}>
+          <div style={{flex:1,minWidth:0}}>
+            <div style={{fontWeight:600,fontSize:12.5}}>{r.nome}</div>
+            <div className="tnum" style={{fontSize:11,color:"#9AA3AB"}}>{r.tipo==="catalogo"?`${r.cod} · `:"manuale · "}€{r.prezzo.toFixed(2)} cad.</div>
+          </div>
+          <input type="number" min="1" value={r.qty} onChange={e=>cambiaQtyRicambio(i,parseInt(e.target.value,10)||1)} style={{width:46,padding:"5px 6px",fontSize:12,border:`1px solid ${C.paperLine}`,borderRadius:5,textAlign:"center"}}/>
+          <span className="tnum" style={{fontWeight:700,fontSize:12.5,fontFamily:F_MONO,width:70,textAlign:"right"}}>€{(r.prezzo*r.qty).toFixed(2)}</span>
+          <button onClick={()=>rimuoviRicambio(i)} style={{background:"none",border:"none",fontSize:16,color:"#9AA3AB",cursor:"pointer"}}>✕</button>
+        </div>
+      ))}
+      <input value={ricercaRicambio} onChange={e=>setRicercaRicambio(e.target.value)} placeholder="Cerca un ricambio a catalogo…" style={{...S.inp,marginTop:8,marginBottom:6}}/>
+      {risultatiRicambi.map(p=>(
+        <div key={p.cod} onClick={()=>aggiungiRicambioCatalogo(p)} style={{...S.card,cursor:"pointer",display:"flex",justifyContent:"space-between",alignItems:"center",gap:10,marginBottom:6}}>
+          <div style={{minWidth:0}}>
+            <div style={{fontWeight:600,fontSize:12.5}}>{p.nome}</div>
+            <div className="tnum" style={{fontSize:11,color:"#9AA3AB"}}>{p.cod} · €{p.netto.toFixed(2)}</div>
+          </div>
+          <span style={{fontSize:16,color:C.ink,flexShrink:0}}>+</span>
+        </div>
+      ))}
+      <div style={{display:"flex",gap:8,marginTop:8,marginBottom:16,flexWrap:"wrap"}}>
+        <input value={manRicNome} onChange={e=>setManRicNome(e.target.value)} placeholder="Ricambio inserito a mano…" style={{...S.inp,flex:"1 1 180px"}}/>
+        <input type="number" min="0" step="0.01" value={manRicPrezzo} onChange={e=>setManRicPrezzo(e.target.value)} placeholder="€" style={{width:80,padding:"10px 12px",fontSize:13,border:`1px solid ${C.paperLine}`,borderRadius:7}}/>
+        <button onClick={aggiungiRicambioManuale} style={S.btnS}>+ Aggiungi</button>
+      </div>
+
+      {/* Manodopera / trasferta */}
+      <div style={S.eyebrow}>Manodopera e trasferta</div>
+      {righeManodopera.length===0 && <div style={{fontSize:12.5,color:"#9AA3AB",padding:"6px 0"}}>Nessuna voce ancora.</div>}
+      {righeManodopera.map((r,i)=>(
+        <div key={i} style={{...S.card,cursor:"default",display:"flex",alignItems:"center",gap:8,marginBottom:6}}>
+          <div style={{flex:1,minWidth:0}}>
+            <div style={{fontWeight:600,fontSize:12.5}}>{r.descrizione}</div>
+            <div className="tnum" style={{fontSize:11,color:"#9AA3AB"}}>{r.tipo==="listino"?"da listino · ":"manuale · "}€{r.prezzo.toFixed(2)} / {r.unita||"nr"}</div>
+          </div>
+          <input type="number" min="1" value={r.qty} onChange={e=>cambiaQtyManodopera(i,parseInt(e.target.value,10)||1)} style={{width:46,padding:"5px 6px",fontSize:12,border:`1px solid ${C.paperLine}`,borderRadius:5,textAlign:"center"}}/>
+          <span className="tnum" style={{fontWeight:700,fontSize:12.5,fontFamily:F_MONO,width:70,textAlign:"right"}}>€{(r.prezzo*r.qty).toFixed(2)}</span>
+          <button onClick={()=>rimuoviManodopera(i)} style={{background:"none",border:"none",fontSize:16,color:"#9AA3AB",cursor:"pointer"}}>✕</button>
+        </div>
+      ))}
+      {assistenzaSelezionata && (assistenzaSelezionata.listino||[]).length>0 && (
+        <div style={{marginTop:8,marginBottom:8}}>
+          <div style={{fontSize:11.5,color:"#9AA3AB",marginBottom:6}}>Dal listino di {assistenzaSelezionata.interno?"Telos":assistenzaSelezionata.nome}:</div>
+          {assistenzaSelezionata.listino.map((v,i)=>(
+            <div key={i} onClick={()=>aggiungiManodoperaDaListino(v)} style={{...S.card,cursor:"pointer",display:"flex",justifyContent:"space-between",alignItems:"center",gap:10,marginBottom:6}}>
+              <div style={{fontWeight:600,fontSize:12.5}}>{v.descrizione} <span style={{fontWeight:400,color:"#9AA3AB"}}>— €{v.prezzo.toFixed(2)}/{v.unita}</span></div>
+              <span style={{fontSize:16,color:C.ink,flexShrink:0}}>+</span>
+            </div>
+          ))}
+        </div>
+      )}
+      <div style={{display:"flex",gap:8,marginTop:8,marginBottom:16,flexWrap:"wrap"}}>
+        <input value={manManDescrizione} onChange={e=>setManManDescrizione(e.target.value)} placeholder="Voce inserita a mano…" style={{...S.inp,flex:"1 1 180px"}}/>
+        <input type="number" min="0" step="0.01" value={manManPrezzo} onChange={e=>setManManPrezzo(e.target.value)} placeholder="€" style={{width:80,padding:"10px 12px",fontSize:13,border:`1px solid ${C.paperLine}`,borderRadius:7}}/>
+        <input value={manManUnita} onChange={e=>setManManUnita(e.target.value)} placeholder="unità" style={{width:70,padding:"10px 12px",fontSize:13,border:`1px solid ${C.paperLine}`,borderRadius:7}}/>
+        <button onClick={aggiungiManodoperaManuale} style={S.btnS}>+ Aggiungi</button>
+      </div>
+
+      <div style={{display:"flex",justifyContent:"space-between",padding:"14px 0",borderTop:`1px solid ${C.paperLine}`,marginBottom:16}}>
+        <span style={{fontWeight:600,fontSize:14}}>Totale</span>
+        <span className="tnum" style={{fontWeight:700,fontSize:18,fontFamily:F_MONO,color:C.ink}}>€{totale.toFixed(2)}</span>
+      </div>
+
+      {errore && <div style={{fontSize:12.5,color:C.danger,marginBottom:12}}>⚠ {errore}</div>}
+      <button disabled={salvando} onClick={salva} style={{...S.btnP,padding:"12px 20px",fontSize:14,opacity:salvando?0.6:1}}>{salvando?"Salvo…":"Salva preventivo intervento"}</button>
+    </div>
+  );
+}
+
+function Interventi({interventi, setInterventi, attrezzature, sessione, setArea, setInterventoDaCompletare, catalog, ruolo}){
   const accessToken = trovaAccessToken(sessione);
   const [modificaBloccoId,setModificaBloccoId] = useState(null);
   const [notaBlocco,setNotaBlocco] = useState("");
+  // Preventivi per interventi tecnici (manodopera/ricambi) — vedi
+  // FormPreventivoIntervento più sopra, diversi dai preventivi di vendita
+  // materiale.
+  const [vista,setVista] = useState("interventi"); // interventi | preventivi-intervento | nuovo-preventivo-intervento
+  const [preventiviIntervento,setPreventiviIntervento] = useState(null);
+  const [preventivoInterventoSel,setPreventivoInterventoSel] = useState(null); // per la modifica
+  function ricaricaPreventiviIntervento(){
+    sbGetAuth("preventivi_intervento", "select=*&order=creato_il.desc&limit=200", accessToken)
+      .then(setPreventiviIntervento)
+      .catch(()=>setPreventiviIntervento([]));
+  }
+  useEffect(()=>{ ricaricaPreventiviIntervento(); },[]);
+
   const pianificati = (interventi||[]).filter(i=>i.stato==="Pianificato")
     .sort((a,b)=>new Date(a.data_pianificata||"9999-12-31")-new Date(b.data_pianificata||"9999-12-31"));
   const completati = (interventi||[]).filter(i=>i.stato==="Completato")
@@ -6513,8 +6737,53 @@ function Interventi({interventi, setInterventi, attrezzature, sessione, setArea,
     );
   }
 
+  if(vista==="nuovo-preventivo-intervento"){
+    return (
+      <FormPreventivoIntervento
+        preventivo={preventivoInterventoSel}
+        catalog={catalog}
+        attrezzature={attrezzature}
+        sessione={sessione}
+        onSalvato={()=>{ setVista("preventivi-intervento"); setPreventivoInterventoSel(null); ricaricaPreventiviIntervento(); }}
+        onAnnulla={()=>{ setVista(preventivoInterventoSel?"preventivi-intervento":"interventi"); setPreventivoInterventoSel(null); }}
+      />
+    );
+  }
+
+  if(vista==="preventivi-intervento"){
+    return (
+      <div>
+        <button onClick={()=>setVista("interventi")} style={{...S.btnS,marginBottom:14}}>← Torna agli interventi</button>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
+          <div style={S.eyebrow}>Preventivi intervento ({(preventiviIntervento||[]).length})</div>
+          <button onClick={()=>{ setPreventivoInterventoSel(null); setVista("nuovo-preventivo-intervento"); }} style={S.btnP}>+ Nuovo</button>
+        </div>
+        {preventiviIntervento===null && <div style={{fontSize:12.5,color:C.steel}}>Caricamento…</div>}
+        {preventiviIntervento && preventiviIntervento.length===0 && (
+          <div style={{fontSize:12.5,color:"#9AA3AB"}}>Nessun preventivo intervento ancora.</div>
+        )}
+        {preventiviIntervento && preventiviIntervento.map(p=>(
+          <div key={p.id} onClick={()=>{ setPreventivoInterventoSel(p); setVista("nuovo-preventivo-intervento"); }} style={{...S.card,cursor:"pointer",display:"flex",justifyContent:"space-between",alignItems:"center",gap:10,marginBottom:8}}>
+            <div style={{minWidth:0}}>
+              <div style={{fontWeight:600,fontSize:13.5}}>{p.oggetto||"(senza oggetto)"}</div>
+              <div style={{fontSize:11.5,color:"#8A929A",marginTop:2}}>{p.cliente||"Cliente non specificato"}</div>
+            </div>
+            <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:4,flexShrink:0}}>
+              <span className="tnum" style={{fontWeight:700,fontFamily:F_MONO,fontSize:14}}>€{(p.val||0).toFixed(2)}</span>
+              <Tag tone={p.stato==="Confermato"?"ok":"steel"}>{p.stato}</Tag>
+            </div>
+          </div>
+        ))}
+      </div>
+    );
+  }
+
   return (
     <div>
+      <div style={{display:"flex",justifyContent:"flex-end",marginBottom:16}}>
+        <button onClick={()=>setVista("preventivi-intervento")} style={S.btnP}>🧾 Preventivi intervento ({(preventiviIntervento||[]).length})</button>
+      </div>
+
       {scadenzePromemoria.length>0 && (
         <div style={{marginBottom:24}}>
           <div style={S.eyebrow}>Scadenze attrezzature ({scadenzePromemoria.length})</div>
@@ -7983,6 +8252,156 @@ function GestioneLibreriaDocumentiFinanziaria({ accessToken, onIndietro }){
   );
 }
 
+// ─── GESTIONE ASSISTENZE (Telos interno + partner esterni) ──────────────────
+// Chi esegue un intervento tecnico e col listino di manodopera/trasferta
+// associato — usato dai Preventivi intervento (vedi FormPreventivoIntervento
+// in Interventi). La riga "Telos (interno)" è unica, creata dalla
+// migrazione SQL, e non eliminabile da qui (solo modificabile, per non
+// restare senza l'opzione "Telos interno" nei preventivi intervento).
+function GestioneAssistenze({ sessione, ruolo }){
+  const accessToken = trovaAccessToken(sessione);
+  const [assistenze, setAssistenze] = useState(null);
+  const [errore, setErrore] = useState("");
+  const [inModifica, setInModifica] = useState(null); // null | "nuovo" | oggetto assistenza esistente
+  const [confermaElimina, setConfermaElimina] = useState(null);
+
+  function ricarica(){
+    sbGetAuth("assistenze", "select=*&order=interno.desc,nome.asc", accessToken)
+      .then(setAssistenze)
+      .catch(err=>setErrore(err.message));
+  }
+  useEffect(()=>{ ricarica(); },[]);
+
+  async function eliminaAssistenza(id){
+    try{
+      await sbAuth("DELETE","assistenze",`id=eq.${id}`,null,accessToken);
+      setConfermaElimina(null);
+      ricarica();
+    }catch(err){
+      setErrore("Eliminazione non riuscita: "+err.message);
+    }
+  }
+  async function toggleAttivo(a){
+    try{
+      await sbAuth("PATCH","assistenze",`id=eq.${a.id}`,{attivo:!a.attivo},accessToken);
+      ricarica();
+    }catch(err){
+      setErrore("Modifica non riuscita: "+err.message);
+    }
+  }
+
+  if(inModifica){
+    return (
+      <FormAssistenza
+        assistenza={inModifica==="nuovo"?null:inModifica}
+        accessToken={accessToken}
+        onSalvato={()=>{ setInModifica(null); ricarica(); }}
+        onAnnulla={()=>setInModifica(null)}
+      />
+    );
+  }
+
+  return (
+    <div>
+      <div style={{fontFamily:F_DISPLAY,fontSize:18,fontWeight:600,marginBottom:4}}>ASSISTENZE</div>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14,flexWrap:"wrap",gap:10}}>
+        <div style={{fontSize:13,color:C.steel}}>Chi esegue gli interventi tecnici — Telos con i propri tecnici o un partner esterno — e il relativo listino di manodopera/trasferta.</div>
+        <button onClick={()=>setInModifica("nuovo")} style={S.btnP}>+ Nuovo partner</button>
+      </div>
+      {errore && <div style={{fontSize:12.5,color:C.danger,marginBottom:10}}>⚠ {errore}</div>}
+      {assistenze===null && !errore && <div style={{fontSize:12.5,color:C.steel}}>Caricamento…</div>}
+      {assistenze && assistenze.map(a=>(
+        <div key={a.id} style={{...S.card,cursor:"default",display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:10,marginBottom:8,opacity:a.attivo?1:0.55}}>
+          <div style={{minWidth:0}}>
+            <div style={{fontWeight:600,fontSize:14}}>
+              {a.nome}
+              {a.interno && <Tag tone="primary">Telos</Tag>}
+              {!a.attivo && <span style={{fontSize:11,color:C.warn,marginLeft:8}}>(disattivato)</span>}
+            </div>
+            <div style={{fontSize:11,color:"#9AA3AB",marginTop:4}}>{(a.listino||[]).length} voci di listino</div>
+          </div>
+          <div style={{display:"flex",gap:6,flexShrink:0}}>
+            <button onClick={()=>toggleAttivo(a)} style={{...S.btnS,padding:"6px 10px",fontSize:11.5}}>{a.attivo?"Disattiva":"Riattiva"}</button>
+            <button onClick={()=>setInModifica(a)} style={{...S.btnS,padding:"6px 10px",fontSize:11.5}}>✎ Modifica</button>
+            {!a.interno && (confermaElimina===a.id ? (
+              <button onClick={()=>eliminaAssistenza(a.id)} style={{...S.btnS,padding:"6px 10px",fontSize:11.5,background:C.danger,color:"#fff",borderColor:C.danger}}>Confermi?</button>
+            ) : (
+              <button onClick={()=>setConfermaElimina(a.id)} style={{background:"none",border:"none",fontSize:15,color:"#9AA3AB",cursor:"pointer"}}>✕</button>
+            ))}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function FormAssistenza({ assistenza, accessToken, onSalvato, onAnnulla }){
+  const [nome, setNome] = useState(assistenza?.nome || "");
+  const [listino, setListino] = useState(assistenza?.listino || []); // [{descrizione,prezzo,unita}]
+  const [nuovaDescrizione, setNuovaDescrizione] = useState("");
+  const [nuovoPrezzo, setNuovoPrezzo] = useState("");
+  const [nuovaUnita, setNuovaUnita] = useState("ora");
+  const [salvando, setSalvando] = useState(false);
+  const [errore, setErrore] = useState("");
+
+  function aggiungiVoce(){
+    if(!nuovaDescrizione.trim() || !nuovoPrezzo) return;
+    setListino(prev => [...prev, { descrizione: nuovaDescrizione.trim(), prezzo: parseFloat(nuovoPrezzo)||0, unita: nuovaUnita.trim()||"nr" }]);
+    setNuovaDescrizione(""); setNuovoPrezzo(""); setNuovaUnita("ora");
+  }
+  function rimuoviVoce(i){
+    setListino(prev => prev.filter((_,idx)=>idx!==i));
+  }
+  function modificaVoce(i, campo, valore){
+    setListino(prev => prev.map((v,idx)=> idx===i ? {...v, [campo]:valore} : v));
+  }
+
+  async function salva(){
+    if(!nome.trim()){ setErrore("Il nome è obbligatorio."); return; }
+    setErrore(""); setSalvando(true);
+    const payload = { nome: nome.trim(), listino };
+    try{
+      if(assistenza) await sbAuth("PATCH","assistenze",`id=eq.${assistenza.id}`,payload,accessToken);
+      else await sbAuth("POST","assistenze","",{...payload, interno:false, attivo:true},accessToken);
+      onSalvato();
+    }catch(err){
+      setErrore("Salvataggio non riuscito: "+err.message);
+    }
+    setSalvando(false);
+  }
+
+  return (
+    <div>
+      <button onClick={onAnnulla} style={{...S.btnS,marginBottom:14}}>← Torna alle assistenze</button>
+      <div style={{fontFamily:F_DISPLAY,fontSize:17,fontWeight:600,marginBottom:16}}>{assistenza?"Modifica assistenza":"Nuovo partner"}</div>
+
+      <div style={S.eyebrow}>Nome *</div>
+      <input value={nome} onChange={e=>setNome(e.target.value)} disabled={assistenza?.interno} placeholder="es. Officina Rossi Assistenza" style={{...S.inp,marginBottom:16,opacity:assistenza?.interno?0.6:1}}/>
+
+      <div style={S.eyebrow}>Listino manodopera/trasferta</div>
+      {listino.length===0 && <div style={{fontSize:12.5,color:"#9AA3AB",padding:"8px 0"}}>Nessuna voce ancora.</div>}
+      {listino.map((v,i)=>(
+        <div key={i} style={{...S.card,cursor:"default",display:"flex",alignItems:"center",gap:8,marginBottom:6}}>
+          <input value={v.descrizione} onChange={e=>modificaVoce(i,"descrizione",e.target.value)} style={{...S.inp,flex:1,padding:"6px 9px",fontSize:12.5}}/>
+          <input type="number" min="0" step="0.01" value={v.prezzo} onChange={e=>modificaVoce(i,"prezzo",parseFloat(e.target.value)||0)} style={{width:80,padding:"6px 9px",fontSize:12.5,border:`1px solid ${C.paperLine}`,borderRadius:6,textAlign:"right"}}/>
+          <input value={v.unita} onChange={e=>modificaVoce(i,"unita",e.target.value)} placeholder="ora/km/nr" style={{width:60,padding:"6px 9px",fontSize:12.5,border:`1px solid ${C.paperLine}`,borderRadius:6}}/>
+          <button onClick={()=>rimuoviVoce(i)} style={{background:"none",border:"none",fontSize:16,color:"#9AA3AB",cursor:"pointer",flexShrink:0}}>✕</button>
+        </div>
+      ))}
+
+      <div style={{display:"flex",gap:8,marginTop:10,marginBottom:16,flexWrap:"wrap"}}>
+        <input value={nuovaDescrizione} onChange={e=>setNuovaDescrizione(e.target.value)} placeholder="es. Manodopera oraria" style={{...S.inp,flex:"1 1 180px"}}/>
+        <input type="number" min="0" step="0.01" value={nuovoPrezzo} onChange={e=>setNuovoPrezzo(e.target.value)} placeholder="€" style={{width:80,padding:"10px 12px",fontSize:13,border:`1px solid ${C.paperLine}`,borderRadius:7}}/>
+        <input value={nuovaUnita} onChange={e=>setNuovaUnita(e.target.value)} placeholder="unità" style={{width:70,padding:"10px 12px",fontSize:13,border:`1px solid ${C.paperLine}`,borderRadius:7}}/>
+        <button onClick={aggiungiVoce} style={S.btnS}>+ Aggiungi voce</button>
+      </div>
+
+      {errore && <div style={{fontSize:12.5,color:C.danger,margin:"12px 0"}}>⚠ {errore}</div>}
+      <button disabled={salvando} onClick={salva} style={{...S.btnP,opacity:salvando?0.6:1}}>{salvando?"Salvo…":"Salva assistenza"}</button>
+    </div>
+  );
+}
+
 function GestionePacchetti({ sessione, catalog, ruolo }){
   const accessToken = trovaAccessToken(sessione);
   const [pacchetti, setPacchetti] = useState(null);
@@ -8667,6 +9086,7 @@ function PannelloGestione({ setCatalog, ruolo, sessione, catalog }) {
             ["listino","🧾 Listino","Importa un listino fornitore completo"],
             ["logistica","⚑ Logistica","Ordini sospesi e in gestione"],
             ["pacchetti","📦 Pacchetti","Kit di prodotti, finanziaria e libreria documenti"],
+            ["assistenze","🔧 Assistenze","Telos interno e partner esterni, coi loro listini"],
           ].map(([id,lbl,sub])=>(
             <div key={id} onClick={()=>setTab(id)} style={{...S.card,cursor:"pointer",display:"flex",justifyContent:"space-between",alignItems:"center",gap:10,marginBottom:8}}>
               <div>
@@ -8694,6 +9114,8 @@ function PannelloGestione({ setCatalog, ruolo, sessione, catalog }) {
           {tab==="listino" && <GestioneListinoCompleto sessione={sessione}/>}
 
           {tab==="pacchetti" && <GestionePacchetti ruolo={ruolo} sessione={sessione} catalog={catalog}/>}
+
+          {tab==="assistenze" && <GestioneAssistenze ruolo={ruolo} sessione={sessione}/>}
 
       {tab==="import" && (
         <div>
