@@ -134,15 +134,15 @@ const RUOLI = {
   tecnico: {label:"Tecnico", initials:"LR", nome:"Luca Rossi",
     nav:["home","ai","interventi","rapporti","clienti","promemoria","prodotti"]},
   responsabile: {label:"Responsabile", initials:"GF", nome:"Giovanni Ferri",
-    nav:["home","ai","prodotti","clienti","promemoria","preventivi","ordini","interventi","rapporti","analytics","saltati","pacchetti","gestione"]},
+    nav:["home","ai","prodotti","clienti","promemoria","preventivi","ordini","saltati","interventi","rapporti","analytics","gestione"]},
   admin: {label:"Admin", initials:"AM", nome:"Amministratore",
-    nav:["home","ai","prodotti","clienti","promemoria","preventivi","ordini","interventi","rapporti","analytics","saltati","admin","pacchetti","gestione"]},
+    nav:["home","ai","prodotti","clienti","promemoria","preventivi","ordini","saltati","interventi","rapporti","analytics","gestione","admin"]},
 };
 const NAV_META = {
   home:{icon:"⌂",label:"Dashboard"}, ai:{icon:"✦",label:"Assistente"}, prodotti:{icon:"▣",label:"Catalogo"},
   clienti:{icon:"◉",label:"Clienti"}, promemoria:{icon:"⚑",label:"Promemoria"}, preventivi:{icon:"▤",label:"Preventivi"}, ordini:{icon:"⬡",label:"Ordini"},
   interventi:{icon:"⚒",label:"Interventi"}, rapporti:{icon:"☑",label:"Rapporto"}, analytics:{icon:"◈",label:"Condizioni"},
-  saltati:{icon:"⊘",label:"Saltati"}, admin:{icon:"⚙",label:"Admin"}, pacchetti:{icon:"📦",label:"Pacchetti"}, gestione:{icon:"🛠",label:"Gestione"},
+  saltati:{icon:"⊘",label:"Trattative bloccate"}, admin:{icon:"⚙",label:"Admin"}, gestione:{icon:"🛠",label:"Gestione"},
 };
 function navMobile(nav){ return nav.slice(0,4).concat(nav.length>4?["more"]:[]); }
 
@@ -672,7 +672,6 @@ export default function App(){
           {area==="saltati" && !RUOLI_APPROVATORI.includes(role) && <Placeholder area={area} setArea={setArea}/>}
           {area==="admin" && <PannelloAdmin ruolo={role} sessione={sessione}/>}
           {area==="gestione" && <PannelloGestione setCatalog={setCatalog} ruolo={role} sessione={sessione} catalog={catalog}/>}
-          {area==="pacchetti" && <GestionePacchetti ruolo={role} sessione={sessione} catalog={catalog}/>}
         </div>
 
         {isMobile && (
@@ -5319,7 +5318,7 @@ function PreventiviSaltati({preventivi}){
 
   return (
     <div>
-      <div style={S.eyebrow}>Preventivi saltati — tutto il team</div>
+      <div style={S.eyebrow}>Trattative bloccate — tutto il team</div>
       <div style={{fontSize:12.5,color:"#5B6770",marginBottom:18,lineHeight:1.6}}>
         Trattative chiuse senza esito, con la motivazione indicata da chi le ha gestite. Utile per individuare pattern ricorrenti (prezzo, concorrenza, tempistiche) e correggere l'approccio commerciale.
       </div>
@@ -8667,6 +8666,7 @@ function PannelloGestione({ setCatalog, ruolo, sessione, catalog }) {
             ["prezzi","💶 Prezzi","Aggiorna i prezzi da un listino fornitore"],
             ["listino","🧾 Listino","Importa un listino fornitore completo"],
             ["logistica","⚑ Logistica","Ordini sospesi e in gestione"],
+            ["pacchetti","📦 Pacchetti","Kit di prodotti, finanziaria e libreria documenti"],
           ].map(([id,lbl,sub])=>(
             <div key={id} onClick={()=>setTab(id)} style={{...S.card,cursor:"pointer",display:"flex",justifyContent:"space-between",alignItems:"center",gap:10,marginBottom:8}}>
               <div>
@@ -8692,6 +8692,8 @@ function PannelloGestione({ setCatalog, ruolo, sessione, catalog }) {
           {tab==="prezzi" && <GestionePrezziFornitore sessione={sessione}/>}
 
           {tab==="listino" && <GestioneListinoCompleto sessione={sessione}/>}
+
+          {tab==="pacchetti" && <GestionePacchetti ruolo={ruolo} sessione={sessione} catalog={catalog}/>}
 
       {tab==="import" && (
         <div>
