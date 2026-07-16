@@ -1144,6 +1144,7 @@ async function searchSemantica(query, catalog, accessToken){
 // "DA COMPLETARE" nel livello 1 di navigazione — raccoglie i prodotti senza
 // categoria assegnata, visibile solo a responsabile/admin (vedi CompletaCategoria).
 const DA_COMPLETARE = "__DA_COMPLETARE__";
+const CATEGORIA_PACCHETTI = "__PACCHETTI__";
 
 // Campi che consideriamo "da completare" su un prodotto: categoria, tipologia,
 // marca, settore o listino mancanti/non validi. Usata sia per il conteggio
@@ -1184,6 +1185,15 @@ function Prodotti({cart,setCart,catalog:catProp,catalogLoading,sessione,ruolo,se
   const puoCompletareCategorie = ruolo==="admin" || ruolo==="responsabile";
   const [aiResults,setAiResults]=useState(null);
   const [aiSearching,setAiSearching]=useState(false);
+  // Pacchetti mostrati come pseudo-categoria nel catalogo (vedi
+  // CATEGORIA_PACCHETTI) — caricati una volta all'apertura, non fanno parte
+  // del catalogo prodotti vero e proprio.
+  const [pacchettiCatalogo,setPacchettiCatalogo]=useState(null);
+  useEffect(()=>{
+    sbGetAuth("pacchetti", "select=*&attivo=eq.true&order=nome.asc", accessToken)
+      .then(setPacchettiCatalogo)
+      .catch(()=>setPacchettiCatalogo([]));
+  },[]);
 
   // L'indice di ricerca su ~27.000 prodotti è pesante da costruire: farlo
   // durante il render (useMemo) congela l'interfaccia per alcuni secondi.
@@ -1277,7 +1287,7 @@ function Prodotti({cart,setCart,catalog:catProp,catalogLoading,sessione,ruolo,se
 
   // sottoinsieme corrente in base ai livelli selezionati
   let liv1 = CATS;
-  let dopoCat = (selCat && selCat!==DA_COMPLETARE) ? liv1.filter(p=>p.cat===selCat) : null;
+  let dopoCat = (selCat && selCat!==DA_COMPLETARE && selCat!==CATEGORIA_PACCHETTI) ? liv1.filter(p=>p.cat===selCat) : null;
   const settoriDisponibili = dopoCat ? opzioniSettore(dopoCat) : [];
   const settoreAttivo = settoriDisponibili.length>0; // il livello esiste solo se ci sono dati
   let dopoSettore = dopoCat
@@ -1328,7 +1338,7 @@ function Prodotti({cart,setCart,catalog:catProp,catalogLoading,sessione,ruolo,se
   function Breadcrumb(){
     const parti=[];
     parti.push({label:"Tutte le categorie", onClick:resetNav});
-    if(selCat) parti.push({label:selCat===DA_COMPLETARE?"Da completare":selCat, onClick:()=>{setSelSettore(null);setSelTip(null);setSelMar(null);}});
+    if(selCat) parti.push({label:selCat===DA_COMPLETARE?"Da completare":selCat===CATEGORIA_PACCHETTI?"Pacchetti":selCat, onClick:()=>{setSelSettore(null);setSelTip(null);setSelMar(null);}});
     if(selSettore) parti.push({label:selSettore, onClick:()=>{setSelTip(null);setSelMar(null);}});
     if(selTip) parti.push({label:selTip, onClick:()=>setSelMar(null)});
     if(selMar) parti.push({label:selMar, onClick:()=>{}});
@@ -1389,6 +1399,12 @@ function Prodotti({cart,setCart,catalog:catProp,catalogLoading,sessione,ruolo,se
         {/* Livello 1: categorie */}
         {!selCat && (<>
           <div style={{...S.eyebrow,display:"flex",justifyContent:"space-between"}}><span>Categorie</span><span className="tnum">{CATS.length} articoli</span></div>
+          {pacchettiCatalogo && pacchettiCatalogo.length>0 && (
+            <div onClick={()=>setSelCat(CATEGORIA_PACCHETTI)} style={{...S.card,cursor:"pointer",display:"flex",justifyContent:"space-between",alignItems:"center",gap:10,borderColor:C.cyan,background:"rgba(87,206,202,0.08)"}}>
+              <span style={{fontWeight:600,fontSize:13.5,display:"flex",alignItems:"center",gap:6}}>📦 PACCHETTI</span>
+              <span className="tnum" style={{fontSize:11,color:"#5B6770",fontFamily:F_MONO,flexShrink:0}}>{pacchettiCatalogo.length} ›</span>
+            </div>
+          )}
           {opzioni(CATS,"cat").map(([nome,n])=>VoceNav(nome,n,()=>setSelCat(nome)))}
           {puoCompletareCategorie && prodottiDaCompletare.length>0 && (
             <div onClick={()=>setSelCat(DA_COMPLETARE)} style={{...S.card,cursor:"pointer",display:"flex",justifyContent:"space-between",alignItems:"center",gap:10,borderColor:C.warn,background:"rgba(217,164,65,0.08)"}}>
@@ -1399,6 +1415,24 @@ function Prodotti({cart,setCart,catalog:catProp,catalogLoading,sessione,ruolo,se
             </div>
           )}
         </>)}
+
+        {/* Categoria virtuale: pacchetti, consultabili da tutti, modificabili da admin/responsabile */}
+        {selCat===CATEGORIA_PACCHETTI && (
+          <CatalogoPacchetti
+            pacchetti={pacchettiCatalogo||[]}
+            catalog={CATS}
+            ruolo={ruolo}
+            sessione={sessione}
+            cart={cart}
+            setCart={setCart}
+            onIndietro={()=>setSelCat(null)}
+            onPacchettiAggiornati={()=>{
+              sbGetAuth("pacchetti", "select=*&attivo=eq.true&order=nome.asc", accessToken)
+                .then(setPacchettiCatalogo)
+                .catch(()=>{});
+            }}
+          />
+        )}
 
         {/* Categoria virtuale: prodotti senza categoria, completamento in blocco */}
         {selCat===DA_COMPLETARE && puoCompletareCategorie && (
@@ -1848,6 +1882,177 @@ function VisualizzatoreImmagine({src, alt, onClose}){
           cursor: scala>1 ? "grab" : "zoom-in", userSelect:"none",
         }}
       />
+    </div>
+  );
+}
+
+// Pacchetti mostrati come pseudo-categoria all'interno del catalogo,
+// consultabili da tutti i ruoli. Admin può modificarli per intero,
+// responsabile solo gli importi finanziaria (vedi FormPacchetto, già
+// impostato per questo), gli altri ruoli possono solo selezionarli per
+// aggiungerli al carrello — la descrizione del pacchetto (se impostata)
+// diventa nota del preventivo che nascerà da quel carrello (vedi
+// creaDaCart in Preventivi).
+function CatalogoPacchetti({ pacchetti, catalog, ruolo, sessione, cart, setCart, onIndietro, onPacchettiAggiornati }){
+  const accessToken = trovaAccessToken(sessione);
+  const isAdmin = ruolo === "admin";
+  const puoModificare = ruolo === "admin" || ruolo === "responsabile";
+  const [tipo, setTipo] = useState(null);
+  const [marca, setMarca] = useState(null);
+  const [ricerca, setRicerca] = useState("");
+  const [selezionato, setSelezionato] = useState(null); // pacchetto in visualizzazione
+  const [inModifica, setInModifica] = useState(false);
+
+  const pacchettiPerTipo = useMemo(()=>{
+    if(!tipo) return [];
+    return pacchetti.filter(pk=>(pk.tipo||"telos")===tipo);
+  },[pacchetti, tipo]);
+
+  const marcheDisponibili = useMemo(()=>{
+    const insieme = new Set(pacchettiPerTipo.map(pk=>pk.marca).filter(Boolean));
+    return [...insieme].sort((a,b)=>a.localeCompare(b));
+  },[pacchettiPerTipo]);
+
+  const pacchettiFiltrati = useMemo(()=>{
+    const q = ricerca.trim().toLowerCase();
+    return pacchettiPerTipo
+      .filter(pk=>!marca || pk.marca===marca)
+      .filter(pk=>!q || pk.nome.toLowerCase().includes(q) || (pk.descrizione||"").toLowerCase().includes(q));
+  },[pacchettiPerTipo, marca, ricerca]);
+
+  function aggiungiAlCarrello(pk){
+    const componenti = (pk.prodotti||[])
+      .map(c => catalog.find(p=>p.cod===c.cod))
+      .filter(Boolean);
+    setCart(prev => {
+      const codPresenti = new Set(prev.map(c=>c.cod));
+      const nuovi = componenti
+        .filter(p=>!codPresenti.has(p.cod))
+        .map(p => ({ ...p, _pacchettoNome: pk.nome, _pacchettoDescrizione: pk.descrizione || "" }));
+      return [...prev, ...nuovi];
+    });
+  }
+
+  if(inModifica){
+    return (
+      <FormPacchetto
+        pacchetto={selezionato}
+        catalog={catalog}
+        accessToken={accessToken}
+        ruolo={ruolo}
+        onSalvato={()=>{ setInModifica(false); setSelezionato(null); onPacchettiAggiornati(); }}
+        onAnnulla={()=>setInModifica(false)}
+      />
+    );
+  }
+
+  // Dettaglio di un pacchetto: contenuto, eventuale finanziaria, azione
+  // "aggiungi al preventivo" (per tutti) ed eventuale modifica (per chi può).
+  if(selezionato){
+    const inCarrello = (selezionato.prodotti||[]).length>0 && (selezionato.prodotti||[]).every(c => cart.some(x=>x.cod===c.cod));
+    return (
+      <div>
+        <button onClick={()=>setSelezionato(null)} style={{...S.btnS,marginBottom:14}}>← Torna ai pacchetti</button>
+        <div style={{fontFamily:F_DISPLAY,fontSize:18,fontWeight:600,marginBottom:4}}>{selezionato.nome}</div>
+        <div style={{fontSize:11.5,color:"#9AA3AB",marginBottom:12}}>
+          {selezionato.tipo==="fornitore"?"PAC FORNITORE":"PAC TELOS"}{selezionato.marca?` · ${selezionato.marca}`:""}
+        </div>
+        {selezionato.descrizione && <div style={{fontSize:13,color:C.steel,marginBottom:16,lineHeight:1.5}}>{selezionato.descrizione}</div>}
+
+        <div style={S.eyebrow}>Contenuto</div>
+        {(selezionato.prodotti||[]).map(c=>{
+          const p = catalog.find(x=>x.cod===c.cod);
+          return (
+            <div key={c.cod} style={{...S.card,cursor:"default",display:"flex",gap:10,alignItems:"center",marginBottom:6}}>
+              {p?.img && (
+                <div style={{width:44,height:44,flexShrink:0,borderRadius:6,border:`1px solid ${C.paperLine}`,background:"#fff",overflow:"hidden",display:"flex",alignItems:"center",justifyContent:"center"}}>
+                  <img src={p.img} alt="" style={{width:"100%",height:"100%",objectFit:"contain"}} onError={e=>{e.target.parentNode.style.display="none";}}/>
+                </div>
+              )}
+              <div style={{flex:1,minWidth:0}}>
+                <div style={{fontWeight:600,fontSize:13}}>{p?.nome || c.cod}</div>
+                <div className="tnum" style={{fontSize:11,color:"#9AA3AB",fontFamily:F_MONO}}>{c.cod}{p?` · €${p.netto.toFixed(2)}`:" · non più a catalogo"}</div>
+              </div>
+              <div className="tnum" style={{fontSize:12,color:C.steel,flexShrink:0}}>× {c.qty}</div>
+            </div>
+          );
+        })}
+
+        {selezionato.tipo==="fornitore" && selezionato.finanziaria_mesi!=null && (
+          <div style={{...S.card,cursor:"default",marginTop:12,marginBottom:12}}>
+            <div style={S.eyebrow}>Finanziaria fornitore</div>
+            <div style={{fontSize:12.5,color:C.steel,marginTop:6,lineHeight:1.8}}>
+              {selezionato.finanziaria_rata_senza_iva!=null && <div>Senza IVA: <strong style={{color:C.ink}}>€{selezionato.finanziaria_rata_senza_iva.toFixed(2)}</strong>/mese × {selezionato.finanziaria_mesi} mesi</div>}
+              {selezionato.finanziaria_rata_con_iva!=null && <div>Con IVA: <strong style={{color:C.ink}}>€{selezionato.finanziaria_rata_con_iva.toFixed(2)}</strong>/mese × {selezionato.finanziaria_mesi} mesi</div>}
+            </div>
+          </div>
+        )}
+
+        <div style={{display:"flex",gap:8,marginTop:16}}>
+          <button onClick={()=>aggiungiAlCarrello(selezionato)} style={{...S.btnAccent,flex:1,padding:"12px",fontWeight:700,background:inCarrello?C.ok:C.cyan,color:inCarrello?"#fff":C.inkDeep}}>
+            {inCarrello ? "✓ Nel preventivo" : "+ Aggiungi al preventivo"}
+          </button>
+          {puoModificare && <button onClick={()=>setInModifica(true)} style={S.btnS}>✎ {isAdmin?"Modifica":"Finanziaria"}</button>}
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      <button onClick={onIndietro} style={{...S.btnS,marginBottom:14}}>← Torna alle categorie</button>
+
+      {/* Passo 1: tipo */}
+      {tipo===null && (
+        <>
+          <div style={S.eyebrow}>Che tipo di pacchetto?</div>
+          {[["telos","PAC TELOS","Prezzi Telos normali"],["fornitore","PAC FORNITORE","Vendita tramite finanziaria"]].map(([v,lbl,sub])=>{
+            const n = pacchetti.filter(pk=>(pk.tipo||"telos")===v).length;
+            if(n===0) return null;
+            return (
+              <div key={v} onClick={()=>setTipo(v)} style={{...S.card,cursor:"pointer",marginBottom:8}}>
+                <div style={{fontWeight:600,fontSize:14}}>{lbl}</div>
+                <div style={{fontSize:12,color:C.steel,marginTop:2}}>{sub} · {n} disponibili</div>
+              </div>
+            );
+          })}
+          {isAdmin && (
+            <button onClick={()=>{ setSelezionato(null); setInModifica(true); }} style={{...S.btnP,marginTop:10}}>+ Nuovo pacchetto</button>
+          )}
+        </>
+      )}
+
+      {/* Passo 2: marca (solo se ce n'è più di una) */}
+      {tipo!==null && marca===null && marcheDisponibili.length>1 && !ricerca && (
+        <>
+          <button onClick={()=>setTipo(null)} style={{...S.btnS,marginBottom:12}}>← Tipo</button>
+          <div style={S.eyebrow}>Marca?</div>
+          <div onClick={()=>setMarca("")} style={{...S.card,cursor:"pointer",marginBottom:8}}>
+            <div style={{fontWeight:600,fontSize:14}}>Tutte</div>
+          </div>
+          {marcheDisponibili.map(m=>(
+            <div key={m} onClick={()=>setMarca(m)} style={{...S.card,cursor:"pointer",marginBottom:8}}>
+              <div style={{fontWeight:600,fontSize:14}}>{m}</div>
+            </div>
+          ))}
+        </>
+      )}
+
+      {/* Passo 3: elenco pacchetti, con ricerca */}
+      {tipo!==null && (marca!==null || marcheDisponibili.length<=1) && (
+        <>
+          <button onClick={()=>{ if(marcheDisponibili.length>1) setMarca(null); else setTipo(null); setRicerca(""); }} style={{...S.btnS,marginBottom:12}}>← Indietro</button>
+          <input value={ricerca} onChange={e=>setRicerca(e.target.value)} placeholder="Cerca per nome…" style={{...S.inp,marginBottom:10}}/>
+          {pacchettiFiltrati.length===0 && <div style={{fontSize:12.5,color:"#9AA3AB"}}>Nessun pacchetto trovato.</div>}
+          {pacchettiFiltrati.map(pk=>(
+            <div key={pk.id} onClick={()=>setSelezionato(pk)} style={{...S.card,cursor:"pointer",marginBottom:8}}>
+              <div style={{fontWeight:600,fontSize:14}}>{pk.nome}</div>
+              {pk.descrizione && <div style={{fontSize:12,color:C.steel,marginTop:3}}>{pk.descrizione}</div>}
+              <div style={{fontSize:11,color:"#9AA3AB",marginTop:4}}>{(pk.prodotti||[]).length} prodotti{pk.marca?` · ${pk.marca}`:""}</div>
+            </div>
+          ))}
+        </>
+      )}
     </div>
   );
 }
@@ -3913,7 +4118,7 @@ function Preventivi({cart,setCart,preventivi,setPreventivi,setOrdini,setArea,ruo
   function trovaPreventivo(id){
     return id==="__nuovo__" ? bozzaNonSalvata : preventivi.find(p=>p.id===id);
   }
-  function nuovoOggettoLocale(righeIniziali){
+  function nuovoOggettoLocale(righeIniziali, noteIniziali=""){
     const oggi = new Date().toISOString().slice(0,10);
     return {
       id:"__nuovo__",
@@ -3923,7 +4128,7 @@ function Preventivi({cart,setCart,preventivi,setPreventivi,setOrdini,setArea,ruo
       pagamento_dettagli: "",
       referente_telos: sessione?.nome || "",
       creato_da_nome: sessione?.nome || "",
-      note: "",
+      note: noteIniziali,
     };
   }
   // Salva davvero su Supabase una bozza locale che ha appena raggiunto i
@@ -3945,8 +4150,16 @@ function Preventivi({cart,setCart,preventivi,setPreventivi,setOrdini,setArea,ruo
   }
   function creaDaCart(){
     if(cart.length===0) return;
-    const righe = cart.map(p=>({cod:p.cod, mar:p.mar, nome:p.nome||p.desc, netto:p.netto, listino:p.listino, qty:1, sottoMargine:false}));
-    setBozzaNonSalvata(nuovoOggettoLocale(righe));
+    const righe = cart.map(p=>({
+      cod:p.cod, mar:p.mar, nome:p.nome||p.desc, netto:p.netto, listino:p.listino, qty:1, sottoMargine:false,
+      ...(p._pacchettoNome ? { pacchetto_nome: p._pacchettoNome } : {}),
+    }));
+    // Se uno o più prodotti nel carrello arrivano da un pacchetto selezionato
+    // nel catalogo, la sua descrizione (impostata dall'admin) diventa la nota
+    // iniziale del nuovo preventivo — stesso meccanismo usato per la nota dei
+    // singoli prodotti in aggiungiPacchetto.
+    const descrizioniPacchetti = [...new Set(cart.map(p=>p._pacchettoDescrizione).filter(Boolean))];
+    setBozzaNonSalvata(nuovoOggettoLocale(righe, descrizioniPacchetti.join("\n\n")));
     setCart([]);
     setSelId("__nuovo__");
     setView("dettagli-edit");
@@ -4109,17 +4322,15 @@ function Preventivi({cart,setCart,preventivi,setPreventivi,setOrdini,setArea,ruo
       patch.finanziaria_iva_inclusa = false;
       patch.finanziaria_importo = pacchetto.finanziaria_importo_senza_iva ?? pacchetto.finanziaria_importo_con_iva;
       patch.finanziaria_rata = pacchetto.finanziaria_rata_senza_iva ?? pacchetto.finanziaria_rata_con_iva;
-      // Documenti PDF della finanziaria (moduli/contratti da far firmare):
-      // uniti a quelli eventualmente già presenti sul preventivo (es. da un
-      // altro pacchetto fornitore aggiunto in precedenza), senza duplicati
-      // (confrontati per URL).
-      const documentiEsistenti = p.finanziaria_documenti || [];
-      const documentiNuovi = pacchetto.documenti_finanziaria || [];
-      const urlEsistenti = new Set(documentiEsistenti.map(d=>d.url));
-      patch.finanziaria_documenti = [
-        ...documentiEsistenti,
-        ...documentiNuovi.filter(d=>!urlEsistenti.has(d.url)),
-      ];
+      // Documenti PDF della finanziaria: collegati per ID alla libreria
+      // condivisa (Admin → Pacchetti → 📎 Documenti finanziaria), uniti a
+      // quelli eventualmente già presenti sul preventivo (es. da un altro
+      // pacchetto fornitore aggiunto in precedenza), senza duplicati. Si
+      // risolvono in nome/url solo al momento di mostrarli (vedi Ordini),
+      // così restano sempre aggiornati anche se il file viene sostituito.
+      const idEsistenti = p.finanziaria_documenti || [];
+      const idNuovi = pacchetto.documenti_finanziaria || [];
+      patch.finanziaria_documenti = [...new Set([...idEsistenti, ...idNuovi])];
     }
     aggiorna(id, patch);
     return { mancanti };
@@ -5178,24 +5389,84 @@ function Ordini({ordini,setOrdini,preventivi,setPreventivi,setInterventi,catalog
   const accessToken = trovaAccessToken(sessione);
   useEffect(()=>{ setConfermaSospendi(false); setConfermaRiattiva(false); setConfermaEliminaOrdine(false); setDocumentiFinSelezionati([]); },[selId]);
 
+  // Libreria condivisa dei documenti finanziaria: gli ordini collegano solo
+  // gli ID (vedi finanziaria_documenti), si risolvono qui in nome/url —
+  // così se l'admin sostituisce il file in libreria, l'ordine mostra sempre
+  // l'ultima versione, anche se creato tempo fa.
+  const [libreriaDocumentiFin, setLibreriaDocumentiFin] = useState(null);
+  useEffect(()=>{
+    sbGetAuth("documenti_finanziaria_libreria", "select=*", accessToken)
+      .then(setLibreriaDocumentiFin)
+      .catch(()=>setLibreriaDocumentiFin([]));
+  },[]);
+  const documentiFinRisolti = useMemo(()=>{
+    if(!selezionato || !libreriaDocumentiFin) return [];
+    return (selezionato.finanziaria_documenti||[])
+      .map(id => libreriaDocumentiFin.find(d=>d.id===id))
+      .filter(Boolean);
+  },[selezionato, libreriaDocumentiFin]);
+
   // ── Nuovo ordine senza preventivo ───────────────────────────────────────
   const [creandoNuovo,setCreandoNuovo] = useState(false);
   const [nuovoCliente,setNuovoCliente] = useState(null);
   const [nuovoClienteLibero,setNuovoClienteLibero] = useState(false);
   const [nuovoNomeClienteLibero,setNuovoNomeClienteLibero] = useState("");
   const [nuoveRighe,setNuoveRighe] = useState([]);
+  const [nuovaFinanziaria,setNuovaFinanziaria] = useState(null); // { importo, rata, mesi, ivaInclusa, importoSenzaIva, rataSenzaIva, importoConIva, rataConIva, documenti }
+  const [mostraSelezionePacchettoOrdine,setMostraSelezionePacchettoOrdine] = useState(false);
   const [salvandoNuovo,setSalvandoNuovo] = useState(false);
   const [erroreNuovo,setErroreNuovo] = useState("");
 
   function annullaNuovoOrdine(){
     setCreandoNuovo(false); setNuovoCliente(null); setNuovoClienteLibero(false);
-    setNuovoNomeClienteLibero(""); setNuoveRighe([]); setErroreNuovo("");
+    setNuovoNomeClienteLibero(""); setNuoveRighe([]); setNuovaFinanziaria(null);
+    setMostraSelezionePacchettoOrdine(false); setErroreNuovo("");
   }
   function aggiungiRigaNuovoOrdine(rigaNuova){
     setNuoveRighe(prev=>{
       const esiste = prev.some(r=>r.cod===rigaNuova.cod);
       return esiste ? prev.map(r=>r.cod===rigaNuova.cod?rigaNuova:r) : [...prev, rigaNuova];
     });
+  }
+  // Espande un pacchetto nelle sue righe prodotto reali (stessa logica di
+  // aggiungiPacchetto in Preventivi, qui applicata alle righe locali
+  // dell'ordine diretto non ancora salvato) e, se è un pacchetto fornitore,
+  // attiva subito la finanziaria con i valori già impostati sul pacchetto.
+  function aggiungiPacchettoNuovoOrdine(pacchetto){
+    const mancanti = [];
+    setNuoveRighe(prev=>{
+      const righe = [...prev];
+      for(const comp of (pacchetto.prodotti||[])){
+        const prod = (catalog||[]).find(x=>x.cod===comp.cod);
+        if(!prod){ mancanti.push(comp.cod); continue; }
+        const costoInfo = getCostoAcquisto(prod);
+        const rigaNuova = {
+          cod: prod.cod, mar: prod.mar, nome: prod.nome || prod.desc,
+          listino: prod.listino, netto: prod.netto, qty: comp.qty || 1,
+          costo: costoInfo?.costo,
+          pacchetto_nome: pacchetto.nome,
+        };
+        rigaNuova.sottoMargine = rigaSottoMargine(rigaNuova);
+        const idx = righe.findIndex(r=>r.cod===comp.cod);
+        if(idx>=0) righe[idx] = rigaNuova; else righe.push(rigaNuova);
+      }
+      return righe;
+    });
+    if(pacchetto.finanziaria_mesi!=null && (pacchetto.finanziaria_importo_senza_iva!=null || pacchetto.finanziaria_importo_con_iva!=null)){
+      setNuovaFinanziaria(prev => ({
+        mesi: pacchetto.finanziaria_mesi,
+        importoSenzaIva: pacchetto.finanziaria_importo_senza_iva,
+        rataSenzaIva: pacchetto.finanziaria_rata_senza_iva,
+        importoConIva: pacchetto.finanziaria_importo_con_iva,
+        rataConIva: pacchetto.finanziaria_rata_con_iva,
+        ivaInclusa: false,
+        importo: pacchetto.finanziaria_importo_senza_iva ?? pacchetto.finanziaria_importo_con_iva,
+        rata: pacchetto.finanziaria_rata_senza_iva ?? pacchetto.finanziaria_rata_con_iva,
+        documenti: [...new Set([...(prev?.documenti || []), ...(pacchetto.documenti_finanziaria || [])])],
+      }));
+    }
+    setMostraSelezionePacchettoOrdine(false);
+    if(mancanti.length) alert(`Attenzione: alcuni prodotti del pacchetto non sono più a catalogo e non sono stati aggiunti: ${mancanti.join(", ")}`);
   }
   function rimuoviRigaNuovoOrdine(cod){
     setNuoveRighe(prev=>prev.filter(r=>r.cod!==cod));
@@ -5212,6 +5483,15 @@ function Ordini({ordini,setOrdini,preventivi,setPreventivi,setInterventi,catalog
       val: ricalcolaVal(nuoveRighe),
       stato: "Inserito",
       creato_da_nome: sessione?.nome || null,
+      finanziaria_importo: nuovaFinanziaria?.importo ?? null,
+      finanziaria_rata: nuovaFinanziaria?.rata ?? null,
+      finanziaria_mesi: nuovaFinanziaria?.mesi ?? null,
+      finanziaria_iva_inclusa: nuovaFinanziaria?.ivaInclusa ?? null,
+      finanziaria_importo_senza_iva: nuovaFinanziaria?.importoSenzaIva ?? null,
+      finanziaria_rata_senza_iva: nuovaFinanziaria?.rataSenzaIva ?? null,
+      finanziaria_importo_con_iva: nuovaFinanziaria?.importoConIva ?? null,
+      finanziaria_rata_con_iva: nuovaFinanziaria?.rataConIva ?? null,
+      finanziaria_documenti: nuovaFinanziaria?.documenti ?? null,
     };
     try{
       const [salvato] = await sbAuth("POST","ordini","",payload,accessToken);
@@ -5746,19 +6026,22 @@ ${o.firma_cliente ? `
         )}
 
         {/* Documenti della finanziaria (moduli/contratti) da far firmare al
-            cliente — propagati dal pacchetto aggiunto in preventivo. Il
-            commerciale seleziona quelli che servono per questo cliente e li
-            apre/scarica per l'invio (non essendoci nell'app un canale email
-            integrato, l'azione resta "apri il PDF" — da lì il commerciale lo
-            scarica o lo allega manualmente). */}
-        {(selezionato.finanziaria_documenti||[]).length>0 && (
+            cliente — collegati per ID alla libreria condivisa (Admin →
+            Pacchetti → 📎 Documenti finanziaria) e risolti qui in nome/url
+            aggiornati, sempre l'ultima versione anche se il file è stato
+            sostituito dopo la creazione dell'ordine. Il commerciale
+            seleziona quelli che servono per questo cliente e li apre per
+            l'invio (non essendoci nell'app un canale email integrato,
+            l'azione resta "apri il PDF" — da lì il commerciale lo scarica o
+            lo allega manualmente). */}
+        {documentiFinRisolti.length>0 && (
           <div style={{...S.card,cursor:"default",border:`1px solid ${C.cyan}`,marginBottom:16}}>
             <div style={S.eyebrow}>Documenti finanziaria da inviare per la firma</div>
             <div style={{fontSize:11.5,color:"#9AA3AB",marginTop:4,marginBottom:10}}>
               Seleziona i documenti da aprire/scaricare per farli firmare al cliente.
             </div>
-            {selezionato.finanziaria_documenti.map((d,i)=>(
-              <label key={i} style={{display:"flex",alignItems:"center",gap:10,padding:"7px 0",cursor:"pointer"}}>
+            {documentiFinRisolti.map((d,i)=>(
+              <label key={d.id} style={{display:"flex",alignItems:"center",gap:10,padding:"7px 0",cursor:"pointer"}}>
                 <input type="checkbox" checked={documentiFinSelezionati.includes(i)}
                   onChange={e=>setDocumentiFinSelezionati(prev => e.target.checked ? [...prev,i] : prev.filter(x=>x!==i))}
                   style={{width:16,height:16,accentColor:C.ink,flexShrink:0}}/>
@@ -5769,7 +6052,7 @@ ${o.firma_cliente ? `
             <button
               disabled={documentiFinSelezionati.length===0}
               onClick={()=>{
-                documentiFinSelezionati.forEach(i => window.open(selezionato.finanziaria_documenti[i].url, "_blank"));
+                documentiFinSelezionati.forEach(i => window.open(documentiFinRisolti[i].url, "_blank"));
               }}
               style={{...S.btnP,marginTop:10,opacity:documentiFinSelezionati.length===0?0.5:1}}
             >
@@ -6057,25 +6340,61 @@ ${o.firma_cliente ? `
           )}
 
           <RicercaProdottiInline onSeleziona={aggiungiRigaNuovoOrdine} righeEsistenti={nuoveRighe} ruolo={ruolo} catalog={catalog} sessione={sessione}/>
+          <button onClick={()=>setMostraSelezionePacchettoOrdine(true)} style={{...S.btnS,marginTop:8,marginBottom:4}}>📦 Aggiungi un pacchetto</button>
+          {mostraSelezionePacchettoOrdine && (
+            <SelezionePacchetto sessione={sessione} onClose={()=>setMostraSelezionePacchettoOrdine(false)} onSeleziona={aggiungiPacchettoNuovoOrdine}/>
+          )}
 
           {nuoveRighe.length>0 && (
             <div style={{marginBottom:12}}>
               {nuoveRighe.map(r=>(
                 <div key={r.cod} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"8px 0",borderBottom:`1px solid ${C.paperLine}`}}>
                   <div style={{minWidth:0}}>
-                    <div style={{fontWeight:600,fontSize:12.5}}>{r.nome}</div>
-                    <div className="tnum" style={{fontSize:11,color:"#9AA3AB"}}>€{r.netto.toFixed(2)} × {r.qty||1}</div>
+                    <div style={{display:"flex",gap:5,alignItems:"center",flexWrap:"wrap"}}>
+                      <div style={{fontWeight:600,fontSize:12.5}}>{r.nome}</div>
+                      {r.pacchetto_nome && <Tag tone="cyan">📦 {r.pacchetto_nome}</Tag>}
+                    </div>
+                    {!nuovaFinanziaria && <div className="tnum" style={{fontSize:11,color:"#9AA3AB"}}>€{r.netto.toFixed(2)} × {r.qty||1}</div>}
                   </div>
                   <div style={{display:"flex",alignItems:"center",gap:8,flexShrink:0}}>
-                    <span className="tnum" style={{fontWeight:700,fontFamily:F_MONO,fontSize:13}}>€{(r.netto*(r.qty||1)).toFixed(2)}</span>
+                    {!nuovaFinanziaria && <span className="tnum" style={{fontWeight:700,fontFamily:F_MONO,fontSize:13}}>€{(r.netto*(r.qty||1)).toFixed(2)}</span>}
                     <button onClick={()=>rimuoviRigaNuovoOrdine(r.cod)} style={{background:"none",border:"none",color:C.danger,cursor:"pointer",fontSize:15}}>✕</button>
                   </div>
                 </div>
               ))}
-              <div style={{display:"flex",justifyContent:"space-between",padding:"10px 0",fontWeight:700,fontSize:13.5}}>
-                <span>Totale</span>
-                <span className="tnum" style={{fontFamily:F_MONO,color:C.ink}}>€{ricalcolaVal(nuoveRighe).toFixed(2)}</span>
-              </div>
+              {nuovaFinanziaria ? (
+                <div style={{padding:"10px 0"}}>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",marginBottom:4}}>
+                    <span style={{fontSize:11.5,color:"#9AA3AB"}}>Totale</span>
+                    <span className="tnum" style={{fontSize:12.5,fontFamily:F_MONO,color:"#9AA3AB"}}>€{ricalcolaVal(nuoveRighe).toFixed(2)}</span>
+                  </div>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",marginBottom:8}}>
+                    <span style={{fontWeight:700,fontSize:14,color:C.ink}}>Rata mensile (finanziaria)</span>
+                    <span className="tnum" style={{fontWeight:700,fontSize:18,fontFamily:F_MONO,color:C.ink}}>
+                      €{(nuovaFinanziaria.rata||0).toFixed(2)} <span style={{fontSize:12,fontWeight:400,color:C.steel}}>× {nuovaFinanziaria.mesi} mesi</span>
+                    </span>
+                  </div>
+                  <label style={{display:"flex",alignItems:"center",gap:6,fontSize:12,cursor:"pointer"}}>
+                    <input type="checkbox" checked={!!nuovaFinanziaria.ivaInclusa}
+                      onChange={e=>{
+                        const ivaInclusa = e.target.checked;
+                        setNuovaFinanziaria(prev=>({
+                          ...prev, ivaInclusa,
+                          importo: ivaInclusa ? prev.importoConIva : prev.importoSenzaIva,
+                          rata: ivaInclusa ? prev.rataConIva : prev.rataSenzaIva,
+                        }));
+                      }}
+                      style={{width:15,height:15,accentColor:C.ink}}/>
+                    IVA inclusa
+                  </label>
+                  <button onClick={()=>setNuovaFinanziaria(null)} style={{background:"none",border:"none",fontSize:11.5,color:C.danger,cursor:"pointer",marginTop:6,padding:0}}>Rimuovi finanziaria (torna ai prezzi normali)</button>
+                </div>
+              ) : (
+                <div style={{display:"flex",justifyContent:"space-between",padding:"10px 0",fontWeight:700,fontSize:13.5}}>
+                  <span>Totale</span>
+                  <span className="tnum" style={{fontFamily:F_MONO,color:C.ink}}>€{ricalcolaVal(nuoveRighe).toFixed(2)}</span>
+                </div>
+              )}
             </div>
           )}
 
@@ -7563,11 +7882,113 @@ function GestioneListinoCompleto({ sessione }){
 // Un pacchetto è un kit di più prodotti a catalogo con quantità fisse,
 // selezionabile in un preventivo (vedi SelezionePacchetto) per aggiungere
 // tutte le righe componenti in un colpo solo.
+// Libreria centrale dei documenti PDF della finanziaria — un solo punto dove
+// caricare/sostituire ogni file. I pacchetti (vedi FormPacchetto) collegano
+// questi documenti per riferimento (ID), non li duplicano: sostituendo qui
+// il file di un documento, l'aggiornamento si vede ovunque sia collegato,
+// compresi preventivi e ordini già creati in passato.
+function GestioneLibreriaDocumentiFinanziaria({ accessToken, onIndietro }){
+  const [documenti, setDocumenti] = useState(null);
+  const [errore, setErrore] = useState("");
+  const [caricando, setCaricando] = useState(null); // "nuovo" | id del documento in sostituzione
+  const [confermaElimina, setConfermaElimina] = useState(null);
+  const fileRef = useRef(null);
+  const azioneUploadRef = useRef(null); // "nuovo" | id — quale azione ha aperto il selettore file
+
+  function ricarica(){
+    sbGetAuth("documenti_finanziaria_libreria", "select=*&order=nome.asc", accessToken)
+      .then(setDocumenti)
+      .catch(err=>setErrore(err.message));
+  }
+  useEffect(()=>{ ricarica(); },[]);
+
+  async function onFileScelto(file){
+    if(!file) return;
+    if(file.type !== "application/pdf"){ setErrore("Sono ammessi solo file PDF."); return; }
+    if(file.size > 15*1024*1024){ setErrore("File troppo grande (max 15MB)."); return; }
+    const azione = azioneUploadRef.current;
+    setErrore(""); setCaricando(azione);
+    try{
+      const url = await caricaSuStorageConUrlFirmato(file, "creaUrlCaricamentoScheda", accessToken, azione==="nuovo"?"documento":azione);
+      if(azione==="nuovo"){
+        const nomeDefault = file.name.replace(/\.pdf$/i, "");
+        await sbAuth("POST","documenti_finanziaria_libreria","",{ nome:nomeDefault, url },accessToken);
+      } else {
+        // Sostituzione: stesso documento (stesso ID, stesso nome), solo il
+        // file cambia — chi lo collega vede subito il nuovo PDF.
+        await sbAuth("PATCH","documenti_finanziaria_libreria",`id=eq.${azione}`,{ url, aggiornato_il:new Date().toISOString() },accessToken);
+      }
+      ricarica();
+    }catch(err){
+      setErrore("Caricamento non riuscito: "+err.message);
+    }
+    setCaricando(null);
+  }
+  function apriSelettoreFile(azione){
+    azioneUploadRef.current = azione;
+    fileRef.current?.click();
+  }
+  async function rinomina(id, nuovoNome){
+    try{
+      await sbAuth("PATCH","documenti_finanziaria_libreria",`id=eq.${id}`,{ nome:nuovoNome },accessToken);
+      setDocumenti(prev=>prev.map(d=>d.id===id?{...d,nome:nuovoNome}:d));
+    }catch(err){
+      setErrore("Rinomina non riuscita: "+err.message);
+    }
+  }
+  async function elimina(id){
+    try{
+      await sbAuth("DELETE","documenti_finanziaria_libreria",`id=eq.${id}`,null,accessToken);
+      setConfermaElimina(null);
+      ricarica();
+    }catch(err){
+      setErrore("Eliminazione non riuscita: "+err.message);
+    }
+  }
+
+  return (
+    <div>
+      <button onClick={onIndietro} style={{...S.btnS,marginBottom:14}}>← Torna ai pacchetti</button>
+      <div style={{fontFamily:F_DISPLAY,fontSize:18,fontWeight:600,marginBottom:4}}>DOCUMENTI FINANZIARIA</div>
+      <div style={{fontSize:13,color:C.steel,marginBottom:16}}>
+        Libreria condivisa: i pacchetti collegano questi documenti invece di caricarne una copia propria. Sostituendo qui il file, si aggiorna ovunque sia collegato.
+      </div>
+
+      <input ref={fileRef} type="file" accept="application/pdf" style={{display:"none"}}
+        onChange={e=>{ const f=e.target.files[0]; if(f) onFileScelto(f); e.target.value=""; }}/>
+
+      {errore && <div style={{fontSize:12.5,color:C.danger,marginBottom:10}}>⚠ {errore}</div>}
+      {documenti===null && !errore && <div style={{fontSize:12.5,color:C.steel}}>Caricamento…</div>}
+      {documenti && documenti.length===0 && <div style={{fontSize:12.5,color:"#9AA3AB",marginBottom:12}}>Nessun documento in libreria.</div>}
+
+      {documenti && documenti.map(d=>(
+        <div key={d.id} style={{...S.card,cursor:"default",display:"flex",alignItems:"center",gap:8,marginBottom:6}}>
+          <input value={d.nome} onChange={e=>rinomina(d.id, e.target.value)} style={{...S.inp,flex:1,padding:"6px 9px",fontSize:12.5}}/>
+          <a href={d.url} target="_blank" rel="noreferrer" style={{fontSize:11.5,color:C.ink,textDecoration:"underline",flexShrink:0}}>Apri</a>
+          <button disabled={caricando===d.id} onClick={()=>apriSelettoreFile(d.id)} style={{...S.btnS,padding:"5px 9px",fontSize:11,flexShrink:0,opacity:caricando===d.id?0.6:1}}>
+            {caricando===d.id?"…":"⬆ Sostituisci file"}
+          </button>
+          {confermaElimina===d.id ? (
+            <button onClick={()=>elimina(d.id)} style={{...S.btnS,padding:"5px 9px",fontSize:11,background:C.danger,color:"#fff",borderColor:C.danger,flexShrink:0}}>Confermi?</button>
+          ) : (
+            <button onClick={()=>setConfermaElimina(d.id)} style={{background:"none",border:"none",fontSize:16,color:"#9AA3AB",cursor:"pointer",flexShrink:0}}>✕</button>
+          )}
+        </div>
+      ))}
+
+      <button disabled={caricando==="nuovo"} onClick={()=>apriSelettoreFile("nuovo")} style={{...S.btnP,marginTop:10,opacity:caricando==="nuovo"?0.6:1}}>
+        {caricando==="nuovo"?"Caricamento…":"+ Nuovo documento (PDF)"}
+      </button>
+    </div>
+  );
+}
+
 function GestionePacchetti({ sessione, catalog, ruolo }){
   const accessToken = trovaAccessToken(sessione);
   const [pacchetti, setPacchetti] = useState(null);
   const [errore, setErrore] = useState("");
   const [inModifica, setInModifica] = useState(null); // null | "nuovo" | oggetto pacchetto esistente
+  const [inLibreria, setInLibreria] = useState(false);
   const [confermaElimina, setConfermaElimina] = useState(null); // id del pacchetto da confermare
   const isAdmin = ruolo === "admin";
 
@@ -7597,6 +8018,10 @@ function GestionePacchetti({ sessione, catalog, ruolo }){
     }
   }
 
+  if(inLibreria){
+    return <GestioneLibreriaDocumentiFinanziaria accessToken={accessToken} onIndietro={()=>setInLibreria(false)}/>;
+  }
+
   if(inModifica){
     return (
       <FormPacchetto
@@ -7613,12 +8038,15 @@ function GestionePacchetti({ sessione, catalog, ruolo }){
   return (
     <div>
       <div style={{fontFamily:F_DISPLAY,fontSize:18,fontWeight:600,marginBottom:4}}>PACCHETTI</div>
-      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14,flexWrap:"wrap",gap:10}}>
         <div style={{fontSize:13,color:C.steel}}>
           Kit di più prodotti selezionabili in un preventivo con un solo click.
           {!isAdmin && " Come responsabile puoi aggiornare gli importi della finanziaria fornitore."}
         </div>
-        {isAdmin && <button onClick={()=>setInModifica("nuovo")} style={S.btnP}>+ Nuovo pacchetto</button>}
+        <div style={{display:"flex",gap:8,flexShrink:0}}>
+          {isAdmin && <button onClick={()=>setInLibreria(true)} style={S.btnS}>📎 Documenti finanziaria</button>}
+          {isAdmin && <button onClick={()=>setInModifica("nuovo")} style={S.btnP}>+ Nuovo pacchetto</button>}
+        </div>
       </div>
       {errore && <div style={{fontSize:12.5,color:C.danger,marginBottom:10}}>⚠ {errore}</div>}
       {pacchetti===null && !errore && <div style={{fontSize:12.5,color:C.steel}}>Caricamento…</div>}
@@ -7676,12 +8104,21 @@ function FormPacchetto({ pacchetto, catalog, accessToken, ruolo, onSalvato, onAn
   const finRataConIva = finRataSenzaIva==="" ? "" : Math.round(parseFloat(finRataSenzaIva) * 1.22 * 100) / 100;
 
   // Documenti PDF della finanziaria (moduli/contratti da far firmare al
-  // cliente) — propagati al preventivo e poi all'ordine quando il pacchetto
-  // viene aggiunto (vedi aggiungiPacchetto e convertiInOrdine).
-  const [documenti, setDocumenti] = useState(pacchetto?.documenti_finanziaria || []); // [{nome,url}]
-  const [caricandoDoc, setCaricandoDoc] = useState(false);
-  const [erroreDoc, setErroreDoc] = useState("");
-  const docFileRef = useRef(null);
+  // cliente) — non più caricati qui: si collegano per ID alla libreria
+  // condivisa (Admin → Pacchetti → 📎 Documenti finanziaria), così più
+  // pacchetti possono puntare allo stesso file senza duplicarlo, e
+  // sostituendolo in libreria si aggiorna ovunque sia collegato.
+  const [documentiIds, setDocumentiIds] = useState(pacchetto?.documenti_finanziaria || []); // [id, id, ...]
+  const [libreriaDocumenti, setLibreriaDocumenti] = useState(null);
+  useEffect(()=>{
+    if(tipo!=="fornitore") return;
+    sbGetAuth("documenti_finanziaria_libreria", "select=*&order=nome.asc", accessToken)
+      .then(setLibreriaDocumenti)
+      .catch(()=>setLibreriaDocumenti([]));
+  },[tipo]);
+  function toggleDocumento(id){
+    setDocumentiIds(prev => prev.includes(id) ? prev.filter(x=>x!==id) : [...prev, id]);
+  }
 
   const risultatiRicerca = useMemo(()=>{
     const q = ricerca.trim().toLowerCase();
@@ -7703,27 +8140,6 @@ function FormPacchetto({ pacchetto, catalog, accessToken, ruolo, onSalvato, onAn
     setComponenti(prev=>prev.map(c=>c.cod===cod ? {...c, qty:Math.max(1,qty)} : c));
   }
 
-  async function caricaDocumento(file){
-    if(!file) return;
-    if(file.type !== "application/pdf"){ setErroreDoc("Sono ammessi solo file PDF."); return; }
-    if(file.size > 15*1024*1024){ setErroreDoc("File troppo grande (max 15MB)."); return; }
-    setErroreDoc(""); setCaricandoDoc(true);
-    try{
-      const url = await caricaSuStorageConUrlFirmato(file, "creaUrlCaricamentoScheda", accessToken, pacchetto?.id || nome || "pacchetto");
-      const nomeDefault = file.name.replace(/\.pdf$/i, "");
-      setDocumenti(prev => [...prev, { nome: nomeDefault, url }]);
-    }catch(err){
-      setErroreDoc("Errore caricamento: " + err.message);
-    }
-    setCaricandoDoc(false);
-  }
-  function rinominaDocumento(i, nuovoNome){
-    setDocumenti(prev => prev.map((d,idx) => idx===i ? {...d, nome:nuovoNome} : d));
-  }
-  function rimuoviDocumento(i){
-    setDocumenti(prev => prev.filter((_,idx) => idx!==i));
-  }
-
   async function salva(){
     if(!nome.trim()){ setErrore("Il nome è obbligatorio."); return; }
     if(componenti.length===0){ setErrore("Aggiungi almeno un prodotto."); return; }
@@ -7737,7 +8153,7 @@ function FormPacchetto({ pacchetto, catalog, accessToken, ruolo, onSalvato, onAn
       finanziaria_importo_con_iva: finImportoConIva===""?null:finImportoConIva,
       finanziaria_rata_con_iva: finRataConIva===""?null:finRataConIva,
       finanziaria_mesi: tipo==="fornitore" ? (parseInt(finMesi,10)||36) : null,
-      documenti_finanziaria: documenti,
+      documenti_finanziaria: documentiIds,
     };
     try{
       if(pacchetto) await sbAuth("PATCH","pacchetti",`id=eq.${pacchetto.id}`,payload,accessToken);
@@ -7862,25 +8278,24 @@ function FormPacchetto({ pacchetto, catalog, accessToken, ruolo, onSalvato, onAn
             <>
               <div style={S.eyebrow}>Documenti da far firmare al cliente (PDF)</div>
               <div style={{fontSize:11.5,color:"#9AA3AB",marginBottom:8}}>
-                Moduli/contratti della finanziaria — verranno proposti al commerciale quando converte in ordine un preventivo con questo pacchetto.
+                Selezionali dalla libreria condivisa — per caricarne di nuovi o sostituire un file, usa "📎 Documenti finanziaria" nell'elenco pacchetti.
               </div>
-              {documenti.map((d,i)=>(
-                <div key={i} style={{...S.card,cursor:"default",display:"flex",alignItems:"center",gap:8,marginBottom:6}}>
-                  <input value={d.nome} onChange={e=>rinominaDocumento(i,e.target.value)} style={{...S.inp,flex:1,padding:"6px 9px",fontSize:12.5}}/>
-                  <a href={d.url} target="_blank" rel="noreferrer" style={{fontSize:11.5,color:C.ink,textDecoration:"underline",flexShrink:0}}>Apri</a>
-                  <button onClick={()=>rimuoviDocumento(i)} style={{background:"none",border:"none",fontSize:16,color:"#9AA3AB",cursor:"pointer",flexShrink:0}}>✕</button>
-                </div>
+              {libreriaDocumenti===null && <div style={{fontSize:12,color:C.steel}}>Caricamento…</div>}
+              {libreriaDocumenti && libreriaDocumenti.length===0 && (
+                <div style={{fontSize:12,color:"#9AA3AB"}}>Nessun documento in libreria ancora.</div>
+              )}
+              {libreriaDocumenti && libreriaDocumenti.map(d=>(
+                <label key={d.id} style={{display:"flex",alignItems:"center",gap:10,padding:"7px 0",cursor:"pointer"}}>
+                  <input type="checkbox" checked={documentiIds.includes(d.id)} onChange={()=>toggleDocumento(d.id)}
+                    style={{width:16,height:16,accentColor:C.ink,flexShrink:0}}/>
+                  <span style={{fontSize:13,flex:1}}>{d.nome}</span>
+                  <a href={d.url} target="_blank" rel="noreferrer" onClick={e=>e.stopPropagation()} style={{fontSize:11.5,color:C.ink,textDecoration:"underline",flexShrink:0}}>Apri</a>
+                </label>
               ))}
-              <input ref={docFileRef} type="file" accept="application/pdf" style={{display:"none"}}
-                onChange={e=>{ const f=e.target.files[0]; if(f) caricaDocumento(f); e.target.value=""; }}/>
-              <button disabled={caricandoDoc} onClick={()=>docFileRef.current?.click()} style={{...S.btnS,opacity:caricandoDoc?0.6:1}}>
-                {caricandoDoc ? "Caricamento…" : "⬆ Aggiungi documento (PDF)"}
-              </button>
-              {erroreDoc && <div style={{fontSize:12,color:C.danger,marginTop:6}}>⚠ {erroreDoc}</div>}
             </>
           )}
-          {!isAdmin && documenti.length>0 && (
-            <div style={{fontSize:12,color:C.steel}}>{documenti.length} documento/i associato/i (gestiti dall'admin).</div>
+          {!isAdmin && documentiIds.length>0 && (
+            <div style={{fontSize:12,color:C.steel}}>{documentiIds.length} documento/i collegato/i (gestiti dall'admin).</div>
           )}
         </>
       )}
