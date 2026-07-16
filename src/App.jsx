@@ -134,15 +134,15 @@ const RUOLI = {
   tecnico: {label:"Tecnico", initials:"LR", nome:"Luca Rossi",
     nav:["home","ai","interventi","rapporti","clienti","promemoria","prodotti"]},
   responsabile: {label:"Responsabile", initials:"GF", nome:"Giovanni Ferri",
-    nav:["home","ai","prodotti","clienti","promemoria","preventivi","ordini","interventi","rapporti","analytics","saltati"]},
+    nav:["home","ai","prodotti","clienti","promemoria","preventivi","ordini","interventi","rapporti","analytics","saltati","pacchetti"]},
   admin: {label:"Admin", initials:"AM", nome:"Amministratore",
-    nav:["home","ai","prodotti","clienti","promemoria","preventivi","ordini","interventi","rapporti","analytics","saltati","admin"]},
+    nav:["home","ai","prodotti","clienti","promemoria","preventivi","ordini","interventi","rapporti","analytics","saltati","admin","pacchetti"]},
 };
 const NAV_META = {
   home:{icon:"⌂",label:"Dashboard"}, ai:{icon:"✦",label:"Assistente"}, prodotti:{icon:"▣",label:"Catalogo"},
   clienti:{icon:"◉",label:"Clienti"}, promemoria:{icon:"⚑",label:"Promemoria"}, preventivi:{icon:"▤",label:"Preventivi"}, ordini:{icon:"⬡",label:"Ordini"},
   interventi:{icon:"⚒",label:"Interventi"}, rapporti:{icon:"☑",label:"Rapporto"}, analytics:{icon:"◈",label:"Condizioni"},
-  saltati:{icon:"⊘",label:"Saltati"}, admin:{icon:"⚙",label:"Admin"},
+  saltati:{icon:"⊘",label:"Saltati"}, admin:{icon:"⚙",label:"Admin"}, pacchetti:{icon:"📦",label:"Pacchetti"},
 };
 function navMobile(nav){ return nav.slice(0,4).concat(nav.length>4?["more"]:[]); }
 
@@ -671,6 +671,7 @@ export default function App(){
           {area==="saltati" && RUOLI_APPROVATORI.includes(role) && <PreventiviSaltati preventivi={preventivi}/>}
           {area==="saltati" && !RUOLI_APPROVATORI.includes(role) && <Placeholder area={area} setArea={setArea}/>}
           {area==="admin" && <PannelloAdmin setCatalog={setCatalog} ruolo={role} sessione={sessione} catalog={catalog}/>}
+          {area==="pacchetti" && <GestionePacchetti ruolo={role} sessione={sessione} catalog={catalog}/>}
         </div>
 
         {isMobile && (
@@ -3279,6 +3280,12 @@ async function generaPreventivoPDF(righe, total, meta={}){
     : "Da concordare";
   const referente = meta.referente_telos || "";
 
+  // Con la finanziaria fornitore attiva, il cliente vede/paga l'importo
+  // finanziato complessivo, non i prezzi dei singoli prodotti — colonne
+  // Listino/Netto/Totale nascoste dalla tabella, sostituite in evidenza
+  // dalla rata mensile (vedi totali-box più sotto).
+  const finanziariaFornitoreAttiva = meta.finanziaria_importo!=null;
+
   const righeHtml = righe.map((r,i) => {
     const totRiga = r.netto * (r.qty||1);
     const caratteristiche = (r.desc_prev||"").split(/\n|;/).map(x=>x.trim()).filter(Boolean);
@@ -3295,9 +3302,10 @@ async function generaPreventivoPDF(righe, total, meta={}){
         ${caratteristiche.length ? `<div class="caratteristiche-testo">${caratteristiche.join("<br/>")}</div>` : ""}
       </td>
       <td class="cella-num">${r.qty||1}</td>
+      ${finanziariaFornitoreAttiva ? "" : `
       <td class="cella-num">€${(r.listino||0).toFixed(2)}</td>
       <td class="cella-num">€${r.netto.toFixed(2)}</td>
-      <td class="cella-num cella-tot">€${totRiga.toFixed(2)}</td>
+      <td class="cella-num cella-tot">€${totRiga.toFixed(2)}</td>`}
     </tr>`;
   }).join("");
 
@@ -3305,11 +3313,6 @@ async function generaPreventivoPDF(righe, total, meta={}){
     <div class="finanziamento-riga">${meta.finanziamento_tipo==="noleggio"?"Noleggio":"Finanziamento"}: €${meta.finanziamento_rata.toFixed(2)} x ${meta.finanziamento_mesi} mesi</div>
     ${meta.finanziamento_spese_contratto!=null ? `<div class="finanziamento-nota">Spese di istruttoria: €${meta.finanziamento_spese_contratto.toFixed(2)}</div>` : ""}
     ${meta.finanziamento_tipo==="noleggio" && meta.finanziamento_riscatto!=null ? `<div class="finanziamento-nota">Riscatto finale (1% imponibile): €${meta.finanziamento_riscatto.toFixed(2)}</div>` : ""}
-  ` : "";
-
-  const finanziariaFornitoreHtml = meta.finanziaria_importo!=null ? `
-    <div class="finanziamento-riga">Vendita tramite finanziaria: rata €${(meta.finanziaria_rata||0).toFixed(2)} x ${meta.finanziaria_mesi} mesi</div>
-    <div class="finanziamento-nota">Importo finanziato: €${meta.finanziaria_importo.toFixed(2)} (${meta.finanziaria_iva_inclusa?"IVA inclusa":"IVA esclusa"})</div>
   ` : "";
 
   const html = `<!DOCTYPE html><html><head><meta charset="utf-8"/><title>Preventivo ${codiceMostrato}</title>
@@ -3365,6 +3368,9 @@ async function generaPreventivoPDF(righe, total, meta={}){
 
   .totali-box{text-align:right;margin-top:8px}
   .tot-imponibile{font-size:17px;font-weight:700;color:#162758}
+  .tot-imponibile-minore{font-size:12px;font-weight:400;color:#9AA3AB;margin-bottom:6px}
+  .rata-evidenziata{font-size:24px;font-weight:700;color:#162758}
+  .rata-evidenziata .mesi{font-size:14px;font-weight:400;color:#5B6770}
   .finanziamento-riga{font-size:12px;color:#162758;font-weight:600;margin-top:4px}
   .finanziamento-nota{font-size:10px;color:#7C879E}
 
@@ -3428,15 +3434,20 @@ ${meta.includi_copertina!==false ? `
 
     <table class="articoli">
       <thead><tr>
-        <th>Prodotto</th><th>Descrizione</th><th class="cella-num">Qtà</th><th class="cella-num">Listino</th><th class="cella-num">Netto</th><th class="cella-num">Totale</th>
+        <th>Prodotto</th><th>Descrizione</th><th class="cella-num">Qtà</th>${finanziariaFornitoreAttiva ? "" : `<th class="cella-num">Listino</th><th class="cella-num">Netto</th><th class="cella-num">Totale</th>`}
       </tr></thead>
       <tbody>${righeHtml}</tbody>
     </table>
 
     <div class="totali-box">
-      <div class="tot-imponibile">Totale (IVA esclusa): €${total.toFixed(2)}</div>
-      ${finanziamentoHtml}
-      ${finanziariaFornitoreHtml}
+      ${finanziariaFornitoreAttiva ? `
+        <div class="tot-imponibile-minore">Totale (IVA esclusa): €${total.toFixed(2)}</div>
+        <div class="rata-evidenziata">€${(meta.finanziaria_rata||0).toFixed(2)} <span class="mesi">al mese × ${meta.finanziaria_mesi} mesi</span></div>
+        <div class="finanziamento-nota">Importo finanziato: €${meta.finanziaria_importo.toFixed(2)} (${meta.finanziaria_iva_inclusa?"IVA inclusa":"IVA esclusa"})</div>
+      ` : `
+        <div class="tot-imponibile">Totale (IVA esclusa): €${total.toFixed(2)}</div>
+        ${finanziamentoHtml}
+      `}
     </div>
 
     ${meta.note ? `<div class="note-box"><div class="lbl">Note:</div><div class="testo">${meta.note}</div></div>` : ""}
@@ -3478,12 +3489,17 @@ ${meta.includi_copertina!==false ? `
 // Riusa lo stesso motore di ricerca a token + radice + fallback AI del Catalogo,
 // montato in piccolo dentro la vista dettaglio del preventivo.
 // Picker per aggiungere un pacchetto (kit di più prodotti, definito
-// dall'admin in Admin → Pacchetti) a un preventivo — mostra i pacchetti
-// attivi, il click su uno chiama onSeleziona con l'oggetto pacchetto intero
-// (il chiamante lo espande poi nelle righe prodotto reali).
+// dall'admin in Admin → Pacchetti) a un preventivo. Selezione progressiva:
+// tipo (PAC TELOS / PAC FORNITORE) → marca → pacchetto, con ricerca testuale
+// nell'ultimo passo — utile quando i pacchetti diventano numerosi. Il click
+// finale chiama onSeleziona con l'oggetto pacchetto intero (il chiamante lo
+// espande poi nelle righe prodotto reali).
 function SelezionePacchetto({onSeleziona, onClose, sessione}){
   const [pacchetti, setPacchetti] = useState(null); // null = in caricamento
   const [errore, setErrore] = useState("");
+  const [tipo, setTipo] = useState(null);       // "telos" | "fornitore"
+  const [marca, setMarca] = useState(null);
+  const [ricerca, setRicerca] = useState("");
   const accessToken = trovaAccessToken(sessione);
 
   useEffect(()=>{
@@ -3492,25 +3508,94 @@ function SelezionePacchetto({onSeleziona, onClose, sessione}){
       .catch(err=>setErrore(err.message));
   },[]);
 
+  const pacchettiPerTipo = useMemo(()=>{
+    if(!pacchetti || !tipo) return [];
+    return pacchetti.filter(pk=>(pk.tipo||"telos")===tipo);
+  },[pacchetti, tipo]);
+
+  const marcheDisponibili = useMemo(()=>{
+    const insieme = new Set(pacchettiPerTipo.map(pk=>pk.marca).filter(Boolean));
+    return [...insieme].sort((a,b)=>a.localeCompare(b));
+  },[pacchettiPerTipo]);
+
+  const pacchettiFiltrati = useMemo(()=>{
+    const q = ricerca.trim().toLowerCase();
+    return pacchettiPerTipo
+      .filter(pk=>!marca || pk.marca===marca)
+      .filter(pk=>!q || pk.nome.toLowerCase().includes(q) || (pk.descrizione||"").toLowerCase().includes(q));
+  },[pacchettiPerTipo, marca, ricerca]);
+
+  function tornaIndietro(){
+    if(marca!=null || ricerca) { setMarca(null); setRicerca(""); }
+    else if(tipo!=null) setTipo(null);
+  }
+
   return (
     <div onClick={e=>{if(e.target===e.currentTarget)onClose();}} style={{position:"fixed",inset:0,background:"rgba(14,26,64,.55)",display:"flex",alignItems:"flex-end",justifyContent:"center",zIndex:70}}>
       <div style={{background:"#fff",borderRadius:"14px 14px 0 0",width:"100%",maxWidth:600,maxHeight:"80vh",overflowY:"auto",padding:20}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
-          <div style={{fontFamily:F_DISPLAY,fontSize:17,fontWeight:600}}>📦 Aggiungi un pacchetto</div>
+          <div style={{display:"flex",alignItems:"center",gap:8}}>
+            {(tipo!=null) && (
+              <button onClick={tornaIndietro} style={{background:"none",border:"none",fontSize:18,cursor:"pointer",color:C.steel}}>←</button>
+            )}
+            <div style={{fontFamily:F_DISPLAY,fontSize:17,fontWeight:600}}>📦 Aggiungi un pacchetto</div>
+          </div>
           <button onClick={onClose} style={{background:"none",border:"none",fontSize:20,cursor:"pointer",color:"#9AA3AB"}}>✕</button>
         </div>
+
         {errore && <div style={{fontSize:12.5,color:C.danger,marginBottom:10}}>⚠ {errore}</div>}
         {pacchetti===null && !errore && <div style={{fontSize:12.5,color:C.steel}}>Caricamento…</div>}
+
         {pacchetti && pacchetti.length===0 && (
           <div style={{fontSize:12.5,color:"#9AA3AB"}}>Nessun pacchetto disponibile — un admin può crearne uno da Admin → Pacchetti.</div>
         )}
-        {pacchetti && pacchetti.map(pk=>(
-          <div key={pk.id} onClick={()=>onSeleziona(pk)} style={{...S.card,marginBottom:8}}>
-            <div style={{fontWeight:600,fontSize:14}}>{pk.nome}</div>
-            {pk.descrizione && <div style={{fontSize:12,color:C.steel,marginTop:3}}>{pk.descrizione}</div>}
-            <div style={{fontSize:11,color:"#9AA3AB",marginTop:4}}>{(pk.prodotti||[]).length} prodotti</div>
-          </div>
-        ))}
+
+        {/* Passo 1: tipo */}
+        {pacchetti && pacchetti.length>0 && tipo===null && (
+          <>
+            <div style={{fontSize:12.5,color:C.steel,marginBottom:10}}>Che tipo di pacchetto?</div>
+            {[["telos","PAC TELOS","Prezzi Telos normali"],["fornitore","PAC FORNITORE","Vendita tramite finanziaria"]].map(([v,lbl,sub])=>{
+              const n = pacchetti.filter(pk=>(pk.tipo||"telos")===v).length;
+              if(n===0) return null;
+              return (
+                <div key={v} onClick={()=>setTipo(v)} style={{...S.card,cursor:"pointer",marginBottom:8}}>
+                  <div style={{fontWeight:600,fontSize:14}}>{lbl}</div>
+                  <div style={{fontSize:12,color:C.steel,marginTop:2}}>{sub} · {n} disponibili</div>
+                </div>
+              );
+            })}
+          </>
+        )}
+
+        {/* Passo 2: marca (solo se ce n'è più di una) */}
+        {tipo!==null && marca===null && marcheDisponibili.length>1 && !ricerca && (
+          <>
+            <div style={{fontSize:12.5,color:C.steel,marginBottom:10}}>Marca?</div>
+            <div onClick={()=>setMarca("")} style={{...S.card,cursor:"pointer",marginBottom:8}}>
+              <div style={{fontWeight:600,fontSize:14}}>Tutte</div>
+            </div>
+            {marcheDisponibili.map(m=>(
+              <div key={m} onClick={()=>setMarca(m)} style={{...S.card,cursor:"pointer",marginBottom:8}}>
+                <div style={{fontWeight:600,fontSize:14}}>{m}</div>
+              </div>
+            ))}
+          </>
+        )}
+
+        {/* Passo 3: elenco pacchetti, con ricerca */}
+        {tipo!==null && (marca!==null || marcheDisponibili.length<=1) && (
+          <>
+            <input value={ricerca} onChange={e=>setRicerca(e.target.value)} placeholder="Cerca per nome…" style={{...S.inp,marginBottom:10}}/>
+            {pacchettiFiltrati.length===0 && <div style={{fontSize:12.5,color:"#9AA3AB"}}>Nessun pacchetto trovato.</div>}
+            {pacchettiFiltrati.map(pk=>(
+              <div key={pk.id} onClick={()=>onSeleziona(pk)} style={{...S.card,cursor:"pointer",marginBottom:8}}>
+                <div style={{fontWeight:600,fontSize:14}}>{pk.nome}</div>
+                {pk.descrizione && <div style={{fontSize:12,color:C.steel,marginTop:3}}>{pk.descrizione}</div>}
+                <div style={{fontSize:11,color:"#9AA3AB",marginTop:4}}>{(pk.prodotti||[]).length} prodotti{pk.marca?` · ${pk.marca}`:""}</div>
+              </div>
+            ))}
+          </>
+        )}
       </div>
     </div>
   );
@@ -4007,7 +4092,36 @@ function Preventivi({cart,setCart,preventivi,setPreventivi,setOrdini,setArea,ruo
       const notaProdotto = (prod.note||"").trim();
       if(notaProdotto && !note.includes(notaProdotto)) note = note ? `${note}\n${notaProdotto}` : notaProdotto;
     }
-    aggiorna(id, { righe, approvato:false, note });
+    const patch = { righe, approvato:false, note };
+    // Se il pacchetto ha già gli importi finanziati impostati (Admin →
+    // Pacchetti), attiviamo subito il blocco "Vendita tramite finanziaria
+    // fornitore" copiando quei valori — niente inserimento a mano, e il
+    // preventivo resta storicamente corretto anche se in futuro il
+    // pacchetto cambia condizioni. Di default mostriamo la versione senza
+    // IVA; il toggle IVA nel blocco finanziaria passa all'altra versione
+    // già pronta, senza dover ridigitare nulla.
+    if(pacchetto.finanziaria_mesi!=null && (pacchetto.finanziaria_importo_senza_iva!=null || pacchetto.finanziaria_importo_con_iva!=null)){
+      patch.finanziaria_mesi = pacchetto.finanziaria_mesi;
+      patch.finanziaria_importo_senza_iva = pacchetto.finanziaria_importo_senza_iva;
+      patch.finanziaria_rata_senza_iva = pacchetto.finanziaria_rata_senza_iva;
+      patch.finanziaria_importo_con_iva = pacchetto.finanziaria_importo_con_iva;
+      patch.finanziaria_rata_con_iva = pacchetto.finanziaria_rata_con_iva;
+      patch.finanziaria_iva_inclusa = false;
+      patch.finanziaria_importo = pacchetto.finanziaria_importo_senza_iva ?? pacchetto.finanziaria_importo_con_iva;
+      patch.finanziaria_rata = pacchetto.finanziaria_rata_senza_iva ?? pacchetto.finanziaria_rata_con_iva;
+      // Documenti PDF della finanziaria (moduli/contratti da far firmare):
+      // uniti a quelli eventualmente già presenti sul preventivo (es. da un
+      // altro pacchetto fornitore aggiunto in precedenza), senza duplicati
+      // (confrontati per URL).
+      const documentiEsistenti = p.finanziaria_documenti || [];
+      const documentiNuovi = pacchetto.documenti_finanziaria || [];
+      const urlEsistenti = new Set(documentiEsistenti.map(d=>d.url));
+      patch.finanziaria_documenti = [
+        ...documentiEsistenti,
+        ...documentiNuovi.filter(d=>!urlEsistenti.has(d.url)),
+      ];
+    }
+    aggiorna(id, patch);
     return { mancanti };
   }
   async function convertiInOrdine(p){
@@ -4025,6 +4139,15 @@ function Preventivi({cart,setCart,preventivi,setPreventivi,setOrdini,setArea,ruo
       firma_cliente: p.firma_cliente,
       firma_data: p.firma_data,
       firma_nome: p.firma_nome,
+      finanziaria_importo: p.finanziaria_importo,
+      finanziaria_rata: p.finanziaria_rata,
+      finanziaria_mesi: p.finanziaria_mesi,
+      finanziaria_iva_inclusa: p.finanziaria_iva_inclusa,
+      finanziaria_importo_senza_iva: p.finanziaria_importo_senza_iva,
+      finanziaria_rata_senza_iva: p.finanziaria_rata_senza_iva,
+      finanziaria_importo_con_iva: p.finanziaria_importo_con_iva,
+      finanziaria_rata_con_iva: p.finanziaria_rata_con_iva,
+      finanziaria_documenti: p.finanziaria_documenti,
     };
     try{
       const [salvato] = await sbAuth("POST","ordini","",nuovo,accessToken);
@@ -4326,7 +4449,14 @@ function Preventivi({cart,setCart,preventivi,setPreventivi,setOrdini,setArea,ruo
         {selezionato.righe.length===0 && (
           <div style={{fontSize:12.5,color:"#9AA3AB",padding:"10px 0"}}>Nessun articolo — usa la ricerca qui sopra per aggiungerne.</div>
         )}
-        {selezionato.righe.map(r=>(
+        {(() => {
+          // Con la finanziaria fornitore attiva, il cliente vede/paga
+          // l'importo finanziato complessivo, non i prezzi dei singoli
+          // prodotti — li nascondiamo per non creare confusione (i dati
+          // restano comunque salvati: cod/listino/netto di ogni riga non
+          // cambiano, servono solo alle statistiche interne).
+          const finanziariaAttiva = selezionato.finanziaria_importo!=null;
+          return selezionato.righe.map(r=>(
           <div key={r.cod} style={{...S.card,cursor:"default",display:"flex",justifyContent:"space-between",alignItems:"center",gap:10,...(r.sottoMargine?{borderColor:C.warn,background:"rgba(217,164,65,0.05)"}:{})}}>
             <div style={{minWidth:0}}>
               <div style={{display:"flex",gap:5,alignItems:"center",flexWrap:"wrap"}}>
@@ -4343,30 +4473,52 @@ function Preventivi({cart,setCart,preventivi,setPreventivi,setOrdini,setArea,ruo
                     onClick={e=>e.stopPropagation()}
                     style={{width:46,padding:"5px 6px",fontSize:12,fontFamily:F_MONO,border:`1px solid ${C.paperLine}`,borderRadius:5,textAlign:"center"}}
                   />
-                  <span style={{fontSize:11,color:"#9AA3AB"}}>×  €</span>
-                  <input
-                    type="number" min="0" step="0.01" value={r.netto}
-                    onChange={e=>modificaRiga(selezionato.id, r.cod, "netto", Math.max(0, parseFloat(e.target.value)||0))}
-                    onClick={e=>e.stopPropagation()}
-                    style={{width:84,padding:"5px 6px",fontSize:12,fontFamily:F_MONO,border:`1px solid ${C.paperLine}`,borderRadius:5,textAlign:"right"}}
-                  />
-                  <span style={{fontSize:10.5,color:"#9AA3AB"}}>cad.</span>
+                  {finanziariaAttiva ? (
+                    <span style={{fontSize:11,color:"#9AA3AB"}}>pz</span>
+                  ) : (
+                    <>
+                      <span style={{fontSize:11,color:"#9AA3AB"}}>×  €</span>
+                      <input
+                        type="number" min="0" step="0.01" value={r.netto}
+                        onChange={e=>modificaRiga(selezionato.id, r.cod, "netto", Math.max(0, parseFloat(e.target.value)||0))}
+                        onClick={e=>e.stopPropagation()}
+                        style={{width:84,padding:"5px 6px",fontSize:12,fontFamily:F_MONO,border:`1px solid ${C.paperLine}`,borderRadius:5,textAlign:"right"}}
+                      />
+                      <span style={{fontSize:10.5,color:"#9AA3AB"}}>cad.</span>
+                    </>
+                  )}
                 </div>
               ) : (
-                <div className="tnum" style={{fontSize:11,color:"#9AA3AB",marginTop:2}}>€{r.netto.toFixed(2)} × {r.qty||1}</div>
+                <div className="tnum" style={{fontSize:11,color:"#9AA3AB",marginTop:2}}>{finanziariaAttiva ? `× ${r.qty||1}` : `€${r.netto.toFixed(2)} × ${r.qty||1}`}</div>
               )}
             </div>
             <div style={{display:"flex",alignItems:"center",gap:8,flexShrink:0}}>
-              <span className="tnum" style={{fontWeight:700,fontFamily:F_MONO,fontSize:14}}>€{(r.netto*(r.qty||1)).toFixed(2)}</span>
+              {!finanziariaAttiva && <span className="tnum" style={{fontWeight:700,fontFamily:F_MONO,fontSize:14}}>€{(r.netto*(r.qty||1)).toFixed(2)}</span>}
               {editable && <button onClick={()=>eliminaRiga(selezionato.id,r.cod)} style={{background:"none",border:"none",fontSize:16,color:"#9AA3AB",cursor:"pointer"}}>✕</button>}
             </div>
           </div>
-        ))}
+          ));
+        })()}
 
-        <div style={{display:"flex",justifyContent:"space-between",padding:"14px 0",borderTop:`1px solid ${C.paperLine}`,marginTop:8}}>
-          <span style={{fontWeight:600,fontSize:14}}>Totale</span>
-          <span className="tnum" style={{fontWeight:700,fontSize:18,fontFamily:F_MONO,color:C.ink}}>€{selezionato.val.toFixed(2)}</span>
-        </div>
+        {selezionato.finanziaria_importo!=null ? (
+          <div style={{padding:"14px 0",borderTop:`1px solid ${C.paperLine}`,marginTop:8}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",marginBottom:6}}>
+              <span style={{fontSize:12,color:"#9AA3AB"}}>Totale</span>
+              <span className="tnum" style={{fontSize:13,fontFamily:F_MONO,color:"#9AA3AB"}}>€{selezionato.val.toFixed(2)}</span>
+            </div>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline"}}>
+              <span style={{fontWeight:700,fontSize:15,color:C.ink}}>Rata mensile</span>
+              <span className="tnum" style={{fontWeight:700,fontSize:22,fontFamily:F_MONO,color:C.ink}}>
+                €{(selezionato.finanziaria_rata||0).toFixed(2)} <span style={{fontSize:13,fontWeight:400,color:C.steel}}>× {selezionato.finanziaria_mesi} mesi</span>
+              </span>
+            </div>
+          </div>
+        ) : (
+          <div style={{display:"flex",justifyContent:"space-between",padding:"14px 0",borderTop:`1px solid ${C.paperLine}`,marginTop:8}}>
+            <span style={{fontWeight:600,fontSize:14}}>Totale</span>
+            <span className="tnum" style={{fontWeight:700,fontSize:18,fontFamily:F_MONO,color:C.ink}}>€{selezionato.val.toFixed(2)}</span>
+          </div>
+        )}
 
         {/* Finanziamento / Noleggio — rata calcolata automaticamente in base
             al totale del preventivo e alla durata scelta */}
@@ -4431,16 +4583,18 @@ function Preventivi({cart,setCart,preventivi,setPreventivi,setOrdini,setArea,ruo
         </div>
 
         {/* Vendita tramite finanziaria fornitore — es. TEXA: piano deciso
-            dalla finanziaria del fornitore, importo e rata inseriti a mano
-            (non calcolati dalle tabelle tassi Telos, che sono per il blocco
-            sopra). I netti dei singoli prodotti restano quelli di catalogo
-            ai fini statistiche/margine, indipendentemente da questo blocco. */}
+            dalla finanziaria del fornitore. Se il preventivo ha ricevuto
+            questi valori da un pacchetto (Admin → Pacchetti), sono pre-
+            impostati e il toggle IVA passa tra le due varianti già pronte;
+            altrimenti restano inseribili a mano per un caso singolo. I
+            netti dei singoli prodotti restano quelli di catalogo ai fini
+            statistiche/margine, indipendentemente da questo blocco. */}
         <div style={{...S.card,cursor:"default",marginBottom:16}}>
           <div style={{fontSize:11,fontFamily:F_MONO,color:"#9AA3AB",textTransform:"uppercase",letterSpacing:"0.05em",marginBottom:8}}>Vendita tramite finanziaria fornitore</div>
           {editable ? (
             <>
               <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:10}}>
-                <button onClick={()=>aggiorna(selezionato.id,{finanziaria_importo:null,finanziaria_rata:null,finanziaria_mesi:null,finanziaria_iva_inclusa:null})} style={{
+                <button onClick={()=>aggiorna(selezionato.id,{finanziaria_importo:null,finanziaria_rata:null,finanziaria_mesi:null,finanziaria_iva_inclusa:null,finanziaria_importo_senza_iva:null,finanziaria_rata_senza_iva:null,finanziaria_importo_con_iva:null,finanziaria_rata_con_iva:null})} style={{
                   border:`1px solid ${selezionato.finanziaria_importo==null?C.ink:C.paperLine}`, borderRadius:7, padding:"8px 14px",
                   fontSize:12.5, cursor:"pointer", fontWeight:selezionato.finanziaria_importo==null?600:400,
                   background:selezionato.finanziaria_importo==null?C.ink:"#fff", color:selezionato.finanziaria_importo==null?"#fff":"#5B6770",
@@ -4452,34 +4606,51 @@ function Preventivi({cart,setCart,preventivi,setPreventivi,setOrdini,setArea,ruo
                 }}>Attiva</button>
               </div>
 
-              {selezionato.finanziaria_importo!=null && (
-                <div style={{display:"flex",flexWrap:"wrap",gap:12}}>
-                  <div>
-                    <div style={S.eyebrow}>Importo finanziato (€)</div>
-                    <input type="number" min="0" step="0.01" value={selezionato.finanziaria_importo}
-                      onChange={e=>aggiorna(selezionato.id,{finanziaria_importo:parseFloat(e.target.value)||0})}
-                      style={{...S.inp,width:120}}/>
-                  </div>
-                  <div>
-                    <div style={S.eyebrow}>Rata mensile (€)</div>
-                    <input type="number" min="0" step="0.01" value={selezionato.finanziaria_rata||""}
-                      onChange={e=>aggiorna(selezionato.id,{finanziaria_rata:parseFloat(e.target.value)||0})}
-                      style={{...S.inp,width:120}}/>
-                  </div>
-                  <div>
-                    <div style={S.eyebrow}>Mesi</div>
-                    <input type="number" min="1" step="1" value={selezionato.finanziaria_mesi||""}
-                      onChange={e=>aggiorna(selezionato.id,{finanziaria_mesi:Math.max(1,parseInt(e.target.value,10)||1)})}
-                      style={{...S.inp,width:80}}/>
-                  </div>
-                  <label style={{display:"flex",alignItems:"center",gap:6,marginTop:20,fontSize:12.5,cursor:"pointer"}}>
-                    <input type="checkbox" checked={!!selezionato.finanziaria_iva_inclusa}
-                      onChange={e=>aggiorna(selezionato.id,{finanziaria_iva_inclusa:e.target.checked})}
-                      style={{width:16,height:16,accentColor:C.ink}}/>
-                    IVA inclusa
-                  </label>
-                </div>
-              )}
+              {selezionato.finanziaria_importo!=null && (() => {
+                const haCache = selezionato.finanziaria_importo_senza_iva!=null || selezionato.finanziaria_importo_con_iva!=null;
+                return (
+                  <>
+                    {haCache && <div style={{fontSize:11,color:"#9AA3AB",marginBottom:8}}>Valori copiati dal pacchetto — modificabili qui solo per questo preventivo.</div>}
+                    <div style={{display:"flex",flexWrap:"wrap",gap:12}}>
+                      <div>
+                        <div style={S.eyebrow}>Importo finanziato (€)</div>
+                        <input type="number" min="0" step="0.01" value={selezionato.finanziaria_importo}
+                          onChange={e=>aggiorna(selezionato.id,{finanziaria_importo:parseFloat(e.target.value)||0})}
+                          style={{...S.inp,width:120}}/>
+                      </div>
+                      <div>
+                        <div style={S.eyebrow}>Rata mensile (€)</div>
+                        <input type="number" min="0" step="0.01" value={selezionato.finanziaria_rata||""}
+                          onChange={e=>aggiorna(selezionato.id,{finanziaria_rata:parseFloat(e.target.value)||0})}
+                          style={{...S.inp,width:120}}/>
+                      </div>
+                      <div>
+                        <div style={S.eyebrow}>Mesi</div>
+                        <input type="number" min="1" step="1" value={selezionato.finanziaria_mesi||""}
+                          onChange={e=>aggiorna(selezionato.id,{finanziaria_mesi:Math.max(1,parseInt(e.target.value,10)||1)})}
+                          style={{...S.inp,width:80}}/>
+                      </div>
+                      <label style={{display:"flex",alignItems:"center",gap:6,marginTop:20,fontSize:12.5,cursor:"pointer"}}>
+                        <input type="checkbox" checked={!!selezionato.finanziaria_iva_inclusa}
+                          onChange={e=>{
+                            const ivaInclusa = e.target.checked;
+                            if(haCache){
+                              aggiorna(selezionato.id, {
+                                finanziaria_iva_inclusa: ivaInclusa,
+                                finanziaria_importo: ivaInclusa ? selezionato.finanziaria_importo_con_iva : selezionato.finanziaria_importo_senza_iva,
+                                finanziaria_rata: ivaInclusa ? selezionato.finanziaria_rata_con_iva : selezionato.finanziaria_rata_senza_iva,
+                              });
+                            } else {
+                              aggiorna(selezionato.id, { finanziaria_iva_inclusa: ivaInclusa });
+                            }
+                          }}
+                          style={{width:16,height:16,accentColor:C.ink}}/>
+                        IVA inclusa
+                      </label>
+                    </div>
+                  </>
+                );
+              })()}
             </>
           ) : selezionato.finanziaria_importo!=null ? (
             <div style={{fontSize:13,fontWeight:600}}>
@@ -4998,13 +5169,14 @@ function PreventiviSaltati({preventivi}){
 function Ordini({ordini,setOrdini,preventivi,setPreventivi,setInterventi,catalog,sessione,ruolo}){
   const [selId,setSelId]=useState(null);
   const [generandoPdf,setGenerandoPdf]=useState(false);
+  const [documentiFinSelezionati,setDocumentiFinSelezionati]=useState([]); // indici selezionati nell'ordine corrente
   const [erroreSync,setErroreSync]=useState("");
   const [confermaSospendi,setConfermaSospendi]=useState(false);
   const [confermaRiattiva,setConfermaRiattiva]=useState(false);
   const [confermaEliminaOrdine,setConfermaEliminaOrdine]=useState(false);
   const selezionato = ordini.find(o=>o.id===selId);
   const accessToken = trovaAccessToken(sessione);
-  useEffect(()=>{ setConfermaSospendi(false); setConfermaRiattiva(false); setConfermaEliminaOrdine(false); },[selId]);
+  useEffect(()=>{ setConfermaSospendi(false); setConfermaRiattiva(false); setConfermaEliminaOrdine(false); setDocumentiFinSelezionati([]); },[selId]);
 
   // ── Nuovo ordine senza preventivo ───────────────────────────────────────
   const [creandoNuovo,setCreandoNuovo] = useState(false);
@@ -5520,15 +5692,20 @@ ${o.firma_cliente ? `
         {righeEditabili && (
           <RicercaProdottiInline onSeleziona={aggiungiRigaOrdine} righeEsistenti={selezionato.righe} ruolo={ruolo} catalog={catalog} sessione={sessione}/>
         )}
-        {selezionato.righe.map(r=>(
+        {(() => {
+          const finanziariaAttiva = selezionato.finanziaria_importo!=null;
+          return selezionato.righe.map(r=>(
           <div key={r.cod} style={{...S.card,cursor:"default"}}>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
               <div>
-                <Tag tone="steel">{r.mar}</Tag>
+                <div style={{display:"flex",gap:5,alignItems:"center",flexWrap:"wrap"}}>
+                  <Tag tone="steel">{r.mar}</Tag>
+                  {r.pacchetto_nome && <Tag tone="cyan">📦 {r.pacchetto_nome}</Tag>}
+                </div>
                 <div style={{fontWeight:600,fontSize:13,marginTop:4}}>{r.nome}</div>
-                {!righeEditabili && <div className="tnum" style={{fontSize:11,color:"#9AA3AB",marginTop:2}}>€{r.netto.toFixed(2)} × {r.qty||1}</div>}
+                {!righeEditabili && <div className="tnum" style={{fontSize:11,color:"#9AA3AB",marginTop:2}}>{finanziariaAttiva ? `× ${r.qty||1}` : `€${r.netto.toFixed(2)} × ${r.qty||1}`}</div>}
               </div>
-              <span className="tnum" style={{fontWeight:700,fontFamily:F_MONO,fontSize:14}}>€{(r.netto*(r.qty||1)).toFixed(2)}</span>
+              {!finanziariaAttiva && <span className="tnum" style={{fontWeight:700,fontFamily:F_MONO,fontSize:14}}>€{(r.netto*(r.qty||1)).toFixed(2)}</span>}
             </div>
             {righeEditabili && (
               <div style={{display:"flex",gap:8,alignItems:"center",marginTop:10,paddingTop:10,borderTop:`1px solid ${C.paperLine}`}}>
@@ -5536,19 +5713,70 @@ ${o.firma_cliente ? `
                   <label style={{fontSize:10,fontFamily:F_MONO,color:"#9AA3AB"}}>Qtà</label>
                   <input type="number" min="1" value={r.qty||1} onChange={e=>modificaRigaOrdine(r.cod,"qty",Math.max(1,parseInt(e.target.value)||1))} className="tnum" style={{...S.inp,fontFamily:F_MONO,padding:"7px 9px"}}/>
                 </div>
-                <div style={{flex:"1 1 120px"}}>
-                  <label style={{fontSize:10,fontFamily:F_MONO,color:"#9AA3AB"}}>Netto unitario €</label>
-                  <input type="number" step="0.01" value={r.netto} onChange={e=>modificaRigaOrdine(r.cod,"netto",parseFloat(e.target.value)||0)} className="tnum" style={{...S.inp,fontFamily:F_MONO,padding:"7px 9px"}}/>
-                </div>
+                {!finanziariaAttiva && (
+                  <div style={{flex:"1 1 120px"}}>
+                    <label style={{fontSize:10,fontFamily:F_MONO,color:"#9AA3AB"}}>Netto unitario €</label>
+                    <input type="number" step="0.01" value={r.netto} onChange={e=>modificaRigaOrdine(r.cod,"netto",parseFloat(e.target.value)||0)} className="tnum" style={{...S.inp,fontFamily:F_MONO,padding:"7px 9px"}}/>
+                  </div>
+                )}
                 <button onClick={()=>rimuoviRigaOrdine(r.cod)} style={{...S.btnS,padding:"7px 10px",fontSize:11.5,color:C.danger,flexShrink:0,alignSelf:"flex-end"}}>🗑 Rimuovi</button>
               </div>
             )}
           </div>
-        ))}
-        <div style={{display:"flex",justifyContent:"space-between",padding:"14px 0",borderTop:`1px solid ${C.paperLine}`,marginTop:8,marginBottom:16}}>
-          <span style={{fontWeight:600,fontSize:14}}>Totale</span>
-          <span className="tnum" style={{fontWeight:700,fontSize:18,fontFamily:F_MONO,color:C.ink}}>€{selezionato.val.toFixed(2)}</span>
-        </div>
+          ));
+        })()}
+        {selezionato.finanziaria_importo!=null ? (
+          <div style={{padding:"14px 0",borderTop:`1px solid ${C.paperLine}`,marginTop:8,marginBottom:16}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",marginBottom:6}}>
+              <span style={{fontSize:12,color:"#9AA3AB"}}>Totale</span>
+              <span className="tnum" style={{fontSize:13,fontFamily:F_MONO,color:"#9AA3AB"}}>€{selezionato.val.toFixed(2)}</span>
+            </div>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline"}}>
+              <span style={{fontWeight:700,fontSize:15,color:C.ink}}>Rata mensile</span>
+              <span className="tnum" style={{fontWeight:700,fontSize:22,fontFamily:F_MONO,color:C.ink}}>
+                €{(selezionato.finanziaria_rata||0).toFixed(2)} <span style={{fontSize:13,fontWeight:400,color:C.steel}}>× {selezionato.finanziaria_mesi} mesi</span>
+              </span>
+            </div>
+          </div>
+        ) : (
+          <div style={{display:"flex",justifyContent:"space-between",padding:"14px 0",borderTop:`1px solid ${C.paperLine}`,marginTop:8,marginBottom:16}}>
+            <span style={{fontWeight:600,fontSize:14}}>Totale</span>
+            <span className="tnum" style={{fontWeight:700,fontSize:18,fontFamily:F_MONO,color:C.ink}}>€{selezionato.val.toFixed(2)}</span>
+          </div>
+        )}
+
+        {/* Documenti della finanziaria (moduli/contratti) da far firmare al
+            cliente — propagati dal pacchetto aggiunto in preventivo. Il
+            commerciale seleziona quelli che servono per questo cliente e li
+            apre/scarica per l'invio (non essendoci nell'app un canale email
+            integrato, l'azione resta "apri il PDF" — da lì il commerciale lo
+            scarica o lo allega manualmente). */}
+        {(selezionato.finanziaria_documenti||[]).length>0 && (
+          <div style={{...S.card,cursor:"default",border:`1px solid ${C.cyan}`,marginBottom:16}}>
+            <div style={S.eyebrow}>Documenti finanziaria da inviare per la firma</div>
+            <div style={{fontSize:11.5,color:"#9AA3AB",marginTop:4,marginBottom:10}}>
+              Seleziona i documenti da aprire/scaricare per farli firmare al cliente.
+            </div>
+            {selezionato.finanziaria_documenti.map((d,i)=>(
+              <label key={i} style={{display:"flex",alignItems:"center",gap:10,padding:"7px 0",cursor:"pointer"}}>
+                <input type="checkbox" checked={documentiFinSelezionati.includes(i)}
+                  onChange={e=>setDocumentiFinSelezionati(prev => e.target.checked ? [...prev,i] : prev.filter(x=>x!==i))}
+                  style={{width:16,height:16,accentColor:C.ink,flexShrink:0}}/>
+                <span style={{fontSize:13,flex:1}}>{d.nome}</span>
+                <a href={d.url} target="_blank" rel="noreferrer" onClick={e=>e.stopPropagation()} style={{fontSize:11.5,color:C.ink,textDecoration:"underline",flexShrink:0}}>Apri</a>
+              </label>
+            ))}
+            <button
+              disabled={documentiFinSelezionati.length===0}
+              onClick={()=>{
+                documentiFinSelezionati.forEach(i => window.open(selezionato.finanziaria_documenti[i].url, "_blank"));
+              }}
+              style={{...S.btnP,marginTop:10,opacity:documentiFinSelezionati.length===0?0.5:1}}
+            >
+              ⬆ Apri {documentiFinSelezionati.length||""} selezionat{documentiFinSelezionati.length===1?"o":"i"}
+            </button>
+          </div>
+        )}
 
         {selezionato.stato==="Inserito" && (
           <div style={{...S.card,cursor:"default",border:`1px solid ${C.ink}`,marginBottom:16}}>
@@ -6251,6 +6479,33 @@ async function chiamaCatalogAdmin(action, payload, accessToken) {
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data?.error || `Edge Function ${res.status}`);
   return data;
+}
+
+// Carica un file direttamente su Supabase Storage tramite URL firmato — stessa
+// tecnica già usata in ClientiComponenti.jsx per foto/schede tecniche
+// prodotto (vedi lì per i dettagli sul perché: evita di far transitare i
+// byte del file dentro la Edge Function). Qui riusa il bucket
+// "prodotti-schede-tecniche" (azione "creaUrlCaricamentoScheda") anche per i
+// documenti PDF della finanziaria associati a un pacchetto, non essendoci
+// nulla di specifico ai prodotti in quella logica di storage.
+async function caricaSuStorageConUrlFirmato(file, azioneCreaUrl, accessToken, cod) {
+  const { bucket, path, token, publicUrl } = await chiamaCatalogAdmin(
+    azioneCreaUrl, { nomeFile: file.name, cod: cod || "file" }, accessToken
+  );
+  const res = await fetch(`${SUPABASE_URL}/storage/v1/object/upload/sign/${bucket}/${path}?token=${token}`, {
+    method: "PUT",
+    headers: {
+      "apikey": SUPABASE_ANON_KEY,
+      "Content-Type": file.type || "application/octet-stream",
+      "x-upsert": "true",
+    },
+    body: file,
+  });
+  if (!res.ok) {
+    const txt = await res.text().catch(() => "");
+    throw new Error(`Caricamento file fallito (${res.status}) ${txt}`);
+  }
+  return publicUrl;
 }
 
 // ─── GESTIONE UTENTI ──────────────────────────────────────────────────────────
@@ -7308,12 +7563,13 @@ function GestioneListinoCompleto({ sessione }){
 // Un pacchetto è un kit di più prodotti a catalogo con quantità fisse,
 // selezionabile in un preventivo (vedi SelezionePacchetto) per aggiungere
 // tutte le righe componenti in un colpo solo.
-function GestionePacchetti({ sessione, catalog }){
+function GestionePacchetti({ sessione, catalog, ruolo }){
   const accessToken = trovaAccessToken(sessione);
   const [pacchetti, setPacchetti] = useState(null);
   const [errore, setErrore] = useState("");
   const [inModifica, setInModifica] = useState(null); // null | "nuovo" | oggetto pacchetto esistente
   const [confermaElimina, setConfermaElimina] = useState(null); // id del pacchetto da confermare
+  const isAdmin = ruolo === "admin";
 
   function ricarica(){
     sbGetAuth("pacchetti", "select=*&order=nome.asc", accessToken)
@@ -7347,6 +7603,7 @@ function GestionePacchetti({ sessione, catalog }){
         pacchetto={inModifica==="nuovo"?null:inModifica}
         catalog={catalog}
         accessToken={accessToken}
+        ruolo={ruolo}
         onSalvato={()=>{ setInModifica(null); ricarica(); }}
         onAnnulla={()=>setInModifica(null)}
       />
@@ -7355,9 +7612,13 @@ function GestionePacchetti({ sessione, catalog }){
 
   return (
     <div>
+      <div style={{fontFamily:F_DISPLAY,fontSize:18,fontWeight:600,marginBottom:4}}>PACCHETTI</div>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
-        <div style={{fontSize:13,color:C.steel}}>Kit di più prodotti selezionabili in un preventivo con un solo click.</div>
-        <button onClick={()=>setInModifica("nuovo")} style={S.btnP}>+ Nuovo pacchetto</button>
+        <div style={{fontSize:13,color:C.steel}}>
+          Kit di più prodotti selezionabili in un preventivo con un solo click.
+          {!isAdmin && " Come responsabile puoi aggiornare gli importi della finanziaria fornitore."}
+        </div>
+        {isAdmin && <button onClick={()=>setInModifica("nuovo")} style={S.btnP}>+ Nuovo pacchetto</button>}
       </div>
       {errore && <div style={{fontSize:12.5,color:C.danger,marginBottom:10}}>⚠ {errore}</div>}
       {pacchetti===null && !errore && <div style={{fontSize:12.5,color:C.steel}}>Caricamento…</div>}
@@ -7367,16 +7628,19 @@ function GestionePacchetti({ sessione, catalog }){
           <div style={{minWidth:0}}>
             <div style={{fontWeight:600,fontSize:14}}>{pk.nome}{!pk.attivo && <span style={{fontSize:11,color:C.warn,marginLeft:8}}>(disattivato)</span>}</div>
             {pk.descrizione && <div style={{fontSize:12,color:C.steel,marginTop:3}}>{pk.descrizione}</div>}
-            <div style={{fontSize:11,color:"#9AA3AB",marginTop:4}}>{(pk.prodotti||[]).length} prodotti</div>
+            <div style={{fontSize:11,color:"#9AA3AB",marginTop:4}}>
+              {(pk.prodotti||[]).length} prodotti
+              {pk.finanziaria_mesi!=null && " · finanziaria impostata"}
+            </div>
           </div>
           <div style={{display:"flex",gap:6,flexShrink:0}}>
-            <button onClick={()=>toggleAttivo(pk)} style={{...S.btnS,padding:"6px 10px",fontSize:11.5}}>{pk.attivo?"Disattiva":"Riattiva"}</button>
-            <button onClick={()=>setInModifica(pk)} style={{...S.btnS,padding:"6px 10px",fontSize:11.5}}>✎ Modifica</button>
-            {confermaElimina===pk.id ? (
+            {isAdmin && <button onClick={()=>toggleAttivo(pk)} style={{...S.btnS,padding:"6px 10px",fontSize:11.5}}>{pk.attivo?"Disattiva":"Riattiva"}</button>}
+            <button onClick={()=>setInModifica(pk)} style={{...S.btnS,padding:"6px 10px",fontSize:11.5}}>✎ {isAdmin?"Modifica":"Finanziaria"}</button>
+            {isAdmin && (confermaElimina===pk.id ? (
               <button onClick={()=>eliminaPacchetto(pk.id)} style={{...S.btnS,padding:"6px 10px",fontSize:11.5,background:C.danger,color:"#fff",borderColor:C.danger}}>Confermi?</button>
             ) : (
               <button onClick={()=>setConfermaElimina(pk.id)} style={{background:"none",border:"none",fontSize:15,color:"#9AA3AB",cursor:"pointer"}}>✕</button>
-            )}
+            ))}
           </div>
         </div>
       ))}
@@ -7385,14 +7649,36 @@ function GestionePacchetti({ sessione, catalog }){
 }
 
 // Form di creazione/modifica di un pacchetto — ricerca testuale sul catalogo
-// per aggiungere componenti con quantità fissa.
-function FormPacchetto({ pacchetto, catalog, accessToken, onSalvato, onAnnulla }){
+// per aggiungere componenti con quantità fissa. Un responsabile (non admin)
+// vede nome/descrizione/prodotti in sola lettura e può modificare solo gli
+// importi della finanziaria fornitore.
+function FormPacchetto({ pacchetto, catalog, accessToken, ruolo, onSalvato, onAnnulla }){
+  const isAdmin = ruolo === "admin";
   const [nome, setNome] = useState(pacchetto?.nome || "");
   const [descrizione, setDescrizione] = useState(pacchetto?.descrizione || "");
+  const [tipo, setTipo] = useState(pacchetto?.tipo || "telos");
+  const [marca, setMarca] = useState(pacchetto?.marca || "");
   const [componenti, setComponenti] = useState(pacchetto?.prodotti || []); // [{cod,qty}]
   const [ricerca, setRicerca] = useState("");
   const [salvando, setSalvando] = useState(false);
   const [errore, setErrore] = useState("");
+
+  // Finanziaria fornitore: due varianti (con/senza IVA) memorizzate sul
+  // pacchetto — vedi aggiungiPacchetto in Preventivi, che le copia in
+  // automatico quando il pacchetto viene aggiunto a un preventivo.
+  const [finImportoSenzaIva, setFinImportoSenzaIva] = useState(pacchetto?.finanziaria_importo_senza_iva ?? "");
+  const [finRataSenzaIva, setFinRataSenzaIva] = useState(pacchetto?.finanziaria_rata_senza_iva ?? "");
+  const [finImportoConIva, setFinImportoConIva] = useState(pacchetto?.finanziaria_importo_con_iva ?? "");
+  const [finRataConIva, setFinRataConIva] = useState(pacchetto?.finanziaria_rata_con_iva ?? "");
+  const [finMesi, setFinMesi] = useState(pacchetto?.finanziaria_mesi ?? 36);
+
+  // Documenti PDF della finanziaria (moduli/contratti da far firmare al
+  // cliente) — propagati al preventivo e poi all'ordine quando il pacchetto
+  // viene aggiunto (vedi aggiungiPacchetto e convertiInOrdine).
+  const [documenti, setDocumenti] = useState(pacchetto?.documenti_finanziaria || []); // [{nome,url}]
+  const [caricandoDoc, setCaricandoDoc] = useState(false);
+  const [erroreDoc, setErroreDoc] = useState("");
+  const docFileRef = useRef(null);
 
   const risultatiRicerca = useMemo(()=>{
     const q = ricerca.trim().toLowerCase();
@@ -7414,11 +7700,42 @@ function FormPacchetto({ pacchetto, catalog, accessToken, onSalvato, onAnnulla }
     setComponenti(prev=>prev.map(c=>c.cod===cod ? {...c, qty:Math.max(1,qty)} : c));
   }
 
+  async function caricaDocumento(file){
+    if(!file) return;
+    if(file.type !== "application/pdf"){ setErroreDoc("Sono ammessi solo file PDF."); return; }
+    if(file.size > 15*1024*1024){ setErroreDoc("File troppo grande (max 15MB)."); return; }
+    setErroreDoc(""); setCaricandoDoc(true);
+    try{
+      const url = await caricaSuStorageConUrlFirmato(file, "creaUrlCaricamentoScheda", accessToken, pacchetto?.id || nome || "pacchetto");
+      const nomeDefault = file.name.replace(/\.pdf$/i, "");
+      setDocumenti(prev => [...prev, { nome: nomeDefault, url }]);
+    }catch(err){
+      setErroreDoc("Errore caricamento: " + err.message);
+    }
+    setCaricandoDoc(false);
+  }
+  function rinominaDocumento(i, nuovoNome){
+    setDocumenti(prev => prev.map((d,idx) => idx===i ? {...d, nome:nuovoNome} : d));
+  }
+  function rimuoviDocumento(i){
+    setDocumenti(prev => prev.filter((_,idx) => idx!==i));
+  }
+
   async function salva(){
     if(!nome.trim()){ setErrore("Il nome è obbligatorio."); return; }
     if(componenti.length===0){ setErrore("Aggiungi almeno un prodotto."); return; }
     setErrore(""); setSalvando(true);
-    const payload = { nome: nome.trim(), descrizione: descrizione.trim() || null, prodotti: componenti };
+    const payload = {
+      nome: nome.trim(), descrizione: descrizione.trim() || null,
+      tipo, marca: marca.trim() || null,
+      prodotti: componenti,
+      finanziaria_importo_senza_iva: finImportoSenzaIva===""?null:parseFloat(finImportoSenzaIva),
+      finanziaria_rata_senza_iva: finRataSenzaIva===""?null:parseFloat(finRataSenzaIva),
+      finanziaria_importo_con_iva: finImportoConIva===""?null:parseFloat(finImportoConIva),
+      finanziaria_rata_con_iva: finRataConIva===""?null:parseFloat(finRataConIva),
+      finanziaria_mesi: tipo==="fornitore" ? (parseInt(finMesi,10)||36) : null,
+      documenti_finanziaria: documenti,
+    };
     try{
       if(pacchetto) await sbAuth("PATCH","pacchetti",`id=eq.${pacchetto.id}`,payload,accessToken);
       else await sbAuth("POST","pacchetti","",{...payload, attivo:true},accessToken);
@@ -7429,47 +7746,139 @@ function FormPacchetto({ pacchetto, catalog, accessToken, onSalvato, onAnnulla }
     setSalvando(false);
   }
 
+  const pillStile = on => ({
+    border:`1px solid ${on?C.ink:C.paperLine}`, borderRadius:7, padding:"8px 14px",
+    fontSize:12.5, cursor:"pointer", fontWeight:on?600:400,
+    background:on?C.ink:"#fff", color:on?"#fff":"#5B6770",
+  });
+
   return (
     <div>
       <button onClick={onAnnulla} style={{...S.btnS,marginBottom:14}}>← Torna ai pacchetti</button>
-      <div style={{fontFamily:F_DISPLAY,fontSize:17,fontWeight:600,marginBottom:16}}>{pacchetto?"Modifica pacchetto":"Nuovo pacchetto"}</div>
+      <div style={{fontFamily:F_DISPLAY,fontSize:17,fontWeight:600,marginBottom:16}}>
+        {pacchetto ? (isAdmin?"Modifica pacchetto":"Finanziaria del pacchetto") : "Nuovo pacchetto"}
+      </div>
 
-      <div style={S.eyebrow}>Nome *</div>
-      <input value={nome} onChange={e=>setNome(e.target.value)} placeholder="es. Kit TEXA Diagnosi Base" style={{...S.inp,marginBottom:12}}/>
+      {isAdmin ? (
+        <>
+          <div style={S.eyebrow}>Nome *</div>
+          <input value={nome} onChange={e=>setNome(e.target.value)} placeholder="es. Kit TEXA Diagnosi Base" style={{...S.inp,marginBottom:12}}/>
 
-      <div style={S.eyebrow}>Descrizione (opzionale)</div>
-      <textarea value={descrizione} onChange={e=>setDescrizione(e.target.value)} rows={2} style={{...S.inp,resize:"vertical",marginBottom:16}}/>
+          <div style={S.eyebrow}>Descrizione (opzionale)</div>
+          <textarea value={descrizione} onChange={e=>setDescrizione(e.target.value)} rows={2} style={{...S.inp,resize:"vertical",marginBottom:16}}/>
 
-      <div style={S.eyebrow}>Prodotti nel pacchetto</div>
-      {componenti.length===0 && <div style={{fontSize:12.5,color:"#9AA3AB",padding:"8px 0"}}>Nessun prodotto ancora — cercalo qui sotto per aggiungerlo.</div>}
-      {componenti.map(c=>{
-        const p = (catalog||[]).find(x=>x.cod===c.cod);
-        return (
-          <div key={c.cod} style={{...S.card,cursor:"default",display:"flex",justifyContent:"space-between",alignItems:"center",gap:10,marginBottom:6}}>
-            <div style={{minWidth:0}}>
-              <div style={{fontWeight:600,fontSize:13}}>{p?.nome || c.cod}</div>
-              <div className="tnum" style={{fontSize:11,color:"#9AA3AB",fontFamily:F_MONO}}>{c.cod}{p ? ` · €${p.netto.toFixed(2)} cad.` : " · non più a catalogo"}</div>
+          <div style={S.eyebrow}>Tipo</div>
+          <div style={{display:"flex",gap:6,marginBottom:12}}>
+            <button onClick={()=>setTipo("telos")} style={pillStile(tipo==="telos")}>PAC TELOS</button>
+            <button onClick={()=>setTipo("fornitore")} style={pillStile(tipo==="fornitore")}>PAC FORNITORE</button>
+          </div>
+          <div style={{fontSize:11.5,color:"#9AA3AB",marginTop:-8,marginBottom:14}}>
+            {tipo==="telos"
+              ? "Venduto ai normali prezzi Telos — i netti restano quelli di ogni prodotto."
+              : "Venduto tramite finanziaria del fornitore — imposta sotto importo/rata e i documenti da far firmare."}
+          </div>
+
+          <div style={S.eyebrow}>Marca (per trovarlo più facilmente in ricerca)</div>
+          <input value={marca} onChange={e=>setMarca(e.target.value)} placeholder="es. TEXA, BEISSBARTH…" style={{...S.inp,marginBottom:16}}/>
+
+          <div style={S.eyebrow}>Prodotti nel pacchetto</div>
+          {componenti.length===0 && <div style={{fontSize:12.5,color:"#9AA3AB",padding:"8px 0"}}>Nessun prodotto ancora — cercalo qui sotto per aggiungerlo.</div>}
+          {componenti.map(c=>{
+            const p = (catalog||[]).find(x=>x.cod===c.cod);
+            return (
+              <div key={c.cod} style={{...S.card,cursor:"default",display:"flex",justifyContent:"space-between",alignItems:"center",gap:10,marginBottom:6}}>
+                <div style={{minWidth:0}}>
+                  <div style={{fontWeight:600,fontSize:13}}>{p?.nome || c.cod}</div>
+                  <div className="tnum" style={{fontSize:11,color:"#9AA3AB",fontFamily:F_MONO}}>{c.cod}{p ? ` · €${p.netto.toFixed(2)} cad.` : " · non più a catalogo"}</div>
+                </div>
+                <div style={{display:"flex",alignItems:"center",gap:8,flexShrink:0}}>
+                  <input type="number" min="1" step="1" value={c.qty}
+                    onChange={e=>cambiaQty(c.cod, parseInt(e.target.value,10)||1)}
+                    style={{width:50,padding:"5px 6px",fontSize:12,fontFamily:F_MONO,border:`1px solid ${C.paperLine}`,borderRadius:5,textAlign:"center"}}/>
+                  <button onClick={()=>rimuoviComponente(c.cod)} style={{background:"none",border:"none",fontSize:16,color:"#9AA3AB",cursor:"pointer"}}>✕</button>
+                </div>
+              </div>
+            );
+          })}
+
+          <input value={ricerca} onChange={e=>setRicerca(e.target.value)} placeholder="Cerca per nome, codice o marca da aggiungere…" style={{...S.inp,marginTop:10,marginBottom:8}}/>
+          {risultatiRicerca.map(p=>(
+            <div key={p.cod} onClick={()=>aggiungiComponente(p)} style={{...S.card,cursor:"pointer",display:"flex",justifyContent:"space-between",alignItems:"center",gap:10,marginBottom:6}}>
+              <div style={{minWidth:0}}>
+                <div style={{fontWeight:600,fontSize:13}}>{p.nome}</div>
+                <div className="tnum" style={{fontSize:11,color:"#9AA3AB",fontFamily:F_MONO}}>{p.cod} · {p.mar} · €{p.netto.toFixed(2)}</div>
+              </div>
+              <span style={{fontSize:18,color:C.ink,flexShrink:0}}>+</span>
             </div>
-            <div style={{display:"flex",alignItems:"center",gap:8,flexShrink:0}}>
-              <input type="number" min="1" step="1" value={c.qty}
-                onChange={e=>cambiaQty(c.cod, parseInt(e.target.value,10)||1)}
-                style={{width:50,padding:"5px 6px",fontSize:12,fontFamily:F_MONO,border:`1px solid ${C.paperLine}`,borderRadius:5,textAlign:"center"}}/>
-              <button onClick={()=>rimuoviComponente(c.cod)} style={{background:"none",border:"none",fontSize:16,color:"#9AA3AB",cursor:"pointer"}}>✕</button>
+          ))}
+        </>
+      ) : (
+        <>
+          {/* Responsabile: nome/descrizione/prodotti in sola lettura */}
+          <div style={{fontWeight:600,fontSize:16,marginBottom:4}}>{nome}</div>
+          {descrizione && <div style={{fontSize:12.5,color:C.steel,marginBottom:8}}>{descrizione}</div>}
+          <div style={{fontSize:11.5,color:"#9AA3AB",marginBottom:16}}>
+            {tipo==="telos"?"PAC TELOS":"PAC FORNITORE"}{marca?` · ${marca}`:""} · {componenti.length} prodotti
+          </div>
+        </>
+      )}
+
+      {tipo==="fornitore" && (
+        <>
+          <div style={{height:1,background:C.paperLine,margin:"18px 0"}}/>
+          <div style={S.eyebrow}>Finanziaria fornitore</div>
+          <div style={{fontSize:11.5,color:"#9AA3AB",marginBottom:10}}>
+            Due varianti: il cliente sceglie in preventivo se pagare l'IVA a parte o finanziarla insieme al resto.
+          </div>
+          <div style={{display:"flex",flexWrap:"wrap",gap:14,marginBottom:14}}>
+            <div>
+              <div style={S.eyebrow}>Mesi</div>
+              <input type="number" min="1" step="1" value={finMesi} onChange={e=>setFinMesi(e.target.value)} style={{...S.inp,width:80}}/>
+            </div>
+            <div>
+              <div style={S.eyebrow}>Importo senza IVA (€)</div>
+              <input type="number" min="0" step="0.01" value={finImportoSenzaIva} onChange={e=>setFinImportoSenzaIva(e.target.value)} style={{...S.inp,width:130}}/>
+            </div>
+            <div>
+              <div style={S.eyebrow}>Rata senza IVA (€/mese)</div>
+              <input type="number" min="0" step="0.01" value={finRataSenzaIva} onChange={e=>setFinRataSenzaIva(e.target.value)} style={{...S.inp,width:130}}/>
+            </div>
+            <div>
+              <div style={S.eyebrow}>Importo con IVA (€)</div>
+              <input type="number" min="0" step="0.01" value={finImportoConIva} onChange={e=>setFinImportoConIva(e.target.value)} style={{...S.inp,width:130}}/>
+            </div>
+            <div>
+              <div style={S.eyebrow}>Rata con IVA (€/mese)</div>
+              <input type="number" min="0" step="0.01" value={finRataConIva} onChange={e=>setFinRataConIva(e.target.value)} style={{...S.inp,width:130}}/>
             </div>
           </div>
-        );
-      })}
 
-      <input value={ricerca} onChange={e=>setRicerca(e.target.value)} placeholder="Cerca per nome, codice o marca da aggiungere…" style={{...S.inp,marginTop:10,marginBottom:8}}/>
-      {risultatiRicerca.map(p=>(
-        <div key={p.cod} onClick={()=>aggiungiComponente(p)} style={{...S.card,cursor:"pointer",display:"flex",justifyContent:"space-between",alignItems:"center",gap:10,marginBottom:6}}>
-          <div style={{minWidth:0}}>
-            <div style={{fontWeight:600,fontSize:13}}>{p.nome}</div>
-            <div className="tnum" style={{fontSize:11,color:"#9AA3AB",fontFamily:F_MONO}}>{p.cod} · {p.mar} · €{p.netto.toFixed(2)}</div>
-          </div>
-          <span style={{fontSize:18,color:C.ink,flexShrink:0}}>+</span>
-        </div>
-      ))}
+          {isAdmin && (
+            <>
+              <div style={S.eyebrow}>Documenti da far firmare al cliente (PDF)</div>
+              <div style={{fontSize:11.5,color:"#9AA3AB",marginBottom:8}}>
+                Moduli/contratti della finanziaria — verranno proposti al commerciale quando converte in ordine un preventivo con questo pacchetto.
+              </div>
+              {documenti.map((d,i)=>(
+                <div key={i} style={{...S.card,cursor:"default",display:"flex",alignItems:"center",gap:8,marginBottom:6}}>
+                  <input value={d.nome} onChange={e=>rinominaDocumento(i,e.target.value)} style={{...S.inp,flex:1,padding:"6px 9px",fontSize:12.5}}/>
+                  <a href={d.url} target="_blank" rel="noreferrer" style={{fontSize:11.5,color:C.ink,textDecoration:"underline",flexShrink:0}}>Apri</a>
+                  <button onClick={()=>rimuoviDocumento(i)} style={{background:"none",border:"none",fontSize:16,color:"#9AA3AB",cursor:"pointer",flexShrink:0}}>✕</button>
+                </div>
+              ))}
+              <input ref={docFileRef} type="file" accept="application/pdf" style={{display:"none"}}
+                onChange={e=>{ const f=e.target.files[0]; if(f) caricaDocumento(f); e.target.value=""; }}/>
+              <button disabled={caricandoDoc} onClick={()=>docFileRef.current?.click()} style={{...S.btnS,opacity:caricandoDoc?0.6:1}}>
+                {caricandoDoc ? "Caricamento…" : "⬆ Aggiungi documento (PDF)"}
+              </button>
+              {erroreDoc && <div style={{fontSize:12,color:C.danger,marginTop:6}}>⚠ {erroreDoc}</div>}
+            </>
+          )}
+          {!isAdmin && documenti.length>0 && (
+            <div style={{fontSize:12,color:C.steel}}>{documenti.length} documento/i associato/i (gestiti dall'admin).</div>
+          )}
+        </>
+      )}
 
       {errore && <div style={{fontSize:12.5,color:C.danger,margin:"12px 0"}}>⚠ {errore}</div>}
       <button disabled={salvando} onClick={salva} style={{...S.btnP,marginTop:14,opacity:salvando?0.6:1}}>{salvando?"Salvo…":"Salva pacchetto"}</button>
@@ -7818,7 +8227,7 @@ function PannelloAdmin({ setCatalog, ruolo, sessione, catalog }) {
 
       {/* Tab */}
       <div style={{display:"flex",borderBottom:`1px solid ${C.paperLine}`,marginBottom:18}}>
-        {[["utenti","👤 Utenti"],["import","⬆ Importa"],["export","⬇ Esporta"],["categorie","▤ Categorie"],["prezzi","💶 Prezzi"],["listino","🧾 Listino"],["logistica","⚑ Logistica"],["pacchetti","📦 Pacchetti"]].map(([id,lbl])=>(
+        {[["utenti","👤 Utenti"],["import","⬆ Importa"],["export","⬇ Esporta"],["categorie","▤ Categorie"],["prezzi","💶 Prezzi"],["listino","🧾 Listino"],["logistica","⚑ Logistica"]].map(([id,lbl])=>(
           <button key={id} onClick={()=>setTab(id)} style={{
             background:"none",border:"none",borderBottom:`2px solid ${tab===id?C.ink:"transparent"}`,
             padding:"8px 16px",fontSize:13,cursor:"pointer",
@@ -7836,8 +8245,6 @@ function PannelloAdmin({ setCatalog, ruolo, sessione, catalog }) {
       {tab==="prezzi" && <GestionePrezziFornitore sessione={sessione}/>}
 
       {tab==="listino" && <GestioneListinoCompleto sessione={sessione}/>}
-
-      {tab==="pacchetti" && <GestionePacchetti sessione={sessione} catalog={catalog}/>}
 
       {tab==="import" && (
         <div>
