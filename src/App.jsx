@@ -134,15 +134,15 @@ const RUOLI = {
   tecnico: {label:"Tecnico", initials:"LR", nome:"Luca Rossi",
     nav:["home","ai","interventi","rapporti","clienti","promemoria","prodotti"]},
   responsabile: {label:"Responsabile", initials:"GF", nome:"Giovanni Ferri",
-    nav:["home","ai","prodotti","clienti","promemoria","preventivi","ordini","interventi","rapporti","analytics","saltati","pacchetti"]},
+    nav:["home","ai","prodotti","clienti","promemoria","preventivi","ordini","interventi","rapporti","analytics","saltati","pacchetti","gestione"]},
   admin: {label:"Admin", initials:"AM", nome:"Amministratore",
-    nav:["home","ai","prodotti","clienti","promemoria","preventivi","ordini","interventi","rapporti","analytics","saltati","admin","pacchetti"]},
+    nav:["home","ai","prodotti","clienti","promemoria","preventivi","ordini","interventi","rapporti","analytics","saltati","admin","pacchetti","gestione"]},
 };
 const NAV_META = {
   home:{icon:"⌂",label:"Dashboard"}, ai:{icon:"✦",label:"Assistente"}, prodotti:{icon:"▣",label:"Catalogo"},
   clienti:{icon:"◉",label:"Clienti"}, promemoria:{icon:"⚑",label:"Promemoria"}, preventivi:{icon:"▤",label:"Preventivi"}, ordini:{icon:"⬡",label:"Ordini"},
   interventi:{icon:"⚒",label:"Interventi"}, rapporti:{icon:"☑",label:"Rapporto"}, analytics:{icon:"◈",label:"Condizioni"},
-  saltati:{icon:"⊘",label:"Saltati"}, admin:{icon:"⚙",label:"Admin"}, pacchetti:{icon:"📦",label:"Pacchetti"},
+  saltati:{icon:"⊘",label:"Saltati"}, admin:{icon:"⚙",label:"Admin"}, pacchetti:{icon:"📦",label:"Pacchetti"}, gestione:{icon:"🛠",label:"Gestione"},
 };
 function navMobile(nav){ return nav.slice(0,4).concat(nav.length>4?["more"]:[]); }
 
@@ -670,7 +670,8 @@ export default function App(){
           {area==="analytics" && !RUOLI_APPROVATORI.includes(role) && <Placeholder area={area} setArea={setArea}/>}
           {area==="saltati" && RUOLI_APPROVATORI.includes(role) && <PreventiviSaltati preventivi={preventivi}/>}
           {area==="saltati" && !RUOLI_APPROVATORI.includes(role) && <Placeholder area={area} setArea={setArea}/>}
-          {area==="admin" && <PannelloAdmin setCatalog={setCatalog} ruolo={role} sessione={sessione} catalog={catalog}/>}
+          {area==="admin" && <PannelloAdmin ruolo={role} sessione={sessione}/>}
+          {area==="gestione" && <PannelloGestione setCatalog={setCatalog} ruolo={role} sessione={sessione} catalog={catalog}/>}
           {area==="pacchetti" && <GestionePacchetti ruolo={role} sessione={sessione} catalog={catalog}/>}
         </div>
 
@@ -8306,9 +8307,24 @@ function FormPacchetto({ pacchetto, catalog, accessToken, ruolo, onSalvato, onAn
   );
 }
 
-function PannelloAdmin({ setCatalog, ruolo, sessione, catalog }) {
+// Area riservata al solo admin: import/aggiornamento anagrafica clienti e
+// gestione utenti. Tutto il resto (catalogo, prezzi, listini, categorie,
+// logistica) si trova ora in GESTIONE (vedi PannelloGestione), visibile
+// anche al responsabile.
+function PannelloAdmin({ ruolo, sessione }) {
+  return (
+    <div>
+      <div style={{fontFamily:F_DISPLAY,fontSize:18,fontWeight:600,marginBottom:18}}>AMMINISTRAZIONE</div>
+      <ImportClienti ruolo={ruolo} sessione={sessione}/>
+      <div style={{height:18}}/>
+      <GestioneUtenti ruolo={ruolo} sessione={sessione}/>
+    </div>
+  );
+}
+
+function PannelloGestione({ setCatalog, ruolo, sessione, catalog }) {
   const accessToken = trovaAccessToken(sessione);
-  const [tab, setTab] = useState("utenti");
+  const [tab, setTab] = useState("landing"); // landing | prodotto | import | export | categorie | prezzi | listino | logistica
   const [file, setFile] = useState(null);
   const [anteprima, setAnteprima] = useState(null);
   const [importando, setImportando] = useState(false);
@@ -8635,36 +8651,47 @@ function PannelloAdmin({ setCatalog, ruolo, sessione, catalog }) {
 
   return (
     <div>
-      <div style={{fontFamily:F_DISPLAY,fontSize:18,fontWeight:600,marginBottom:4}}>AMMINISTRAZIONE</div>
+      <div style={{fontFamily:F_DISPLAY,fontSize:18,fontWeight:600,marginBottom:4}}>GESTIONE</div>
       <div style={{fontSize:12,color:C.steel,marginBottom:18}}>
         Prodotti in catalogo: <strong>{conteggio ?? "…"}</strong>
       </div>
 
-      <ImportClienti ruolo={ruolo} sessione={sessione}/>
+      {tab==="landing" ? (
+        <>
+          <div style={{fontSize:13,color:C.steel,marginBottom:16}}>Catalogo prodotti e listini.</div>
+          {[
+            ["prodotto","+ Nuovo prodotto","Aggiungi un articolo al catalogo"],
+            ["import","⬆ Importa catalogo","Carica un file CSV con i prodotti"],
+            ["export","⬇ Esporta catalogo","Scarica il catalogo completo in CSV"],
+            ["categorie","▤ Categorie","Rinomina o unisci categorie duplicate"],
+            ["prezzi","💶 Prezzi","Aggiorna i prezzi da un listino fornitore"],
+            ["listino","🧾 Listino","Importa un listino fornitore completo"],
+            ["logistica","⚑ Logistica","Ordini sospesi e in gestione"],
+          ].map(([id,lbl,sub])=>(
+            <div key={id} onClick={()=>setTab(id)} style={{...S.card,cursor:"pointer",display:"flex",justifyContent:"space-between",alignItems:"center",gap:10,marginBottom:8}}>
+              <div>
+                <div style={{fontWeight:600,fontSize:14}}>{lbl}</div>
+                <div style={{fontSize:12,color:C.steel,marginTop:2}}>{sub}</div>
+              </div>
+              <span style={{fontSize:16,color:"#9AA3AB",flexShrink:0}}>›</span>
+            </div>
+          ))}
+        </>
+      ) : (
+        <>
+          <button onClick={()=>setTab("landing")} style={{...S.btnS,marginBottom:16}}>← Torna a Gestione</button>
 
-      <div style={{height:8}}/>
-      <CreaProdotto ruolo={ruolo} onCreato={()=>{ caricaCatalogo(CATALOG).then(d=>setCatalog(d)); ricaricaCategorie(); ricaricaTipologieMarchi(); }} categorieEsistenti={categorie.map(c=>c.categoria)} tipologieEsistenti={tipologie} marchiEsistenti={marchi} sessione={sessione}/>
+          {tab==="prodotto" && (
+            <CreaProdotto ruolo={ruolo} onCreato={()=>{ caricaCatalogo(CATALOG).then(d=>setCatalog(d)); ricaricaCategorie(); ricaricaTipologieMarchi(); }} categorieEsistenti={categorie.map(c=>c.categoria)} tipologieEsistenti={tipologie} marchiEsistenti={marchi} sessione={sessione}/>
+          )}
 
-      {/* Tab */}
-      <div style={{display:"flex",borderBottom:`1px solid ${C.paperLine}`,marginBottom:18}}>
-        {[["utenti","👤 Utenti"],["import","⬆ Importa"],["export","⬇ Esporta"],["categorie","▤ Categorie"],["prezzi","💶 Prezzi"],["listino","🧾 Listino"],["logistica","⚑ Logistica"]].map(([id,lbl])=>(
-          <button key={id} onClick={()=>setTab(id)} style={{
-            background:"none",border:"none",borderBottom:`2px solid ${tab===id?C.ink:"transparent"}`,
-            padding:"8px 16px",fontSize:13,cursor:"pointer",
-            color:tab===id?C.ink:C.steel,fontWeight:tab===id?600:400
-          }}>{lbl}</button>
-        ))}
-      </div>
+          {tab==="categorie" && <GestioneCategorie sessione={sessione} categorie={categorie} ricarica={()=>{ ricaricaCategorie(); caricaCatalogo(CATALOG).then(d=>setCatalog(d)); }}/>}
 
-      {tab==="utenti" && <GestioneUtenti ruolo={ruolo} sessione={sessione}/>}
+          {tab==="logistica" && <GestioneLogisticaOrdini sessione={sessione} categorie={categorie}/>}
 
-      {tab==="categorie" && <GestioneCategorie sessione={sessione} categorie={categorie} ricarica={()=>{ ricaricaCategorie(); caricaCatalogo(CATALOG).then(d=>setCatalog(d)); }}/>}
+          {tab==="prezzi" && <GestionePrezziFornitore sessione={sessione}/>}
 
-      {tab==="logistica" && <GestioneLogisticaOrdini sessione={sessione} categorie={categorie}/>}
-
-      {tab==="prezzi" && <GestionePrezziFornitore sessione={sessione}/>}
-
-      {tab==="listino" && <GestioneListinoCompleto sessione={sessione}/>}
+          {tab==="listino" && <GestioneListinoCompleto sessione={sessione}/>}
 
       {tab==="import" && (
         <div>
@@ -8756,6 +8783,8 @@ function PannelloAdmin({ setCatalog, ruolo, sessione, catalog }) {
             </div>
           ))}
         </div>
+      )}
+        </>
       )}
     </div>
   );
