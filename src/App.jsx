@@ -7665,12 +7665,15 @@ function FormPacchetto({ pacchetto, catalog, accessToken, ruolo, onSalvato, onAn
 
   // Finanziaria fornitore: due varianti (con/senza IVA) memorizzate sul
   // pacchetto — vedi aggiungiPacchetto in Preventivi, che le copia in
-  // automatico quando il pacchetto viene aggiunto a un preventivo.
+  // automatico quando il pacchetto viene aggiunto a un preventivo. La
+  // variante "con IVA" non si inserisce a mano: si calcola da sola al 22%
+  // su quella "senza IVA".
   const [finImportoSenzaIva, setFinImportoSenzaIva] = useState(pacchetto?.finanziaria_importo_senza_iva ?? "");
   const [finRataSenzaIva, setFinRataSenzaIva] = useState(pacchetto?.finanziaria_rata_senza_iva ?? "");
-  const [finImportoConIva, setFinImportoConIva] = useState(pacchetto?.finanziaria_importo_con_iva ?? "");
-  const [finRataConIva, setFinRataConIva] = useState(pacchetto?.finanziaria_rata_con_iva ?? "");
   const [finMesi, setFinMesi] = useState(pacchetto?.finanziaria_mesi ?? 36);
+
+  const finImportoConIva = finImportoSenzaIva==="" ? "" : Math.round(parseFloat(finImportoSenzaIva) * 1.22 * 100) / 100;
+  const finRataConIva = finRataSenzaIva==="" ? "" : Math.round(parseFloat(finRataSenzaIva) * 1.22 * 100) / 100;
 
   // Documenti PDF della finanziaria (moduli/contratti da far firmare al
   // cliente) — propagati al preventivo e poi all'ordine quando il pacchetto
@@ -7731,8 +7734,8 @@ function FormPacchetto({ pacchetto, catalog, accessToken, ruolo, onSalvato, onAn
       prodotti: componenti,
       finanziaria_importo_senza_iva: finImportoSenzaIva===""?null:parseFloat(finImportoSenzaIva),
       finanziaria_rata_senza_iva: finRataSenzaIva===""?null:parseFloat(finRataSenzaIva),
-      finanziaria_importo_con_iva: finImportoConIva===""?null:parseFloat(finImportoConIva),
-      finanziaria_rata_con_iva: finRataConIva===""?null:parseFloat(finRataConIva),
+      finanziaria_importo_con_iva: finImportoConIva===""?null:finImportoConIva,
+      finanziaria_rata_con_iva: finRataConIva===""?null:finRataConIva,
       finanziaria_mesi: tipo==="fornitore" ? (parseInt(finMesi,10)||36) : null,
       documenti_finanziaria: documenti,
     };
@@ -7844,12 +7847,14 @@ function FormPacchetto({ pacchetto, catalog, accessToken, ruolo, onSalvato, onAn
               <input type="number" min="0" step="0.01" value={finRataSenzaIva} onChange={e=>setFinRataSenzaIva(e.target.value)} style={{...S.inp,width:130}}/>
             </div>
             <div>
-              <div style={S.eyebrow}>Importo con IVA (€)</div>
-              <input type="number" min="0" step="0.01" value={finImportoConIva} onChange={e=>setFinImportoConIva(e.target.value)} style={{...S.inp,width:130}}/>
+              <div style={S.eyebrow}>Importo con IVA (€) · calcolato</div>
+              <input type="text" readOnly value={finImportoConIva===""?"—":`€ ${finImportoConIva.toFixed(2)}`}
+                style={{...S.inp,width:130,background:C.paper,color:C.steel,cursor:"default"}}/>
             </div>
             <div>
-              <div style={S.eyebrow}>Rata con IVA (€/mese)</div>
-              <input type="number" min="0" step="0.01" value={finRataConIva} onChange={e=>setFinRataConIva(e.target.value)} style={{...S.inp,width:130}}/>
+              <div style={S.eyebrow}>Rata con IVA (€/mese) · calcolata</div>
+              <input type="text" readOnly value={finRataConIva===""?"—":`€ ${finRataConIva.toFixed(2)}`}
+                style={{...S.inp,width:130,background:C.paper,color:C.steel,cursor:"default"}}/>
             </div>
           </div>
 
