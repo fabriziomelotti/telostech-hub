@@ -3171,6 +3171,35 @@ const TESTO_CONDIZIONI = `
 <p>Il contratto è regolato dalla legge italiana. Per ogni controversia derivante dall'interpretazione o esecuzione del presente preventivo è competente in via esclusiva il Foro di Torino, salvo, ove inderogabilmente previsto dalla legge, il foro del consumatore.</p>
 `;
 
+// Condizioni adattate ai preventivi per interventi tecnici (manodopera,
+// trasferta, ricambi installati in loco) — a differenza di TESTO_CONDIZIONI
+// sopra (vendita di beni), qui non si parla di consegna/Incoterms né di
+// riserva di proprietà sull'intera fornitura, ma di esecuzione dell'attività
+// e garanzia sulla manodopera, oltre alla garanzia di legge sui soli
+// ricambi effettivamente forniti.
+const TESTO_CONDIZIONI_INTERVENTO = `
+<h2>Condizioni di accettazione del preventivo</h2>
+<p class="intro">La sottoscrizione del presente preventivo, mediante apposizione di timbro e firma del Cliente nello spazio dedicato, vale quale accettazione integrale dell'offerta e produce gli effetti di un ordine contrattuale vincolante ai sensi degli artt. 1326 e ss. del Codice Civile.</p>
+<h3>1. Conclusione del contratto</h3>
+<p>Il presente preventivo di intervento tecnico costituisce proposta contrattuale ai sensi dell'art. 1326 c.c. Il contratto si intende concluso nel momento in cui Telos S.p.A. riceve copia del presente documento sottoscritta dal Cliente con timbro e firma per accettazione, anche a mezzo email o PEC.</p>
+<h3>2. Oggetto e prezzi</h3>
+<p>I prezzi indicati sono espressi in Euro, al netto di IVA, e comprendono manodopera, trasferta ed eventuali ricambi indicati nel preventivo per l'attività descritta. Eventuali lavorazioni aggiuntive non preventivabili in fase di sopralluogo (es. guasti non visibili prima dello smontaggio, ricambi non previsti) saranno comunicate e concordate con il Cliente prima dell'esecuzione e fatturate separatamente.</p>
+<h3>3. Modalità di pagamento</h3>
+<p>I pagamenti dovranno essere effettuati secondo le modalità e i termini indicati nel preventivo. In caso di ritardato pagamento si applicano gli interessi moratori previsti dal D.Lgs. 231/2002 in materia di lotta contro i ritardi di pagamento nelle transazioni commerciali, fatto salvo il maggior danno.</p>
+<h3>4. Esecuzione dell'intervento</h3>
+<p>I tempi di esecuzione sono indicativi e vengono concordati con il Cliente in fase di pianificazione. Il Cliente si impegna a garantire l'accesso ai locali e alle attrezzature oggetto dell'intervento, nonché le condizioni di sicurezza necessarie per il corretto svolgimento delle attività da parte del personale tecnico incaricato (Telos S.p.A. o assistenza esterna indicata nel preventivo).</p>
+<h3>5. Ricambi forniti</h3>
+<p>Gli eventuali ricambi forniti nell'ambito dell'intervento restano di proprietà di Telos S.p.A., ai sensi dell'art. 1523 c.c., fino all'integrale pagamento del corrispettivo pattuito.</p>
+<h3>6. Garanzia e responsabilità</h3>
+<p>La manodopera eseguita è garantita per i vizi imputabili a difetto di esecuzione, da segnalarsi entro i termini di legge. Sui ricambi forniti trovano applicazione le garanzie di legge previste dal Codice Civile (artt. 1490 e ss.). La responsabilità di Telos S.p.A. per eventuali danni è limitata, nei limiti consentiti dalla legge, al valore dell'intervento, con esclusione di danni indiretti, mancato guadagno o perdita di chance, salvo il caso in cui l'intervento sia eseguito da un'assistenza esterna indicata nel preventivo, per la quale risponde direttamente il soggetto incaricato secondo i propri termini contrattuali.</p>
+<h3>7. Recesso e annullamento</h3>
+<p>L'accettazione del preventivo è vincolante per il Cliente professionale. Per i contratti conclusi a distanza o fuori dai locali commerciali con soggetto consumatore si applica il diritto di recesso entro 14 giorni ai sensi degli artt. 52 e ss. del Codice del Consumo, ove ne ricorrano i presupposti e salvo che l'esecuzione sia già iniziata su richiesta espressa del Cliente.</p>
+<h3>8. Trattamento dei dati personali</h3>
+<p>I dati personali del Cliente sono trattati da Telos S.p.A., in qualità di Titolare, per la gestione del rapporto contrattuale e degli adempimenti di legge, nel rispetto del Regolamento (UE) 2016/679 (GDPR) e del D.Lgs. 196/2003. L'informativa estesa è disponibile su richiesta e sul sito www.telosspa.it.</p>
+<h3>9. Foro competente e legge applicabile</h3>
+<p>Il contratto è regolato dalla legge italiana. Per ogni controversia derivante dall'interpretazione o esecuzione del presente preventivo è competente in via esclusiva il Foro di Torino, salvo, ove inderogabilmente previsto dalla legge, il foro del consumatore.</p>
+`;
+
 // ─── GENERAZIONE PDF REALE (client-side, per condivisione nativa su mobile) ──
 // Il browser non genera mai un file PDF vero da solo: la stampa nativa apre
 // un dialogo del sistema operativo, e su iOS Safari l'icona "condividi" della
@@ -3675,6 +3704,10 @@ ${meta.includi_copertina!==false ? `
         <img src="${meta.firma_cliente}" alt="Firma cliente"/>
         <div class="firma-digitale-nota">Firmato digitalmente da ${meta.firma_nome||"Cliente"}${meta.firma_data ? ` il ${new Date(meta.firma_data).toLocaleString("it-IT",{dateStyle:"short",timeStyle:"short"})}` : ""}</div>
       </div>
+      ` : meta.conferma_alt_nome ? `
+      <div class="firma-digitale-nota" style="margin-top:10px;font-size:11px">
+        ${meta.conferma_alt_tipo==="telefonica"?"Conferma telefonica":"Conferma via WhatsApp/email"} del ${meta.conferma_alt_data ? new Date(meta.conferma_alt_data).toLocaleDateString("it-IT") : ""} — ${meta.conferma_alt_nome}
+      </div>
       ` : `
       <div class="firma-linee"><div>Luogo e data</div><div>Timbro e firma del Cliente</div></div>
       `}
@@ -3688,6 +3721,180 @@ ${meta.includi_copertina!==false ? `
 
 </body></html>`;
   await condividiOStampaPdf(html, `Preventivo_${codiceMostrato}.pdf`, { titolo: `Preventivo ${codiceMostrato}`, testo: meta.cliente || "" });
+}
+
+// Genera il PDF di un preventivo per intervento tecnico — stesso impianto
+// grafico del preventivo di vendita (generaPreventivoPDF sopra), ma:
+//  - MAI pagina di copertina (non è selezionabile: qui non ha senso, il
+//    documento parte diretto dall'intestazione con oggetto/attività)
+//  - tabelle Manodopera e trasferta (prima) e Ricambi (dopo), non righe di
+//    catalogo con immagine/descrizione estesa
+//  - condizioni contrattuali TESTO_CONDIZIONI_INTERVENTO, tarate su
+//    un'attività di manodopera tecnica e non su una vendita di beni
+async function generaPreventivoInterventoPDF(pv, meta={}){
+  const oggi = new Date().toLocaleDateString("it-IT");
+  const codiceMostrato = `INT-${(pv.id||"").slice(0,8) || Date.now().toString().slice(-6)}`;
+  const righeManodopera = pv.righe_manodopera || [];
+  const righeRicambi = pv.righe_ricambi || [];
+  const totaleManodopera = righeManodopera.reduce((s,r)=>s+(r.prezzo||0)*(r.qty||1),0);
+  const totaleRicambi = righeRicambi.reduce((s,r)=>s+(r.prezzo||0)*(r.qty||1),0);
+  const totale = pv.val ?? (totaleManodopera+totaleRicambi);
+
+  const rigaHtml = (etichetta, prezzo, qty, i) => `
+    <tr class="riga-prodotto ${i%2===1?"riga-alt":""}">
+      <td class="cella-descr" style="width:60%"><div class="prodotto-nome">${etichetta}</div></td>
+      <td class="cella-num">${qty||1}</td>
+      <td class="cella-num">€${prezzo.toFixed(2)}</td>
+      <td class="cella-num cella-tot">€${(prezzo*(qty||1)).toFixed(2)}</td>
+    </tr>`;
+
+  const tabellaManodoperaHtml = righeManodopera.length ? `
+    <div style="font-size:12.5px;font-weight:700;color:#162758;margin-bottom:8px">Manodopera e trasferta</div>
+    <table class="articoli">
+      <thead><tr><th>Descrizione</th><th class="cella-num">Qtà</th><th class="cella-num">Prezzo unit.</th><th class="cella-num">Totale</th></tr></thead>
+      <tbody>${righeManodopera.map((r,i)=>rigaHtml(r.descrizione, r.prezzo, r.qty, i)).join("")}</tbody>
+    </table>` : "";
+
+  const tabellaRicambiHtml = righeRicambi.length ? `
+    <div style="font-size:12.5px;font-weight:700;color:#162758;margin-bottom:8px;margin-top:${righeManodopera.length?"18px":"0"}">Ricambi</div>
+    <table class="articoli">
+      <thead><tr><th>Descrizione</th><th class="cella-num">Qtà</th><th class="cella-num">Prezzo unit.</th><th class="cella-num">Totale</th></tr></thead>
+      <tbody>${righeRicambi.map((r,i)=>rigaHtml(r.nome, r.prezzo, r.qty, i)).join("")}</tbody>
+    </table>` : "";
+
+  const html = `<!DOCTYPE html><html><head><meta charset="utf-8"/><title>Preventivo intervento ${codiceMostrato}</title>
+<style>
+  @page{size:A4;margin:0}
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{width:210mm}
+  body{font-family:Arial,sans-serif;color:#232323;font-size:12.5px}
+  .pagina{width:210mm;min-height:297mm;padding:14mm 16mm;page-break-after:always;display:flex;flex-direction:column}
+  .pagina:last-child{page-break-after:auto}
+
+  .corpo-contenuto{flex:1}
+  .hd-content{display:flex;align-items:center;justify-content:space-between;margin-bottom:18px;padding-bottom:14px;border-bottom:2px solid #162758}
+  .hd-content .logo-telos-spa{height:46px}
+  .hd-content .badge-partner{height:36px}
+  .riga-titolo{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;margin-bottom:18px}
+  .titolo-ordine{font-size:19px;font-weight:700;color:#162758}
+  .meta-box{display:grid;grid-template-columns:auto auto;column-gap:10px;row-gap:3px;font-size:11px;justify-content:end;flex-shrink:0}
+  .meta-box .etichetta{color:#7C879E;text-align:right}
+  .meta-box .valore{text-align:left;font-weight:600;white-space:nowrap}
+  .cliente-box{font-size:12.5px;margin-bottom:16px}
+  .cliente-box .nome{font-weight:700;font-size:14px}
+
+  .info-box{margin-bottom:16px}
+  .info-box .lbl{font-size:10px;color:#7C879E;text-transform:uppercase;letter-spacing:.03em;margin-bottom:2px}
+  .info-box .val{font-size:12px;color:#232323;white-space:pre-line;line-height:1.5}
+
+  table.articoli{width:100%;border-collapse:collapse;margin-bottom:6px;table-layout:fixed}
+  table.articoli thead th{background:#162758;color:#fff;padding:9px 10px;font-size:10.5px;text-align:left}
+  table.articoli thead th.cella-num{text-align:right}
+  .riga-prodotto td{border-bottom:1px solid #E3E5EA;padding:10px;vertical-align:top;font-size:11.5px}
+  .riga-alt td{background:#F3F6FB}
+  .prodotto-nome{font-weight:600}
+  .cella-num{text-align:right;white-space:nowrap;width:15%}
+  .cella-tot{font-weight:700;color:#162758}
+
+  .totali-box{text-align:right;margin-top:14px}
+  .tot-imponibile{font-size:17px;font-weight:700;color:#162758}
+
+  .note-box{margin-top:22px;font-size:11px;color:#3A4248}
+  .note-box .lbl{font-weight:700;margin-bottom:4px}
+  .note-box .testo{white-space:pre-line}
+
+  .footer-legale{font-size:9px;color:#9AA3AB;border-top:1px solid #E3E5EA;padding-top:8px;margin-top:16px}
+  .footer-legale b{color:#5B6770}
+
+  .condizioni h2{font-size:17px;color:#162758;margin-bottom:14px}
+  .condizioni h3{font-size:11.5px;color:#162758;margin-top:14px;margin-bottom:4px}
+  .condizioni p{font-size:10.5px;line-height:1.55;color:#3A4248}
+  .condizioni p.intro{font-style:italic;margin-bottom:14px}
+  .firma-box{margin-top:36px;border:1px solid #162758;border-radius:6px;padding:16px}
+  .firma-box .titolo{font-weight:700;font-size:12px;margin-bottom:6px}
+  .firma-box .testo{font-size:10.5px;color:#3A4248;margin-bottom:36px}
+  .firma-linee{display:flex;justify-content:space-between;font-size:10px;color:#7C879E}
+  .firma-linee div{width:45%;border-top:1px solid #232323;padding-top:4px}
+  .firma-digitale img{max-width:200px;max-height:80px;display:block;margin-top:6px}
+  .firma-digitale-nota{font-size:9.5px;color:#7C879E;margin-top:6px;font-style:italic}
+</style></head><body>
+
+<div class="pagina">
+  <div class="corpo-contenuto">
+    <div class="hd-content">
+      <img class="logo-telos-spa" src="${LOGO_TELOS_SPA}" alt="Telos SPA"/>
+      <img class="badge-partner" src="${LOGO_BADGE_PARTNER}" alt=""/>
+    </div>
+    <div class="riga-titolo">
+      <div class="titolo-ordine">PREVENTIVO INTERVENTO TECNICO</div>
+      <div class="meta-box">
+        <div class="etichetta">Numero</div><div class="valore">${codiceMostrato}</div>
+        <div class="etichetta">Data</div><div class="valore">${oggi}</div>
+      </div>
+    </div>
+    <div class="cliente-box">
+      <div style="color:#7C879E;font-size:10px">Spett.le Cliente</div>
+      <div class="nome">${pv.cliente||""}</div>
+    </div>
+
+    <div class="info-box">
+      <div class="lbl">Oggetto</div>
+      <div class="val">${pv.oggetto||""}</div>
+    </div>
+    ${pv.descrizione_attivita ? `
+    <div class="info-box">
+      <div class="lbl">Descrizione dell'attività</div>
+      <div class="val">${pv.descrizione_attivita}</div>
+    </div>` : ""}
+    <div class="info-box">
+      <div class="lbl">Intervento eseguito da</div>
+      <div class="val">${meta.assistenzaNome || "Da definire"}</div>
+    </div>
+
+    ${tabellaManodoperaHtml}
+    ${tabellaRicambiHtml}
+
+    <div class="totali-box">
+      <div class="tot-imponibile">Totale (IVA esclusa): €${totale.toFixed(2)}</div>
+    </div>
+
+    ${meta.note ? `<div class="note-box"><div class="lbl">Note:</div><div class="testo">${meta.note}</div></div>` : ""}
+  </div>
+
+  <div class="footer-legale">
+    <b>TELOS S.P.A.</b> P.I./C.F. 00525920013 - capitale sociale € 3.586.191,18 i.v. - REA TO-457465 | www.telosspa.it<br/>
+    <b>SEDE Legale:</b> VENARIA (TO) - 10078 - Via Aosta 5 - Tel. 011.4242932 · <b>Amministrazione:</b> amministrazione.torino@telosgroup.it
+  </div>
+</div>
+
+<div class="pagina condizioni">
+  <div class="corpo-contenuto">
+    ${TESTO_CONDIZIONI_INTERVENTO}
+    <div class="firma-box">
+      <div class="titolo">Timbro e Firma per accettazione</div>
+      <div class="testo">Il sottoscritto Cliente dichiara di aver letto, compreso e integralmente accettato il preventivo e le condizioni che precedono, che assumono valore di ordine contrattuale vincolante.</div>
+      ${pv.firma_cliente ? `
+      <div class="firma-digitale">
+        <img src="${pv.firma_cliente}" alt="Firma cliente"/>
+        <div class="firma-digitale-nota">Firmato digitalmente da ${pv.firma_nome||"Cliente"}${pv.firma_data ? ` il ${new Date(pv.firma_data).toLocaleString("it-IT",{dateStyle:"short",timeStyle:"short"})}` : ""}</div>
+      </div>
+      ` : pv.conferma_alt_nome ? `
+      <div class="firma-digitale-nota" style="margin-top:10px;font-size:11px">
+        ${pv.conferma_alt_tipo==="telefonica"?"Conferma telefonica":"Conferma via WhatsApp/email"} del ${pv.conferma_alt_data ? new Date(pv.conferma_alt_data).toLocaleDateString("it-IT") : ""} — ${pv.conferma_alt_nome}
+      </div>
+      ` : `
+      <div class="firma-linee"><div>Luogo e data</div><div>Timbro e firma del Cliente</div></div>
+      `}
+    </div>
+  </div>
+  <div class="footer-legale">
+    <b>TELOS S.P.A.</b> P.I./C.F. 00525920013 - capitale sociale € 3.586.191,18 i.v. - REA TO-457465 | www.telosspa.it<br/>
+    <b>SEDE Legale:</b> VENARIA (TO) - 10078 - Via Aosta 5 - Tel. 011.4242932 · <b>Amministrazione:</b> amministrazione.torino@telosgroup.it
+  </div>
+</div>
+
+</body></html>`;
+  await condividiOStampaPdf(html, `Preventivo_intervento_${codiceMostrato}.pdf`, { titolo: `Preventivo intervento ${codiceMostrato}`, testo: pv.cliente || "" });
 }
 
 // ─── RICERCA PRODOTTI INLINE (per aggiungere articoli a un preventivo bozza) ──
@@ -4082,8 +4289,6 @@ function Preventivi({cart,setCart,preventivi,setPreventivi,setOrdini,setArea,ruo
   const [promemoriaRecupero,setPromemoriaRecupero]=useState("");
   const [bozza,setBozza]=useState(null); // scadenza/referente/pagamento in modifica locale, salvati solo al click su "Salva"
   const [bozzaSalvata,setBozzaSalvata]=useState(false); // conferma temporanea dopo il salvataggio
-  const [mostraFirma,setMostraFirma]=useState(false);
-  const [nomeFirmatario,setNomeFirmatario]=useState("");
   const [clienteLibero,setClienteLibero]=useState(false); // true = form nome libero al posto della ricerca in anagrafica
   const [nomeClienteLibero,setNomeClienteLibero]=useState("");
   useEffect(()=>{ setConfermaEliminazione(false); setConfermaSalto(false); setTipoMotivoSalto(""); setDettaglioMotivoSalto(""); setPromemoriaRecupero(""); setBozzaSalvata(false); setMostraFirma(false); setNomeFirmatario(""); setClienteLibero(false); setNomeClienteLibero(""); },[selId]);
@@ -4336,7 +4541,7 @@ function Preventivi({cart,setCart,preventivi,setPreventivi,setOrdini,setArea,ruo
     return { mancanti };
   }
   async function convertiInOrdine(p){
-    if(!p.firma_cliente) return; // rete di sicurezza, il pulsante è già disabilitato senza firma
+    if(!p.firma_cliente && !p.conferma_alt_nome) return; // rete di sicurezza, il pulsante è già disabilitato senza firma né conferma
     setErroreSync("");
     const nuovo = {
       preventivo_id: p.id,
@@ -4350,6 +4555,9 @@ function Preventivi({cart,setCart,preventivi,setPreventivi,setOrdini,setArea,ruo
       firma_cliente: p.firma_cliente,
       firma_data: p.firma_data,
       firma_nome: p.firma_nome,
+      conferma_alt_nome: p.conferma_alt_nome,
+      conferma_alt_tipo: p.conferma_alt_tipo,
+      conferma_alt_data: p.conferma_alt_data,
       finanziaria_importo: p.finanziaria_importo,
       finanziaria_rata: p.finanziaria_rata,
       finanziaria_mesi: p.finanziaria_mesi,
@@ -4923,68 +5131,20 @@ function Preventivi({cart,setCart,preventivi,setPreventivi,setOrdini,setArea,ruo
                 firma_cliente: selezionato.firma_cliente,
                 firma_data: selezionato.firma_data,
                 firma_nome: selezionato.firma_nome,
+                conferma_alt_nome: selezionato.conferma_alt_nome,
+                conferma_alt_tipo: selezionato.conferma_alt_tipo,
+                conferma_alt_data: selezionato.conferma_alt_data,
               });
             } finally { setGenerandoPdf(false); }
           }} style={{...S.btnAccent,padding:"14px",fontSize:14,fontWeight:700,background:C.cyan,color:C.inkDeep,opacity:generandoPdf?0.6:1}}>
             {generandoPdf ? "Generazione PDF…" : "📄 Genera preventivo PDF"}
           </button>
           {selezionato.stato==="Inviato" && (
-            <div style={{...S.card,cursor:"default"}}>
-              <div style={{fontSize:13.5,fontWeight:700,marginBottom:4}}>Firma del cliente</div>
-              <div style={{fontSize:12,color:C.steel,marginBottom:12}}>
-                Obbligatoria prima di convertire il preventivo in ordine — passa il dispositivo al cliente per l'accettazione.
-              </div>
-
-              {selezionato.firma_cliente && !mostraFirma && (
-                <div style={{marginBottom:12}}>
-                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
-                    <span style={{fontSize:12.5,fontWeight:600,color:C.ok}}>
-                      ✓ Firmato da {selezionato.firma_nome}{selezionato.firma_data ? ` — ${new Date(selezionato.firma_data).toLocaleString("it-IT",{dateStyle:"short",timeStyle:"short"})}` : ""}
-                    </span>
-                    <button onClick={()=>setMostraFirma(true)} style={{background:"none",border:"none",color:C.steel,fontSize:11.5,cursor:"pointer",textDecoration:"underline"}}>Rifirma</button>
-                  </div>
-                  <img src={selezionato.firma_cliente} alt="Firma cliente" style={{maxWidth:220,border:`1px solid ${C.paperLine}`,borderRadius:6,background:"#fff",display:"block"}}/>
-                </div>
-              )}
-
-              {(!selezionato.firma_cliente || mostraFirma) && (
-                !mostraFirma ? (
-                  <button onClick={()=>setMostraFirma(true)} style={{...S.btnAccent,width:"100%",padding:"12px",fontWeight:700}}>
-                    ✍️ Raccogli firma cliente
-                  </button>
-                ) : (
-                  <>
-                    <input
-                      value={nomeFirmatario}
-                      onChange={e=>setNomeFirmatario(e.target.value)}
-                      placeholder="Nome e cognome di chi firma"
-                      style={{...S.inp,marginBottom:12}}
-                      autoFocus
-                    />
-                    {nomeFirmatario.trim() ? (
-                      <FirmaPad
-                        onSalva={(dataUrl)=>{
-                          aggiorna(selezionato.id, {
-                            firma_cliente: dataUrl,
-                            firma_data: new Date().toISOString(),
-                            firma_nome: nomeFirmatario.trim(),
-                          });
-                          setMostraFirma(false);
-                          setNomeFirmatario("");
-                        }}
-                        onAnnulla={selezionato.firma_cliente ? ()=>setMostraFirma(false) : undefined}
-                      />
-                    ) : (
-                      <div style={{fontSize:11.5,color:"#9AA3AB"}}>Scrivi nome e cognome per abilitare l'area di firma.</div>
-                    )}
-                  </>
-                )
-              )}
-            </div>
+            <SezioneConferma record={selezionato} editable={true} onAggiorna={patch=>aggiorna(selezionato.id, patch)}/>
           )}
           {selezionato.stato==="Inviato" && (
-            <button onClick={()=>convertiInOrdine(selezionato)} disabled={!selezionato.firma_cliente} style={{...S.btnAccent,padding:"13px",background:selezionato.firma_cliente?C.ink:"#c8c8c8",color:"#fff",fontSize:14,cursor:selezionato.firma_cliente?"pointer":"default"}}>
-              ⬡ Converti in ordine{!selezionato.firma_cliente ? " (serve la firma)" : ""}
+            <button onClick={()=>convertiInOrdine(selezionato)} disabled={!selezionato.firma_cliente && !selezionato.conferma_alt_nome} style={{...S.btnAccent,padding:"13px",background:(selezionato.firma_cliente||selezionato.conferma_alt_nome)?C.ink:"#c8c8c8",color:"#fff",fontSize:14,cursor:(selezionato.firma_cliente||selezionato.conferma_alt_nome)?"pointer":"default"}}>
+              ⬡ Converti in ordine{(!selezionato.firma_cliente && !selezionato.conferma_alt_nome) ? " (serve la firma o una conferma)" : ""}
             </button>
           )}
           {selezionato.stato==="Convertito in ordine" && (
@@ -5103,6 +5263,121 @@ function Preventivi({cart,setCart,preventivi,setPreventivi,setOrdini,setArea,ruo
 // Pad di firma su canvas: funziona sia a dito (tablet/smartphone, via
 // Pointer Events che unificano touch/penna/mouse) sia con il mouse su PC.
 // Esporta la firma come PNG in base64, salvato direttamente sul preventivo.
+// Blocco di conferma del cliente, condiviso da preventivi commerciali,
+// ordini commerciali e preventivi intervento: la firma digitale resta
+// facoltativa (non sempre è possibile farla firmare su un dispositivo), ma
+// se manca è obbligatorio registrare comunque nome e cognome di chi ha
+// confermato e come — telefonicamente o via WhatsApp/email, con la data.
+// `record` deve avere (anche a null) firma_cliente/firma_nome/firma_data e
+// conferma_alt_nome/conferma_alt_tipo/conferma_alt_data. `onAggiorna(patch)`
+// scrive i campi aggiornati sul record (preventivo, ordine o preventivo
+// intervento, a seconda del chiamante).
+function SezioneConferma({ record, editable, onAggiorna }){
+  const [mostraFirma, setMostraFirma] = useState(false);
+  const [nomeFirmatario, setNomeFirmatario] = useState("");
+  const [mostraAlt, setMostraAlt] = useState(false);
+  const [altNome, setAltNome] = useState(record.conferma_alt_nome || "");
+  const [altTipo, setAltTipo] = useState(record.conferma_alt_tipo || "telefonica");
+  const [altData, setAltData] = useState(record.conferma_alt_data || new Date().toISOString().slice(0,10));
+
+  const haFirma = !!record.firma_cliente;
+  const haAlt = !!record.conferma_alt_nome;
+
+  if(!editable && !haFirma && !haAlt) return null;
+
+  const pillStile = on => ({
+    border:`1px solid ${on?C.ink:C.paperLine}`, borderRadius:7, padding:"8px 12px",
+    fontSize:12.5, cursor:"pointer", fontWeight:on?600:400,
+    background:on?C.ink:"#fff", color:on?"#fff":"#5B6770",
+  });
+
+  return (
+    <div style={{...S.card,cursor:"default",marginBottom:16}}>
+      <div style={{fontSize:13.5,fontWeight:700,marginBottom:4}}>Conferma del cliente</div>
+      {editable && !haFirma && !haAlt && (
+        <div style={{fontSize:12,color:C.steel,marginBottom:12}}>
+          La firma digitale è facoltativa — se non è possibile raccoglierla, indica comunque chi ha confermato e come.
+        </div>
+      )}
+
+      {haFirma && !mostraFirma && (
+        <div style={{marginBottom:haAlt?12:0}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+            <span style={{fontSize:12.5,fontWeight:600,color:C.ok}}>
+              ✓ Firmato da {record.firma_nome}{record.firma_data ? ` — ${new Date(record.firma_data).toLocaleString("it-IT",{dateStyle:"short",timeStyle:"short"})}` : ""}
+            </span>
+            {editable && <button onClick={()=>setMostraFirma(true)} style={{background:"none",border:"none",color:C.steel,fontSize:11.5,cursor:"pointer",textDecoration:"underline"}}>Rifirma</button>}
+          </div>
+          <img src={record.firma_cliente} alt="Firma cliente" style={{maxWidth:220,border:`1px solid ${C.paperLine}`,borderRadius:6,background:"#fff",display:"block"}}/>
+        </div>
+      )}
+
+      {haAlt && !mostraAlt && (
+        <div style={{fontSize:12.5,fontWeight:600,color:C.ok}}>
+          ✓ {record.conferma_alt_tipo==="telefonica"?"Conferma telefonica":"Conferma WA/Email"} del {new Date(record.conferma_alt_data).toLocaleDateString("it-IT")} — {record.conferma_alt_nome}
+          {editable && <button onClick={()=>setMostraAlt(true)} style={{marginLeft:8,background:"none",border:"none",color:C.steel,fontSize:11.5,cursor:"pointer",textDecoration:"underline"}}>Modifica</button>}
+        </div>
+      )}
+
+      {editable && !haFirma && !haAlt && !mostraFirma && !mostraAlt && (
+        <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+          <button onClick={()=>setMostraFirma(true)} style={{...S.btnAccent,padding:"10px 16px",fontWeight:700}}>✍️ Raccogli firma cliente</button>
+          <button onClick={()=>setMostraAlt(true)} style={S.btnS}>Conferma senza firma digitale</button>
+        </div>
+      )}
+
+      {editable && mostraFirma && (
+        <div style={{marginTop:haFirma?10:0}}>
+          <input
+            value={nomeFirmatario}
+            onChange={e=>setNomeFirmatario(e.target.value)}
+            placeholder="Nome e cognome di chi firma"
+            style={{...S.inp,marginBottom:12}}
+            autoFocus
+          />
+          {nomeFirmatario.trim() ? (
+            <FirmaPad
+              onSalva={(dataUrl)=>{
+                onAggiorna({ firma_cliente: dataUrl, firma_data: new Date().toISOString(), firma_nome: nomeFirmatario.trim() });
+                setMostraFirma(false);
+                setNomeFirmatario("");
+              }}
+              onAnnulla={haFirma ? ()=>setMostraFirma(false) : undefined}
+            />
+          ) : (
+            <div style={{fontSize:11.5,color:"#9AA3AB"}}>Scrivi nome e cognome per abilitare l'area di firma.</div>
+          )}
+        </div>
+      )}
+
+      {editable && mostraAlt && (
+        <div style={{marginTop:haAlt?10:0}}>
+          <input value={altNome} onChange={e=>setAltNome(e.target.value)} placeholder="Nome e cognome di chi conferma" style={{...S.inp,marginBottom:8}}/>
+          <div style={{display:"flex",gap:6,marginBottom:8,flexWrap:"wrap"}}>
+            <button onClick={()=>setAltTipo("telefonica")} style={pillStile(altTipo==="telefonica")}>Conferma telefonica</button>
+            <button onClick={()=>setAltTipo("wa_email")} style={pillStile(altTipo==="wa_email")}>Conferma WA/Email</button>
+          </div>
+          <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:12}}>
+            <span style={{fontSize:12.5,color:C.steel}}>del giorno</span>
+            <input type="date" value={altData} onChange={e=>setAltData(e.target.value)} style={{...S.inp,width:160}}/>
+          </div>
+          <div style={{display:"flex",gap:8}}>
+            <button
+              disabled={!altNome.trim()}
+              onClick={()=>{
+                onAggiorna({ conferma_alt_nome: altNome.trim(), conferma_alt_tipo: altTipo, conferma_alt_data: altData });
+                setMostraAlt(false);
+              }}
+              style={{...S.btnAccent,padding:"9px 16px",opacity:altNome.trim()?1:0.5}}
+            >Salva conferma</button>
+            {haAlt && <button onClick={()=>setMostraAlt(false)} style={S.btnS}>Annulla</button>}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function FirmaPad({ onSalva, onAnnulla }){
   const canvasRef = useRef(null);
   const disegnando = useRef(false);
@@ -5859,6 +6134,14 @@ function Ordini({ordini,setOrdini,preventivi,setPreventivi,setInterventi,catalog
   // scritta subito con PATCH diretto invece di passare da un "aggiorna"
   // locale condiviso, dato che qui non esiste un concetto di bozza.
   function ricalcolaVal(righe){ return righe.reduce((s,r)=>s+r.netto*(r.qty||1),0); }
+  // Firma/conferma del cliente, raccoglibile anche direttamente sull'ordine
+  // (non solo sul preventivo di origine) — utile in particolare per gli
+  // ordini creati manualmente, senza preventivo a monte.
+  async function aggiornaConfermaOrdine(id, patch){
+    setOrdini(prev=>prev.map(o=>o.id===id?{...o,...patch}:o));
+    try{ await sbAuth("PATCH","ordini",`id=eq.${id}`,patch,accessToken); }
+    catch(err){ setErroreSync("Modifica non salvata: "+err.message); }
+  }
   async function modificaRigaOrdine(cod, campo, valore){
     if(!selezionato) return;
     const righe = selezionato.righe.map(r=>r.cod===cod?{...r,[campo]:valore}:r);
@@ -5916,6 +6199,11 @@ ${o.firma_cliente ? `
   <img src="${o.firma_cliente}" alt="Firma cliente"/>
   <div class="firma-nota">Firmato da ${o.firma_nome||"Cliente"}${o.firma_data ? ` il ${new Date(o.firma_data).toLocaleString("it-IT",{dateStyle:"short",timeStyle:"short"})}` : ""}</div>
 </div>
+` : o.conferma_alt_nome ? `
+<div class="firma">
+  <div style="font-size:11px;font-weight:600;color:#3A4248;margin-bottom:6px">Accettato dal cliente</div>
+  <div class="firma-nota">${o.conferma_alt_tipo==="telefonica"?"Conferma telefonica":"Conferma via WhatsApp/email"} del ${o.conferma_alt_data ? new Date(o.conferma_alt_data).toLocaleDateString("it-IT") : ""} — ${o.conferma_alt_nome}</div>
+</div>
 ` : ""}
 <div class="footer">Telos Tech S.r.l. · Documento generato il ${new Date().toLocaleDateString("it-IT")}</div>
 </body></html>`;
@@ -5950,14 +6238,7 @@ ${o.firma_cliente ? `
           <div style={{fontSize:11.5,color:"#8A929A",marginBottom:14}}>In gestione da <strong>{selezionato.gestito_da_nome}</strong></div>
         )}
 
-        {selezionato.firma_cliente && (
-          <div style={{...S.card,cursor:"default",marginBottom:16}}>
-            <div style={{fontSize:12.5,fontWeight:600,color:C.ok,marginBottom:8}}>
-              ✓ Accettato con firma da {selezionato.firma_nome}{selezionato.firma_data ? ` — ${new Date(selezionato.firma_data).toLocaleString("it-IT",{dateStyle:"short",timeStyle:"short"})}` : ""}
-            </div>
-            <img src={selezionato.firma_cliente} alt="Firma cliente" style={{maxWidth:220,border:`1px solid ${C.paperLine}`,borderRadius:6,background:"#fff",display:"block"}}/>
-          </div>
-        )}
+        <SezioneConferma record={selezionato} editable={true} onAggiorna={patch=>aggiornaConfermaOrdine(selezionato.id, patch)}/>
         <div style={S.eyebrow}>Articoli ({selezionato.righe.length})</div>
         {righeEditabili && selezionato.stato==="Sospeso" && (
           <div style={{fontSize:11.5,color:"#8a6418",background:"rgba(217,164,65,0.14)",borderRadius:6,padding:"9px 11px",marginBottom:10}}>
@@ -6450,7 +6731,26 @@ function FormPreventivoIntervento({ preventivo, catalog, attrezzature, sessione,
   const [righeRicambi, setRigheRicambi] = useState(preventivo?.righe_ricambi || []);
   const [righeManodopera, setRigheManodopera] = useState(preventivo?.righe_manodopera || []);
   const [salvando, setSalvando] = useState(false);
+  const [generandoPdf, setGenerandoPdf] = useState(false);
   const [errore, setErrore] = useState("");
+  // Firma/conferma del cliente — salvata subito con una PATCH indipendente
+  // (come per preventivi e ordini commerciali), non solo al salvataggio
+  // generale del preventivo, così non si perde se si esce senza ri-salvare.
+  const [confermaLocale, setConfermaLocale] = useState({
+    firma_cliente: preventivo?.firma_cliente || null,
+    firma_nome: preventivo?.firma_nome || null,
+    firma_data: preventivo?.firma_data || null,
+    conferma_alt_nome: preventivo?.conferma_alt_nome || null,
+    conferma_alt_tipo: preventivo?.conferma_alt_tipo || null,
+    conferma_alt_data: preventivo?.conferma_alt_data || null,
+  });
+  async function aggiornaConfermaIntervento(patch){
+    setConfermaLocale(prev=>({...prev, ...patch}));
+    if(preventivo){
+      try{ await sbAuth("PATCH","preventivi_intervento",`id=eq.${preventivo.id}`,patch,accessToken); }
+      catch(err){ setErrore("Conferma non salvata: "+err.message); }
+    }
+  }
 
   const [ricercaRicambio, setRicercaRicambio] = useState("");
   const [manRicNome, setManRicNome] = useState("");
@@ -6458,6 +6758,7 @@ function FormPreventivoIntervento({ preventivo, catalog, attrezzature, sessione,
   const [manManDescrizione, setManManDescrizione] = useState("");
   const [manManPrezzo, setManManPrezzo] = useState("");
   const [manManUnita, setManManUnita] = useState("");
+  const [voceListinoSel, setVoceListinoSel] = useState("");
 
   useEffect(()=>{
     sbGetAuth("assistenze", "select=*&attivo=eq.true&order=interno.desc,nome.asc", accessToken)
@@ -6557,19 +6858,63 @@ function FormPreventivoIntervento({ preventivo, catalog, attrezzature, sessione,
         </>
       )}
 
-      <div style={S.eyebrow}>Oggetto del preventivo *</div>
-      <input value={oggetto} onChange={e=>setOggetto(e.target.value)} placeholder="es. Manutenzione straordinaria ponte sollevatore" style={{...S.inp,marginBottom:16}}/>
+      {/* Oggetto, descrizione e chi esegue — raggruppati in un unico riquadro,
+          separato visivamente dal resto (dati "di intestazione" del
+          preventivo, prima delle righe vere e proprie) */}
+      <div style={{...S.card,cursor:"default",border:`1px solid ${C.paperLine}`,marginBottom:20}}>
+        <div style={S.eyebrow}>Oggetto del preventivo *</div>
+        <input value={oggetto} onChange={e=>setOggetto(e.target.value)} placeholder="es. Manutenzione straordinaria ponte sollevatore" style={{...S.inp,marginBottom:16}}/>
 
-      <div style={S.eyebrow}>Descrizione dell'attività</div>
-      <textarea value={descrizioneAttivita} onChange={e=>setDescrizioneAttivita(e.target.value)} rows={3} placeholder="Cosa si andrà a fare, in dettaglio" style={{...S.inp,resize:"vertical",marginBottom:16}}/>
+        <div style={S.eyebrow}>Descrizione dell'attività</div>
+        <textarea value={descrizioneAttivita} onChange={e=>setDescrizioneAttivita(e.target.value)} rows={3} placeholder="Cosa si andrà a fare, in dettaglio" style={{...S.inp,resize:"vertical",marginBottom:16}}/>
 
-      <div style={S.eyebrow}>Chi esegue l'intervento</div>
-      <select value={assistenzaId} onChange={e=>setAssistenzaId(e.target.value)} style={{...S.inp,marginBottom:16}}>
-        <option value="">— Da definire —</option>
-        {(assistenze||[]).map(a=>(
-          <option key={a.id} value={a.id}>{a.interno?"Telos (interno)":a.nome}</option>
-        ))}
-      </select>
+        <div style={S.eyebrow}>Chi esegue l'intervento</div>
+        <select value={assistenzaId} onChange={e=>{ setAssistenzaId(e.target.value); setVoceListinoSel(""); }} style={S.inp}>
+          <option value="">— Da definire —</option>
+          {(assistenze||[]).map(a=>(
+            <option key={a.id} value={a.id}>{a.interno?"Telos (interno)":a.nome}</option>
+          ))}
+        </select>
+      </div>
+
+      {/* Manodopera / trasferta */}
+      <div style={S.eyebrow}>Manodopera e trasferta</div>
+      {righeManodopera.length===0 && <div style={{fontSize:12.5,color:"#9AA3AB",padding:"6px 0"}}>Nessuna voce ancora.</div>}
+      {righeManodopera.map((r,i)=>(
+        <div key={i} style={{...S.card,cursor:"default",display:"flex",alignItems:"center",gap:8,marginBottom:6}}>
+          <div style={{flex:1,minWidth:0}}>
+            <div style={{fontWeight:600,fontSize:12.5}}>{r.descrizione}</div>
+            <div className="tnum" style={{fontSize:11,color:"#9AA3AB"}}>{r.tipo==="listino"?"da listino · ":"manuale · "}€{r.prezzo.toFixed(2)} / {r.unita||"nr"}</div>
+          </div>
+          <input type="number" min="1" value={r.qty} onChange={e=>cambiaQtyManodopera(i,parseInt(e.target.value,10)||1)} style={{width:46,padding:"5px 6px",fontSize:12,border:`1px solid ${C.paperLine}`,borderRadius:5,textAlign:"center"}}/>
+          <span className="tnum" style={{fontWeight:700,fontSize:12.5,fontFamily:F_MONO,width:70,textAlign:"right"}}>€{(r.prezzo*r.qty).toFixed(2)}</span>
+          <button onClick={()=>rimuoviManodopera(i)} style={{background:"none",border:"none",fontSize:16,color:"#9AA3AB",cursor:"pointer"}}>✕</button>
+        </div>
+      ))}
+      {assistenzaSelezionata && (assistenzaSelezionata.listino||[]).length>0 && (
+        <div style={{display:"flex",gap:8,marginTop:8,marginBottom:8,flexWrap:"wrap"}}>
+          <select value={voceListinoSel} onChange={e=>setVoceListinoSel(e.target.value)} style={{...S.inp,flex:"1 1 220px"}}>
+            <option value="">— Scegli dal listino di {assistenzaSelezionata.interno?"Telos":assistenzaSelezionata.nome} —</option>
+            {assistenzaSelezionata.listino.map((v,i)=>(
+              <option key={i} value={i}>{v.descrizione} — €{v.prezzo.toFixed(2)}/{v.unita}</option>
+            ))}
+          </select>
+          <button
+            disabled={voceListinoSel===""}
+            onClick={()=>{
+              aggiungiManodoperaDaListino(assistenzaSelezionata.listino[parseInt(voceListinoSel,10)]);
+              setVoceListinoSel("");
+            }}
+            style={{...S.btnS,opacity:voceListinoSel===""?0.5:1}}
+          >+ Aggiungi</button>
+        </div>
+      )}
+      <div style={{display:"flex",gap:8,marginTop:8,marginBottom:20,flexWrap:"wrap"}}>
+        <input value={manManDescrizione} onChange={e=>setManManDescrizione(e.target.value)} placeholder="Voce inserita a mano…" style={{...S.inp,flex:"1 1 180px"}}/>
+        <input type="number" min="0" step="0.01" value={manManPrezzo} onChange={e=>setManManPrezzo(e.target.value)} placeholder="€" style={{width:80,padding:"10px 12px",fontSize:13,border:`1px solid ${C.paperLine}`,borderRadius:7}}/>
+        <input value={manManUnita} onChange={e=>setManManUnita(e.target.value)} placeholder="unità" style={{width:70,padding:"10px 12px",fontSize:13,border:`1px solid ${C.paperLine}`,borderRadius:7}}/>
+        <button onClick={aggiungiManodoperaManuale} style={S.btnS}>+ Aggiungi</button>
+      </div>
 
       {/* Ricambi */}
       <div style={S.eyebrow}>Ricambi</div>
@@ -6601,45 +6946,36 @@ function FormPreventivoIntervento({ preventivo, catalog, attrezzature, sessione,
         <button onClick={aggiungiRicambioManuale} style={S.btnS}>+ Aggiungi</button>
       </div>
 
-      {/* Manodopera / trasferta */}
-      <div style={S.eyebrow}>Manodopera e trasferta</div>
-      {righeManodopera.length===0 && <div style={{fontSize:12.5,color:"#9AA3AB",padding:"6px 0"}}>Nessuna voce ancora.</div>}
-      {righeManodopera.map((r,i)=>(
-        <div key={i} style={{...S.card,cursor:"default",display:"flex",alignItems:"center",gap:8,marginBottom:6}}>
-          <div style={{flex:1,minWidth:0}}>
-            <div style={{fontWeight:600,fontSize:12.5}}>{r.descrizione}</div>
-            <div className="tnum" style={{fontSize:11,color:"#9AA3AB"}}>{r.tipo==="listino"?"da listino · ":"manuale · "}€{r.prezzo.toFixed(2)} / {r.unita||"nr"}</div>
-          </div>
-          <input type="number" min="1" value={r.qty} onChange={e=>cambiaQtyManodopera(i,parseInt(e.target.value,10)||1)} style={{width:46,padding:"5px 6px",fontSize:12,border:`1px solid ${C.paperLine}`,borderRadius:5,textAlign:"center"}}/>
-          <span className="tnum" style={{fontWeight:700,fontSize:12.5,fontFamily:F_MONO,width:70,textAlign:"right"}}>€{(r.prezzo*r.qty).toFixed(2)}</span>
-          <button onClick={()=>rimuoviManodopera(i)} style={{background:"none",border:"none",fontSize:16,color:"#9AA3AB",cursor:"pointer"}}>✕</button>
-        </div>
-      ))}
-      {assistenzaSelezionata && (assistenzaSelezionata.listino||[]).length>0 && (
-        <div style={{marginTop:8,marginBottom:8}}>
-          <div style={{fontSize:11.5,color:"#9AA3AB",marginBottom:6}}>Dal listino di {assistenzaSelezionata.interno?"Telos":assistenzaSelezionata.nome}:</div>
-          {assistenzaSelezionata.listino.map((v,i)=>(
-            <div key={i} onClick={()=>aggiungiManodoperaDaListino(v)} style={{...S.card,cursor:"pointer",display:"flex",justifyContent:"space-between",alignItems:"center",gap:10,marginBottom:6}}>
-              <div style={{fontWeight:600,fontSize:12.5}}>{v.descrizione} <span style={{fontWeight:400,color:"#9AA3AB"}}>— €{v.prezzo.toFixed(2)}/{v.unita}</span></div>
-              <span style={{fontSize:16,color:C.ink,flexShrink:0}}>+</span>
-            </div>
-          ))}
-        </div>
-      )}
-      <div style={{display:"flex",gap:8,marginTop:8,marginBottom:16,flexWrap:"wrap"}}>
-        <input value={manManDescrizione} onChange={e=>setManManDescrizione(e.target.value)} placeholder="Voce inserita a mano…" style={{...S.inp,flex:"1 1 180px"}}/>
-        <input type="number" min="0" step="0.01" value={manManPrezzo} onChange={e=>setManManPrezzo(e.target.value)} placeholder="€" style={{width:80,padding:"10px 12px",fontSize:13,border:`1px solid ${C.paperLine}`,borderRadius:7}}/>
-        <input value={manManUnita} onChange={e=>setManManUnita(e.target.value)} placeholder="unità" style={{width:70,padding:"10px 12px",fontSize:13,border:`1px solid ${C.paperLine}`,borderRadius:7}}/>
-        <button onClick={aggiungiManodoperaManuale} style={S.btnS}>+ Aggiungi</button>
-      </div>
-
       <div style={{display:"flex",justifyContent:"space-between",padding:"14px 0",borderTop:`1px solid ${C.paperLine}`,marginBottom:16}}>
         <span style={{fontWeight:600,fontSize:14}}>Totale</span>
         <span className="tnum" style={{fontWeight:700,fontSize:18,fontFamily:F_MONO,color:C.ink}}>€{totale.toFixed(2)}</span>
       </div>
 
+      {preventivo && (
+        <SezioneConferma record={confermaLocale} editable={true} onAggiorna={aggiornaConfermaIntervento}/>
+      )}
+
       {errore && <div style={{fontSize:12.5,color:C.danger,marginBottom:12}}>⚠ {errore}</div>}
-      <button disabled={salvando} onClick={salva} style={{...S.btnP,padding:"12px 20px",fontSize:14,opacity:salvando?0.6:1}}>{salvando?"Salvo…":"Salva preventivo intervento"}</button>
+      <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
+        <button disabled={salvando} onClick={salva} style={{...S.btnP,padding:"12px 20px",fontSize:14,opacity:salvando?0.6:1}}>{salvando?"Salvo…":"Salva preventivo intervento"}</button>
+        {preventivo && (
+          <button
+            disabled={generandoPdf}
+            onClick={async ()=>{
+              setGenerandoPdf(true);
+              try{
+                await generaPreventivoInterventoPDF(
+                  { ...preventivo, ...confermaLocale, cliente: cliente?.ragione_sociale, oggetto, descrizione_attivita: descrizioneAttivita, righe_ricambi: righeRicambi, righe_manodopera: righeManodopera, val: totale },
+                  { assistenzaNome: assistenzaSelezionata ? (assistenzaSelezionata.interno?"Telos (interno)":assistenzaSelezionata.nome) : "Da definire" }
+                );
+              } finally { setGenerandoPdf(false); }
+            }}
+            style={{...S.btnS,padding:"12px 20px",fontSize:14,opacity:generandoPdf?0.6:1}}
+          >
+            {generandoPdf?"Genero…":"🖨 Genera PDF"}
+          </button>
+        )}
+      </div>
     </div>
   );
 }
