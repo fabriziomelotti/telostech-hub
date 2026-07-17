@@ -141,7 +141,7 @@ const RUOLI = {
 const NAV_META = {
   home:{icon:"⌂",label:"Dashboard"}, ai:{icon:"✦",label:"Assistente"}, prodotti:{icon:"▣",label:"Catalogo"},
   clienti:{icon:"◉",label:"Clienti"}, promemoria:{icon:"⚑",label:"Promemoria"}, preventivi:{icon:"▤",label:"Preventivi"}, ordini:{icon:"⬡",label:"Ordini"},
-  interventi:{icon:"⚒",label:"Interventi"}, rapporti:{icon:"☑",label:"Rapporto"}, analytics:{icon:"◈",label:"Condizioni"},
+  interventi:{icon:"⚒",label:"Assistenza"}, rapporti:{icon:"☑",label:"Rapporto"}, analytics:{icon:"◈",label:"Condizioni"},
   saltati:{icon:"⊘",label:"Trattative bloccate"}, admin:{icon:"⚙",label:"Admin"}, gestione:{icon:"🛠",label:"Gestione"},
 };
 function navMobile(nav){ return nav.slice(0,4).concat(nav.length>4?["more"]:[]); }
@@ -2886,11 +2886,14 @@ function ClienteDettaglio({cliente, onIndietro, preventivi, ordini, attrezzature
   const [dataIntervento,setDataIntervento] = useState("");
   const [prioritaIntervento,setPrioritaIntervento] = useState("media");
   const [noteIntervento,setNoteIntervento] = useState("");
+  const [attrezzaturaIdIntervento,setAttrezzaturaIdIntervento] = useState("");
+  const [attrezzaturaTestoIntervento,setAttrezzaturaTestoIntervento] = useState("");
   const [salvandoIntervento,setSalvandoIntervento] = useState(false);
 
   function resetFormIntervento(){
     setFormInterventoAperto(false); setTipoIntervento(""); setDataIntervento("");
     setPrioritaIntervento("media"); setNoteIntervento("");
+    setAttrezzaturaIdIntervento(""); setAttrezzaturaTestoIntervento("");
   }
   async function salvaIntervento(){
     if(!tipoIntervento) return;
@@ -2904,6 +2907,8 @@ function ClienteDettaglio({cliente, onIndietro, preventivi, ordini, attrezzature
         stato: "Pianificato",
         data_pianificata: dataIntervento || null,
         note: noteIntervento.trim() || null,
+        attrezzatura_id: attrezzaturaIdIntervento || null,
+        attrezzatura_testo: attrezzaturaIdIntervento ? null : (attrezzaturaTestoIntervento.trim() || null),
         creato_da_nome: sessione?.nome || null,
       };
       const [salvato] = await sbAuth("POST","interventi","",payload,accessToken);
@@ -3015,7 +3020,17 @@ function ClienteDettaglio({cliente, onIndietro, preventivi, ordini, attrezzature
                   <option value="alta">Priorità alta</option>
                 </select>
               </div>
-              <textarea value={noteIntervento} onChange={e=>setNoteIntervento(e.target.value)} rows={2} placeholder="Note (opzionale)" style={{...S.inp,resize:"vertical",fontFamily:F_BODY,marginBottom:12}}/>
+              <textarea value={noteIntervento} onChange={e=>setNoteIntervento(e.target.value)} rows={2} placeholder="Note (opzionale)" style={{...S.inp,resize:"vertical",fontFamily:F_BODY,marginBottom:10}}/>
+              <div style={S.eyebrow}>Strumento (facoltativo)</div>
+              {attrezzatureCliente.length>0 && (
+                <select value={attrezzaturaIdIntervento} onChange={e=>{ setAttrezzaturaIdIntervento(e.target.value); setAttrezzaturaTestoIntervento(""); }} style={{...S.inp,marginBottom:8}}>
+                  <option value="">— Nessuno / non specificato —</option>
+                  {attrezzatureCliente.map(a=>(<option key={a.id} value={a.id}>{a.nome_prodotto}{a.numero_serie?` · S/N ${a.numero_serie}`:""}</option>))}
+                </select>
+              )}
+              {!attrezzaturaIdIntervento && (
+                <input value={attrezzaturaTestoIntervento} onChange={e=>setAttrezzaturaTestoIntervento(e.target.value)} placeholder="Oppure descrivilo qui" style={{...S.inp,marginBottom:12}}/>
+              )}
               <div style={{display:"flex",gap:8}}>
                 <button onClick={salvaIntervento} disabled={!tipoIntervento||salvandoIntervento} style={{flex:1,padding:"11px",background:tipoIntervento?C.ink:"#c8c8c8",color:"#fff",border:"none",borderRadius:8,fontSize:13,fontWeight:700,cursor:tipoIntervento?"pointer":"default"}}>
                   {salvandoIntervento?"Salvo…":"Salva"}
@@ -3027,21 +3042,26 @@ function ClienteDettaglio({cliente, onIndietro, preventivi, ordini, attrezzature
 
           {interventiCliente.length===0 ? (
             <div style={{textAlign:"center",padding:"1.5rem 1rem",color:"#9AA3AB",fontSize:13}}>Nessun intervento registrato per questo cliente.</div>
-          ) : interventiCliente.map(i=>(
+          ) : interventiCliente.map(i=>{
+            const attrezzaturaCollegata = attrezzatureCliente.find(a=>a.id===i.attrezzatura_id);
+            return (
             <div key={i.id} style={{...S.card,cursor:"default"}}>
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:10}}>
                 <div style={{minWidth:0}}>
                   <div style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap",marginBottom:4}}>
                     <Tag tone="primary">{TIPO_LABELS[i.tipo]||i.tipo}</Tag>
-                    {i.data_pianificata && <span className="tnum" style={{fontSize:10.5,color:"#9AA3AB",fontFamily:F_MONO}}>{new Date(i.data_pianificata).toLocaleDateString("it-IT")}</span>}
+                    {i.data_pianificata && <span className="tnum" style={{fontSize:10.5,color:"#9AA3AB",fontFamily:F_MONO}}>{new Date(i.data_pianificata).toLocaleDateString("it-IT")}{i.ora_pianificata?` · ${i.ora_pianificata}`:""}</span>}
                   </div>
+                  {(attrezzaturaCollegata || i.attrezzatura_testo) && (
+                    <div style={{fontSize:11.5,color:"#8A929A",marginBottom:2}}>🔧 {attrezzaturaCollegata ? attrezzaturaCollegata.nome_prodotto : i.attrezzatura_testo}</div>
+                  )}
                   {i.note && <div style={{fontSize:12.5,color:C.charcoal}}>{i.note}</div>}
                   {i.creato_da_nome && <div style={{fontSize:11,color:"#8A929A",marginTop:3}}>Da {i.creato_da_nome}</div>}
                 </div>
-                <Tag tone={i.stato==="Completato"?"ok":i.priorita==="alta"?"danger":i.priorita==="media"?"warn":"steel"}>{i.stato==="Completato"?"Completato":i.priorita}</Tag>
+                <Tag tone={i.stato==="Completato"?"ok":i.priorita==="alta"?"danger":i.priorita==="media"?"warn":"steel"}>{i.stato==="Completato"?"Concluso":i.stato||i.priorita}</Tag>
               </div>
             </div>
-          ))}
+          );})}
         </div>
       )}
 
@@ -3895,6 +3915,119 @@ async function generaPreventivoInterventoPDF(pv, meta={}){
 
 </body></html>`;
   await condividiOStampaPdf(html, `Preventivo_intervento_${codiceMostrato}.pdf`, { titolo: `Preventivo intervento ${codiceMostrato}`, testo: pv.cliente || "" });
+}
+
+// Genera il PDF del rapporto di chiusura di un intervento (stadio
+// "Concluso" del flusso Assistenza) — documento semplice pensato per i
+// responsabili che devono fatturare: cliente, cosa è stato fatto, chi lo ha
+// eseguito e quando, checklist, note, e conferma del cliente (firma
+// digitale o conferma alternativa, stesso schema di SezioneConferma). Non
+// riporta importi: quelli restano sul preventivo intervento collegato, se
+// presente — questo è il resoconto dell'esecuzione, non il preventivo.
+async function generaRapportoInterventoPDF(i, meta={}){
+  const oggi = new Date().toLocaleDateString("it-IT");
+  const codiceMostrato = `RAP-${(i.id||"").slice(0,8) || Date.now().toString().slice(-6)}`;
+  const checklist = i.checklist || [];
+
+  const html = `<!DOCTYPE html><html><head><meta charset="utf-8"/><title>Rapporto intervento ${codiceMostrato}</title>
+<style>
+  @page{size:A4;margin:0}
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{width:210mm}
+  body{font-family:Arial,sans-serif;color:#232323;font-size:12.5px}
+  .pagina{width:210mm;min-height:297mm;padding:14mm 16mm;display:flex;flex-direction:column}
+  .corpo-contenuto{flex:1}
+  .hd-content{display:flex;align-items:center;justify-content:space-between;margin-bottom:18px;padding-bottom:14px;border-bottom:2px solid #162758}
+  .hd-content .logo-telos-spa{height:46px}
+  .hd-content .badge-partner{height:36px}
+  .riga-titolo{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;margin-bottom:18px}
+  .titolo-ordine{font-size:19px;font-weight:700;color:#162758}
+  .meta-box{display:grid;grid-template-columns:auto auto;column-gap:10px;row-gap:3px;font-size:11px;justify-content:end;flex-shrink:0}
+  .meta-box .etichetta{color:#7C879E;text-align:right}
+  .meta-box .valore{text-align:left;font-weight:600;white-space:nowrap}
+  .cliente-box{font-size:12.5px;margin-bottom:16px}
+  .cliente-box .nome{font-weight:700;font-size:14px}
+  .info-box{margin-bottom:16px}
+  .info-box .lbl{font-size:10px;color:#7C879E;text-transform:uppercase;letter-spacing:.03em;margin-bottom:2px}
+  .info-box .val{font-size:12px;color:#232323;white-space:pre-line;line-height:1.5}
+  .checklist-voce{font-size:11.5px;padding:6px 0;border-bottom:1px solid #E3E5EA;display:flex;gap:8px;align-items:center}
+  .checklist-voce .spunta{width:14px;height:14px;border-radius:3px;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:10px;color:#fff}
+  .footer-legale{font-size:9px;color:#9AA3AB;border-top:1px solid #E3E5EA;padding-top:8px;margin-top:16px}
+  .footer-legale b{color:#5B6770}
+  .firma-box{margin-top:24px;border:1px solid #162758;border-radius:6px;padding:16px}
+  .firma-box .titolo{font-weight:700;font-size:12px;margin-bottom:6px}
+  .firma-digitale img{max-width:200px;max-height:80px;display:block;margin-top:6px}
+  .firma-digitale-nota{font-size:9.5px;color:#7C879E;margin-top:6px;font-style:italic}
+  .firma-linee{display:flex;justify-content:space-between;font-size:10px;color:#7C879E;margin-top:10px}
+  .firma-linee div{width:45%;border-top:1px solid #232323;padding-top:4px}
+</style></head><body>
+
+<div class="pagina">
+  <div class="corpo-contenuto">
+    <div class="hd-content">
+      <img class="logo-telos-spa" src="${LOGO_TELOS_SPA}" alt="Telos SPA"/>
+      <img class="badge-partner" src="${LOGO_BADGE_PARTNER}" alt=""/>
+    </div>
+    <div class="riga-titolo">
+      <div class="titolo-ordine">RAPPORTO INTERVENTO</div>
+      <div class="meta-box">
+        <div class="etichetta">Numero</div><div class="valore">${codiceMostrato}</div>
+        <div class="etichetta">Data intervento</div><div class="valore">${i.data_pianificata ? new Date(i.data_pianificata).toLocaleDateString("it-IT") : oggi}</div>
+        <div class="etichetta">Concluso il</div><div class="valore">${i.completato_il ? new Date(i.completato_il).toLocaleDateString("it-IT") : oggi}</div>
+      </div>
+    </div>
+    <div class="cliente-box">
+      <div style="color:#7C879E;font-size:10px">Cliente</div>
+      <div class="nome">${i.cliente_nome||""}</div>
+    </div>
+
+    <div class="info-box">
+      <div class="lbl">Tipo intervento</div>
+      <div class="val">${TIPO_LABELS[i.tipo]||i.tipo||""}</div>
+    </div>
+    ${(i.attrezzatura_testo || meta.attrezzaturaNome) ? `
+    <div class="info-box">
+      <div class="lbl">Strumento</div>
+      <div class="val">${meta.attrezzaturaNome || i.attrezzatura_testo}</div>
+    </div>` : ""}
+    <div class="info-box">
+      <div class="lbl">Eseguito da</div>
+      <div class="val">${i.tecnico_assegnato_nome || meta.assistenzaNome || "—"}</div>
+    </div>
+
+    ${checklist.length>0 ? `
+    <div class="info-box">
+      <div class="lbl">Checklist</div>
+      ${checklist.map(c=>`<div class="checklist-voce"><span class="spunta" style="background:${c.fatto?"#2E7D32":"#C7CCCF"}">${c.fatto?"✓":""}</span>${c.voce}</div>`).join("")}
+    </div>` : ""}
+
+    ${i.note ? `<div class="info-box"><div class="lbl">Note</div><div class="val">${i.note}</div></div>` : ""}
+
+    <div class="firma-box">
+      <div class="titolo">Conferma del cliente</div>
+      ${i.firma_cliente ? `
+      <div class="firma-digitale">
+        <img src="${i.firma_cliente}" alt="Firma cliente"/>
+        <div class="firma-digitale-nota">Firmato digitalmente da ${i.firma_nome||"Cliente"}${i.firma_data ? ` il ${new Date(i.firma_data).toLocaleString("it-IT",{dateStyle:"short",timeStyle:"short"})}` : ""}</div>
+      </div>
+      ` : i.conferma_alt_nome ? `
+      <div class="firma-digitale-nota" style="margin-top:4px;font-size:11px">
+        ${i.conferma_alt_tipo==="telefonica"?"Conferma telefonica":"Conferma via WhatsApp/email"} del ${i.conferma_alt_data ? new Date(i.conferma_alt_data).toLocaleDateString("it-IT") : ""} — ${i.conferma_alt_nome}
+      </div>
+      ` : `
+      <div class="firma-linee"><div>Luogo e data</div><div>Timbro e firma del Cliente</div></div>
+      `}
+    </div>
+  </div>
+
+  <div class="footer-legale">
+    <b>TELOS S.P.A.</b> P.I./C.F. 00525920013 - capitale sociale € 3.586.191,18 i.v. - REA TO-457465 | www.telosspa.it<br/>
+    <b>SEDE Legale:</b> VENARIA (TO) - 10078 - Via Aosta 5 - Tel. 011.4242932 · <b>Amministrazione:</b> amministrazione.torino@telosgroup.it
+  </div>
+</div>
+
+</body></html>`;
+  await condividiOStampaPdf(html, `Rapporto_intervento_${codiceMostrato}.pdf`, { titolo: `Rapporto intervento ${codiceMostrato}`, testo: i.cliente_nome || "" });
 }
 
 // ─── RICERCA PRODOTTI INLINE (per aggiungere articoli a un preventivo bozza) ──
@@ -5863,20 +5996,20 @@ function Ordini({ordini,setOrdini,preventivi,setPreventivi,setInterventi,catalog
     setOrdini(prev=>prev.map(o=>o.id===selezionato.id?{...o,...payload}:o));
     sbAuth("PATCH","ordini",`id=eq.${selezionato.id}`,payload,accessToken).catch(()=>{});
   }
-  // Crea l'intervento pianificato di installazione, assegnato al tecnico
-  // scelto — compare da subito nel menu Interventi.
+  // Segnala la necessità di un intervento di installazione — crea una
+  // richiesta nello stadio "Richiesto" del flusso Assistenza (non più
+  // direttamente "Pianificato" con tecnico assegnato: presa in carico,
+  // assegnazione e data si decidono dopo, dentro Assistenza).
   async function creaInterventoInstallazione(){
-    if(!selezionato || !tecnicoScelto) return;
+    if(!selezionato) return;
     setSalvandoGestione(true); setMsgGestione("");
     const payload = {
       tipo: "installazione",
       cliente_codice: selezionato.cliente_codice || null,
       cliente_nome: selezionato.cliente,
-      stato: "Pianificato",
+      stato: "Richiesto",
       priorita: "media",
-      data_pianificata: dataClienteForm || null,
       note: `Installazione da ordine ${codiceOrdine(selezionato)}`,
-      tecnico_assegnato_nome: tecnicoScelto,
       ordine_id: selezionato.id,
       creato_da_nome: sessione?.nome || null,
     };
@@ -5884,7 +6017,7 @@ function Ordini({ordini,setOrdini,preventivi,setPreventivi,setInterventi,catalog
       const [salvato] = await sbAuth("POST","interventi","",payload,accessToken);
       if(setInterventi) setInterventi(prev=>[salvato,...prev]);
       setInterventoCreato(true);
-      setMsgGestione(`Intervento creato e assegnato a ${tecnicoScelto}.`);
+      setMsgGestione(`Richiesta di intervento creata — da presa in carico in Assistenza.`);
     }catch(err){
       setMsgGestione("Errore: "+err.message);
     }
@@ -6495,17 +6628,11 @@ ${o.firma_cliente ? `
 
             {selezionato.installazione_attiva && (
               <div style={{paddingTop:14,borderTop:`1px solid ${C.paperLine}`}}>
-                <div style={{fontSize:12.5,fontWeight:600,marginBottom:8}}>Assegna installazione a un tecnico</div>
+                <div style={{fontSize:12.5,fontWeight:600,marginBottom:8}}>Richiedi l'intervento di installazione</div>
                 {interventoCreato ? (
-                  <div style={{fontSize:12,color:C.ok}}>✓ Intervento creato — visibile nel menu Interventi.</div>
+                  <div style={{fontSize:12,color:C.ok}}>✓ Richiesta creata — da presa in carico in Assistenza.</div>
                 ) : (
-                  <>
-                    <select value={tecnicoScelto} onChange={e=>setTecnicoScelto(e.target.value)} style={{...S.inp,marginBottom:8}}>
-                      <option value="">— scegli un tecnico —</option>
-                      {(utentiTelos||[]).map(u=>(<option key={u.id} value={`${u.nome} ${u.cognome||""}`.trim()}>{u.nome} {u.cognome} {u.ruolo?`(${u.ruolo})`:""}</option>))}
-                    </select>
-                    <button onClick={creaInterventoInstallazione} disabled={!tecnicoScelto||salvandoGestione} style={{...S.btnAccent,padding:"9px 15px",fontSize:12.5,opacity:tecnicoScelto?1:0.5}}>Crea intervento pianificato</button>
-                  </>
+                  <button onClick={creaInterventoInstallazione} disabled={salvandoGestione} style={{...S.btnAccent,padding:"9px 15px",fontSize:12.5}}>Crea richiesta di intervento</button>
                 )}
               </div>
             )}
@@ -6755,35 +6882,24 @@ function FormPreventivoIntervento({ preventivo, catalog, attrezzature, sessione,
   // Una volta confermato dal cliente (firma o conferma alternativa), si può
   // pianificare l'intervento vero e proprio — crea una voce in Interventi →
   // Pianificati, sullo stesso schema già usato per l'installazione da un
-  // ordine commerciale (vedi creaInterventoInstallazione in Ordini): data +
-  // tecnico Telos se l'assistenza è interna, altrimenti va comunque
-  // pianificato ma il "tecnico" è il nome del partner esterno.
-  const [dataPianificata, setDataPianificata] = useState("");
-  const [tecnicoScelto, setTecnicoScelto] = useState("");
-  const [utentiTelos, setUtentiTelos] = useState(null);
+  // ordine commerciale (vedi creaInterventoInstallazione in Ordini): crea
+  // una richiesta (stadio "Richiesto") — presa in carico, assegnazione a un
+  // tecnico o a un'assistenza esterna, e data/ora si decidono dopo, dentro
+  // Assistenza, non qui al momento della conferma.
   const [interventoCreato, setInterventoCreato] = useState(!!preventivo?.stato && preventivo.stato==="Confermato");
   const [salvandoPianificazione, setSalvandoPianificazione] = useState(false);
   const [msgPianificazione, setMsgPianificazione] = useState("");
 
-  useEffect(()=>{
-    if(utentiTelos!==null) return;
-    chiamaUtentiInfo(accessToken).then(d=>setUtentiTelos(d?.utenti ?? [])).catch(()=>setUtentiTelos([]));
-  },[]);
-
-  async function creaInterventoPianificato(){
-    if(!preventivo || !dataPianificata) return;
-    const perTelos = assistenzaSelezionata?.interno;
-    if(perTelos && !tecnicoScelto) return;
+  async function creaRichiestaIntervento(){
+    if(!preventivo) return;
     setSalvandoPianificazione(true); setMsgPianificazione("");
     const payload = {
       tipo: "intervento_tecnico",
       cliente_codice: preventivo.cliente_codice || null,
       cliente_nome: cliente?.ragione_sociale || preventivo.cliente,
-      stato: "Pianificato",
+      stato: "Richiesto",
       priorita: "media",
-      data_pianificata: dataPianificata,
       note: `${oggetto}${descrizioneAttivita?`\n\n${descrizioneAttivita}`:""}`,
-      tecnico_assegnato_nome: perTelos ? tecnicoScelto : (assistenzaSelezionata?.nome || "Assistenza esterna"),
       preventivo_intervento_id: preventivo.id,
       creato_da_nome: sessione?.nome || null,
     };
@@ -6792,7 +6908,7 @@ function FormPreventivoIntervento({ preventivo, catalog, attrezzature, sessione,
       if(setInterventi) setInterventi(prev=>[salvato,...prev]);
       await sbAuth("PATCH","preventivi_intervento",`id=eq.${preventivo.id}`,{stato:"Confermato"},accessToken);
       setInterventoCreato(true);
-      setMsgPianificazione("Intervento pianificato — visibile nel menu Interventi.");
+      setMsgPianificazione("Richiesta creata — da presa in carico in Assistenza.");
     }catch(err){
       setMsgPianificazione("Errore: "+err.message);
     }
@@ -7004,32 +7120,18 @@ function FormPreventivoIntervento({ preventivo, catalog, attrezzature, sessione,
 
       {preventivo && (confermaLocale.firma_cliente || confermaLocale.conferma_alt_nome) && (
         <div style={{...S.card,cursor:"default",marginBottom:16}}>
-          <div style={{fontSize:13.5,fontWeight:700,marginBottom:8}}>Pianifica l'intervento</div>
+          <div style={{fontSize:13.5,fontWeight:700,marginBottom:8}}>Richiedi l'intervento</div>
           {interventoCreato ? (
-            <div style={{fontSize:12.5,color:C.ok}}>✓ Pianificato — visibile nel menu Interventi.</div>
+            <div style={{fontSize:12.5,color:C.ok}}>✓ Richiesta creata — da presa in carico in Assistenza.</div>
           ) : (
             <>
-              <div style={S.eyebrow}>Data prevista</div>
-              <input type="date" value={dataPianificata} onChange={e=>setDataPianificata(e.target.value)} style={{...S.inp,marginBottom:10,width:180}}/>
-              {assistenzaSelezionata?.interno ? (
-                <>
-                  <div style={S.eyebrow}>Assegna a un tecnico</div>
-                  <select value={tecnicoScelto} onChange={e=>setTecnicoScelto(e.target.value)} style={{...S.inp,marginBottom:10}}>
-                    <option value="">— scegli un tecnico —</option>
-                    {(utentiTelos||[]).map(u=>(<option key={u.id} value={`${u.nome} ${u.cognome||""}`.trim()}>{u.nome} {u.cognome} {u.ruolo?`(${u.ruolo})`:""}</option>))}
-                  </select>
-                </>
-              ) : assistenzaSelezionata ? (
-                <div style={{fontSize:12,color:C.steel,marginBottom:10}}>Eseguito da {assistenzaSelezionata.nome} (assistenza esterna).</div>
-              ) : (
-                <div style={{fontSize:12,color:"#9AA3AB",marginBottom:10}}>Scegli sopra "Chi esegue l'intervento" prima di pianificare.</div>
-              )}
+              <div style={{fontSize:12,color:C.steel,marginBottom:10}}>Presa in carico, assegnazione a un tecnico o a un'assistenza esterna, data e ora si decidono dopo, dentro Assistenza.</div>
               <button
-                disabled={!dataPianificata || (assistenzaSelezionata?.interno && !tecnicoScelto) || !assistenzaSelezionata || salvandoPianificazione}
-                onClick={creaInterventoPianificato}
-                style={{...S.btnAccent,padding:"9px 15px",fontSize:12.5,opacity:(!dataPianificata||!assistenzaSelezionata||(assistenzaSelezionata?.interno&&!tecnicoScelto))?0.5:1}}
+                disabled={salvandoPianificazione}
+                onClick={creaRichiestaIntervento}
+                style={{...S.btnAccent,padding:"9px 15px",fontSize:12.5,opacity:salvandoPianificazione?0.6:1}}
               >
-                {salvandoPianificazione?"Creo…":"Crea intervento pianificato"}
+                {salvandoPianificazione?"Creo…":"Crea richiesta di intervento"}
               </button>
               {msgPianificazione && <div style={{fontSize:12,color:msgPianificazione.startsWith("Errore")?C.danger:C.ok,marginTop:8}}>{msgPianificazione}</div>}
             </>
@@ -7062,14 +7164,309 @@ function FormPreventivoIntervento({ preventivo, catalog, attrezzature, sessione,
   );
 }
 
+// Dettaglio di un intervento nel flusso Assistenza — l'interfaccia cambia in
+// base allo stadio (intervento.stato):
+//  - Richiesto: "prendi in carico" → assegna un tecnico Telos o
+//    un'assistenza esterna, passa a "Da pianificare"
+//  - Da pianificare: conferma data/ora → passa a "Pianificato"
+//  - Pianificato: checklist + conferma cliente (firma o alternativa, stesso
+//    schema di SezioneConferma) → chiude come "Completato" ("Concluso")
+//  - Completato: genera il PDF per la fatturazione e segna l'invio
+// Il collegamento allo strumento del cliente (attrezzatura) è sempre
+// disponibile e facoltativo, con alternativa in testo libero, modificabile
+// in qualunque stadio.
+function DettaglioIntervento({ intervento, attrezzature, sessione, onIndietro, onAggiornato }){
+  const accessToken = trovaAccessToken(sessione);
+  const [assistenze, setAssistenze] = useState(null);
+  const [utentiTelos, setUtentiTelos] = useState(null);
+  const [modoEsecutore, setModoEsecutore] = useState(intervento.assistenza_id ? "esterna" : "interno");
+  const [tecnicoScelto, setTecnicoScelto] = useState(intervento.tecnico_assegnato_nome || "");
+  const [assistenzaScelta, setAssistenzaScelta] = useState(intervento.assistenza_id || "");
+  const [dataPianificata, setDataPianificata] = useState(intervento.data_pianificata || "");
+  const [oraPianificata, setOraPianificata] = useState(intervento.ora_pianificata || "");
+  const [attrezzaturaId, setAttrezzaturaId] = useState(intervento.attrezzatura_id || "");
+  const [attrezzaturaTesto, setAttrezzaturaTesto] = useState(intervento.attrezzatura_testo || "");
+  const [modificaAttrezzatura, setModificaAttrezzatura] = useState(false);
+  const [checklist, setChecklist] = useState(intervento.checklist || (intervento.tipo ? (CHECKLIST_TEMPLATES[intervento.tipo]||[]).map(v=>({voce:v,fatto:false})) : []));
+  const [note, setNote] = useState(intervento.note || "");
+  const [confermaLocale, setConfermaLocale] = useState({
+    firma_cliente: intervento.firma_cliente || null,
+    firma_nome: intervento.firma_nome || null,
+    firma_data: intervento.firma_data || null,
+    conferma_alt_nome: intervento.conferma_alt_nome || null,
+    conferma_alt_tipo: intervento.conferma_alt_tipo || null,
+    conferma_alt_data: intervento.conferma_alt_data || null,
+  });
+  const [salvando, setSalvando] = useState(false);
+  const [generandoPdf, setGenerandoPdf] = useState(false);
+  const [errore, setErrore] = useState("");
+
+  useEffect(()=>{
+    sbGetAuth("assistenze", "select=*&attivo=eq.true&order=interno.desc,nome.asc", accessToken)
+      .then(setAssistenze).catch(()=>setAssistenze([]));
+    chiamaUtentiInfo(accessToken).then(d=>setUtentiTelos(d?.utenti ?? [])).catch(()=>setUtentiTelos([]));
+  },[]);
+
+  const attrezzatureCliente = useMemo(()=>
+    (attrezzature||[]).filter(a=>a.cliente_codice===intervento.cliente_codice && a.stato!=="Dismessa")
+  ,[attrezzature, intervento.cliente_codice]);
+  const attrezzaturaCollegata = useMemo(()=>
+    attrezzatureCliente.find(a=>a.id===intervento.attrezzatura_id)
+  ,[attrezzatureCliente, intervento.attrezzatura_id]);
+  const assistenzaAssegnata = useMemo(()=>
+    (assistenze||[]).find(a=>a.id===intervento.assistenza_id)
+  ,[assistenze, intervento.assistenza_id]);
+
+  async function salvaPatch(patch){
+    setSalvando(true); setErrore("");
+    try{
+      await sbAuth("PATCH","interventi",`id=eq.${intervento.id}`,patch,accessToken);
+      onAggiornato({...intervento, ...patch});
+    }catch(err){
+      setErrore("Salvataggio non riuscito: "+err.message);
+    }
+    setSalvando(false);
+  }
+
+  function prendiInCarico(){
+    if(modoEsecutore==="interno" && !tecnicoScelto) return;
+    if(modoEsecutore==="esterna" && !assistenzaScelta) return;
+    salvaPatch({
+      stato: "Da pianificare",
+      tecnico_assegnato_nome: modoEsecutore==="interno" ? tecnicoScelto : null,
+      assistenza_id: modoEsecutore==="esterna" ? assistenzaScelta : null,
+      preso_in_carico_da_nome: sessione?.nome || null,
+    });
+  }
+  function confermaPianificazione(){
+    if(!dataPianificata) return;
+    salvaPatch({ stato:"Pianificato", data_pianificata: dataPianificata, ora_pianificata: oraPianificata.trim()||null });
+  }
+  function salvaAttrezzatura(){
+    salvaPatch({
+      attrezzatura_id: attrezzaturaId || null,
+      attrezzatura_testo: attrezzaturaId ? null : (attrezzaturaTesto.trim() || null),
+    });
+    setModificaAttrezzatura(false);
+  }
+  function toggleVoce(idx){
+    setChecklist(prev=>prev.map((c,i)=>i===idx?{...c,fatto:!c.fatto}:c));
+  }
+  async function aggiornaConferma(patch){
+    setConfermaLocale(prev=>({...prev, ...patch}));
+    await salvaPatch(patch);
+  }
+  function chiudiIntervento(){
+    if(!confermaLocale.firma_cliente && !confermaLocale.conferma_alt_nome) return;
+    salvaPatch({ stato:"Completato", completato_il:new Date().toISOString(), checklist, note: note.trim()||null });
+  }
+  function segnaFatturato(){
+    salvaPatch({ inviato_fatturazione:true, inviato_fatturazione_data:new Date().toISOString() });
+  }
+
+  const pillStile = on => ({
+    border:`1px solid ${on?C.ink:C.paperLine}`, borderRadius:7, padding:"8px 14px",
+    fontSize:12.5, cursor:"pointer", fontWeight:on?600:400,
+    background:on?C.ink:"#fff", color:on?"#fff":"#5B6770",
+  });
+
+  return (
+    <div>
+      <button onClick={onIndietro} style={{...S.btnS,marginBottom:14}}>← Indietro</button>
+
+      <div style={{display:"flex",gap:6,alignItems:"center",marginBottom:5,flexWrap:"wrap"}}>
+        <Tag tone="primary">{TIPO_LABELS[intervento.tipo]||intervento.tipo||"Intervento"}</Tag>
+        <Tag tone={intervento.stato==="Completato"?"ok":"steel"}>{intervento.stato==="Completato"?"Concluso":intervento.stato}</Tag>
+      </div>
+      <div style={{fontFamily:F_DISPLAY,fontSize:18,fontWeight:600,marginBottom:4}}>{intervento.cliente_nome||"Cliente non specificato"}</div>
+      {intervento.note && intervento.stato!=="Completato" && <div style={{fontSize:12.5,color:C.steel,marginBottom:16,whiteSpace:"pre-line"}}>{intervento.note}</div>}
+
+      {/* Collegamento allo strumento del cliente — sempre facoltativo, modificabile in qualunque stadio */}
+      <div style={{...S.card,cursor:"default",marginBottom:16}}>
+        <div style={{fontSize:12.5,fontWeight:700,marginBottom:6}}>Strumento</div>
+        {!modificaAttrezzatura ? (
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:10}}>
+            <div style={{fontSize:12.5,color:C.steel}}>
+              {attrezzaturaCollegata ? `${attrezzaturaCollegata.nome_prodotto}${attrezzaturaCollegata.numero_serie?` · S/N ${attrezzaturaCollegata.numero_serie}`:""}`
+                : intervento.attrezzatura_testo || "Non specificato"}
+            </div>
+            <button onClick={()=>setModificaAttrezzatura(true)} style={{...S.btnS,padding:"5px 10px",fontSize:11.5,flexShrink:0}}>✎</button>
+          </div>
+        ) : (
+          <>
+            {attrezzatureCliente.length>0 && (
+              <select value={attrezzaturaId} onChange={e=>{ setAttrezzaturaId(e.target.value); setAttrezzaturaTesto(""); }} style={{...S.inp,marginBottom:8}}>
+                <option value="">— Nessuno strumento registrato —</option>
+                {attrezzatureCliente.map(a=>(
+                  <option key={a.id} value={a.id}>{a.nome_prodotto}{a.numero_serie?` · S/N ${a.numero_serie}`:""}</option>
+                ))}
+              </select>
+            )}
+            {!attrezzaturaId && (
+              <input value={attrezzaturaTesto} onChange={e=>setAttrezzaturaTesto(e.target.value)} placeholder="Oppure descrivilo qui, se non serve un collegamento puntuale" style={{...S.inp,marginBottom:8}}/>
+            )}
+            <div style={{display:"flex",gap:8}}>
+              <button onClick={salvaAttrezzatura} disabled={salvando} style={{...S.btnAccent,padding:"7px 14px",fontSize:12}}>Salva</button>
+              <button onClick={()=>setModificaAttrezzatura(false)} style={{...S.btnS,padding:"7px 14px",fontSize:12}}>Annulla</button>
+            </div>
+          </>
+        )}
+      </div>
+
+      {errore && <div style={{fontSize:12.5,color:C.danger,marginBottom:12}}>⚠ {errore}</div>}
+
+      {/* ── Stadio: Richiesto ────────────────────────────────────────── */}
+      {intervento.stato==="Richiesto" && (
+        <div style={{...S.card,cursor:"default",marginBottom:16}}>
+          <div style={{fontSize:13.5,fontWeight:700,marginBottom:10}}>Prendi in carico</div>
+          <div style={{display:"flex",gap:6,marginBottom:12}}>
+            <button onClick={()=>setModoEsecutore("interno")} style={pillStile(modoEsecutore==="interno")}>Tecnico Telos</button>
+            <button onClick={()=>setModoEsecutore("esterna")} style={pillStile(modoEsecutore==="esterna")}>Assistenza esterna</button>
+          </div>
+          {modoEsecutore==="interno" ? (
+            <select value={tecnicoScelto} onChange={e=>setTecnicoScelto(e.target.value)} style={{...S.inp,marginBottom:12}}>
+              <option value="">— scegli un tecnico —</option>
+              {(utentiTelos||[]).map(u=>(<option key={u.id} value={`${u.nome} ${u.cognome||""}`.trim()}>{u.nome} {u.cognome} {u.ruolo?`(${u.ruolo})`:""}</option>))}
+            </select>
+          ) : (
+            <select value={assistenzaScelta} onChange={e=>setAssistenzaScelta(e.target.value)} style={{...S.inp,marginBottom:12}}>
+              <option value="">— scegli un'assistenza —</option>
+              {(assistenze||[]).filter(a=>!a.interno).map(a=>(<option key={a.id} value={a.id}>{a.nome}</option>))}
+            </select>
+          )}
+          <button
+            disabled={salvando || (modoEsecutore==="interno"?!tecnicoScelto:!assistenzaScelta)}
+            onClick={prendiInCarico}
+            style={{...S.btnAccent,padding:"11px 16px",fontWeight:700,opacity:(modoEsecutore==="interno"?!tecnicoScelto:!assistenzaScelta)?0.5:1}}
+          >
+            {salvando?"…":"Prendi in carico"}
+          </button>
+        </div>
+      )}
+
+      {/* ── Stadio: Da pianificare ───────────────────────────────────── */}
+      {intervento.stato==="Da pianificare" && (
+        <div style={{...S.card,cursor:"default",marginBottom:16}}>
+          <div style={{fontSize:13.5,fontWeight:700,marginBottom:4}}>In carico a {intervento.tecnico_assegnato_nome || assistenzaAssegnata?.nome || "—"}</div>
+          <div style={{fontSize:12,color:"#9AA3AB",marginBottom:12}}>Conferma data e ora per pianificarlo.</div>
+          <div style={{display:"flex",gap:10,flexWrap:"wrap",marginBottom:12}}>
+            <div>
+              <div style={S.eyebrow}>Data</div>
+              <input type="date" value={dataPianificata} onChange={e=>setDataPianificata(e.target.value)} style={{...S.inp,width:170}}/>
+            </div>
+            <div>
+              <div style={S.eyebrow}>Ora (facoltativa)</div>
+              <input type="time" value={oraPianificata} onChange={e=>setOraPianificata(e.target.value)} style={{...S.inp,width:120}}/>
+            </div>
+          </div>
+          <button disabled={!dataPianificata||salvando} onClick={confermaPianificazione} style={{...S.btnAccent,padding:"11px 16px",fontWeight:700,opacity:dataPianificata?1:0.5}}>
+            {salvando?"…":"Conferma pianificazione"}
+          </button>
+        </div>
+      )}
+
+      {/* ── Stadio: Pianificato ──────────────────────────────────────── */}
+      {intervento.stato==="Pianificato" && (
+        <>
+          <div style={{...S.card,cursor:"default",marginBottom:16}}>
+            <div style={{fontSize:13.5,fontWeight:700,marginBottom:4}}>
+              {intervento.data_pianificata && new Date(intervento.data_pianificata).toLocaleDateString("it-IT")}{intervento.ora_pianificata?` · ${intervento.ora_pianificata}`:""}
+            </div>
+            <div style={{fontSize:12,color:"#9AA3AB"}}>Assegnato a {intervento.tecnico_assegnato_nome || assistenzaAssegnata?.nome || "—"}</div>
+          </div>
+
+          {checklist.length>0 && (
+            <div style={{...S.card,cursor:"default",marginBottom:16}}>
+              <div style={{fontSize:12.5,fontWeight:700,marginBottom:8}}>Checklist</div>
+              {checklist.map((c,idx)=>(
+                <label key={idx} style={{display:"flex",gap:10,padding:"9px 0",borderBottom:`1px solid ${C.paperLine}`,cursor:"pointer",fontSize:13,alignItems:"center"}}>
+                  <input type="checkbox" checked={c.fatto} onChange={()=>toggleVoce(idx)} style={{width:16,height:16,accentColor:C.ink,flexShrink:0}}/>
+                  <span style={{color:c.fatto?C.charcoal:"#5B6770"}}>{c.voce}</span>
+                </label>
+              ))}
+            </div>
+          )}
+
+          <div style={{...S.card,cursor:"default",marginBottom:16}}>
+            <div style={{fontSize:12.5,fontWeight:700,marginBottom:8}}>Note sull'intervento</div>
+            <textarea value={note} onChange={e=>setNote(e.target.value)} rows={3} placeholder="Facoltative" style={{...S.inp,resize:"vertical"}}/>
+          </div>
+
+          <SezioneConferma record={confermaLocale} editable={true} onAggiorna={aggiornaConferma}/>
+
+          <button
+            disabled={salvando || (!confermaLocale.firma_cliente && !confermaLocale.conferma_alt_nome)}
+            onClick={chiudiIntervento}
+            style={{...S.btnAccent,width:"100%",padding:"13px",fontWeight:700,opacity:(confermaLocale.firma_cliente||confermaLocale.conferma_alt_nome)?1:0.5}}
+          >
+            {salvando?"…":"✓ Chiudi intervento"}
+          </button>
+        </>
+      )}
+
+      {/* ── Stadio: Completato ("Concluso") ──────────────────────────── */}
+      {intervento.stato==="Completato" && (
+        <>
+          {checklist.length>0 && (
+            <div style={{...S.card,cursor:"default",marginBottom:16}}>
+              <div style={{fontSize:12.5,fontWeight:700,marginBottom:8}}>Checklist eseguita</div>
+              {checklist.map((c,idx)=>(
+                <div key={idx} style={{display:"flex",gap:10,padding:"6px 0",fontSize:12.5,color:c.fatto?C.charcoal:"#9AA3AB"}}>
+                  <span>{c.fatto?"✓":"—"}</span>{c.voce}
+                </div>
+              ))}
+            </div>
+          )}
+          {note && <div style={{...S.card,cursor:"default",marginBottom:16}}><div style={{fontSize:12.5,fontWeight:700,marginBottom:6}}>Note</div><div style={{fontSize:12.5,color:C.steel,whiteSpace:"pre-line"}}>{note}</div></div>}
+
+          <SezioneConferma record={confermaLocale} editable={false} onAggiorna={()=>{}}/>
+
+          <div style={{...S.card,cursor:"default",marginBottom:16}}>
+            <div style={{fontSize:12.5,fontWeight:700,marginBottom:8}}>Fatturazione</div>
+            {intervento.inviato_fatturazione ? (
+              <div style={{fontSize:12.5,color:C.ok}}>✓ Inviato per la fatturazione il {new Date(intervento.inviato_fatturazione_data).toLocaleDateString("it-IT")}</div>
+            ) : (
+              <div style={{fontSize:12,color:"#9AA3AB"}}>Genera il PDF e segnalo come inviato una volta passato ai responsabili.</div>
+            )}
+          </div>
+
+          <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
+            <button
+              disabled={generandoPdf}
+              onClick={async ()=>{
+                setGenerandoPdf(true);
+                try{
+                  await generaRapportoInterventoPDF(intervento, {
+                    attrezzaturaNome: attrezzaturaCollegata?.nome_prodotto,
+                    assistenzaNome: assistenzaAssegnata?.nome,
+                  });
+                } finally { setGenerandoPdf(false); }
+              }}
+              style={{...S.btnAccent,padding:"12px 18px",fontWeight:700,opacity:generandoPdf?0.6:1}}
+            >
+              {generandoPdf?"Genero…":"🖨 Genera PDF"}
+            </button>
+            {!intervento.inviato_fatturazione && (
+              <button disabled={salvando} onClick={segnaFatturato} style={{...S.btnS,padding:"12px 18px"}}>
+                Segna come inviato per la fatturazione
+              </button>
+            )}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 function Interventi({interventi, setInterventi, attrezzature, sessione, setArea, setInterventoDaCompletare, catalog, ruolo}){
   const accessToken = trovaAccessToken(sessione);
-  const [modificaBloccoId,setModificaBloccoId] = useState(null);
-  const [notaBlocco,setNotaBlocco] = useState("");
   // Preventivi per interventi tecnici (manodopera/ricambi) — vedi
   // FormPreventivoIntervento più sopra, diversi dai preventivi di vendita
   // materiale.
-  const [vista,setVista] = useState("interventi"); // interventi | preventivi-intervento | nuovo-preventivo-intervento
+  const [vista,setVista] = useState("home"); // home | richiesti | da-pianificare | pianificati | planning | conclusi | dettaglio | preventivi-intervento | nuovo-preventivo-intervento
+  const [interventoSel,setInterventoSel] = useState(null);
+  const [ricercaConclusi,setRicercaConclusi] = useState("");
+  const [tecnicoPlanning,setTecnicoPlanning] = useState("");
   const [preventiviIntervento,setPreventiviIntervento] = useState(null);
   const [preventivoInterventoSel,setPreventivoInterventoSel] = useState(null); // per la modifica
   function ricaricaPreventiviIntervento(){
@@ -7079,21 +7476,48 @@ function Interventi({interventi, setInterventi, attrezzature, sessione, setArea,
   }
   useEffect(()=>{ ricaricaPreventiviIntervento(); },[]);
 
-  const pianificati = (interventi||[]).filter(i=>i.stato==="Pianificato")
-    .sort((a,b)=>new Date(a.data_pianificata||"9999-12-31")-new Date(b.data_pianificata||"9999-12-31"));
-  const completati = (interventi||[]).filter(i=>i.stato==="Completato")
-    .sort((a,b)=>new Date(b.completato_il||0)-new Date(a.completato_il||0)).slice(0,15);
-
-  // Segnala/rimuove il flag "manca qualcosa per chiudere" (vedi Promemoria):
-  // scrittura diretta come le altre su interventi, nessuna Edge Function.
-  async function salvaManca(i, mancaInfo, nota){
-    const payload = { manca_info: mancaInfo, nota_manca_info: mancaInfo ? (nota.trim()||null) : null };
-    try{
-      await sbAuth("PATCH","interventi",`id=eq.${i.id}`,payload,accessToken);
-      setInterventi(prev=>prev.map(x=>x.id===i.id?{...x,...payload}:x));
-    }catch{ /* riprova al prossimo tocco, non blocchiamo l'interfaccia per questo */ }
-    setModificaBloccoId(null); setNotaBlocco("");
+  function apriDettaglio(i){ setInterventoSel(i); setVista("dettaglio"); }
+  function tornaAlleListe(){ setInterventoSel(null); setVista("home"); }
+  function onInterventoAggiornato(aggiornato){
+    setInterventi(prev=>prev.map(x=>x.id===aggiornato.id?aggiornato:x));
+    setInterventoSel(aggiornato);
   }
+
+  const richiesti = useMemo(()=>(interventi||[]).filter(i=>i.stato==="Richiesto")
+    .sort((a,b)=>new Date(b.creato_il||0)-new Date(a.creato_il||0)), [interventi]);
+  const daPianificare = useMemo(()=>(interventi||[]).filter(i=>i.stato==="Da pianificare")
+    .sort((a,b)=>new Date(b.creato_il||0)-new Date(a.creato_il||0)), [interventi]);
+  const pianificati = useMemo(()=>(interventi||[]).filter(i=>i.stato==="Pianificato")
+    .sort((a,b)=>new Date(a.data_pianificata||"9999-12-31")-new Date(b.data_pianificata||"9999-12-31")), [interventi]);
+  const conclusi = useMemo(()=>(interventi||[]).filter(i=>i.stato==="Completato")
+    .sort((a,b)=>new Date(b.completato_il||0)-new Date(a.completato_il||0)), [interventi]);
+
+  const tecniciInPlanning = useMemo(()=>{
+    const insieme = new Set(pianificati.map(i=>i.tecnico_assegnato_nome).filter(Boolean));
+    return [...insieme].sort((a,b)=>a.localeCompare(b));
+  },[pianificati]);
+  const pianificatiFiltrati = useMemo(()=>
+    tecnicoPlanning ? pianificati.filter(i=>i.tecnico_assegnato_nome===tecnicoPlanning) : pianificati
+  ,[pianificati, tecnicoPlanning]);
+  const pianificatiPerGiorno = useMemo(()=>{
+    const gruppi = {};
+    pianificatiFiltrati.forEach(i=>{
+      const chiave = i.data_pianificata || "Senza data";
+      (gruppi[chiave] = gruppi[chiave] || []).push(i);
+    });
+    return Object.entries(gruppi).sort(([a],[b])=> a==="Senza data" ? 1 : b==="Senza data" ? -1 : a.localeCompare(b));
+  },[pianificatiFiltrati]);
+
+  const conclusiFiltrati = useMemo(()=>{
+    const q = ricercaConclusi.trim().toLowerCase();
+    if(!q) return conclusi;
+    return conclusi.filter(i =>
+      (i.cliente_nome||"").toLowerCase().includes(q) ||
+      (TIPO_LABELS[i.tipo]||i.tipo||"").toLowerCase().includes(q) ||
+      (i.tecnico_assegnato_nome||"").toLowerCase().includes(q) ||
+      (i.note||"").toLowerCase().includes(q)
+    );
+  },[conclusi, ricercaConclusi]);
 
   // Promemoria scadenze attrezzature (aggiornamenti/verifiche): entro 30
   // giorni o già scadute, visibili qui a responsabili e tecnici.
@@ -7108,50 +7532,37 @@ function Interventi({interventi, setInterventi, attrezzature, sessione, setArea,
     return elenco.sort((x,y)=>x.giorni-y.giorni);
   },[attrezzature]);
 
-  function riga(i){
-    const oggi = new Date(); oggi.setHours(0,0,0,0);
-    const scaduto = i.stato==="Pianificato" && i.data_pianificata && new Date(i.data_pianificata) < oggi;
+  // Card compatta per gli elenchi Richiesti / Da pianificare — le azioni vere
+  // e proprie stanno nel dettaglio (DettaglioIntervento), qui solo il
+  // riepilogo per scegliere su cosa entrare.
+  function cardIntervento(i){
     return (
-      <div key={i.id} style={{...S.card,...(scaduto?{borderColor:C.danger}:i.manca_info?{borderColor:C.warn}:{})}}>
+      <div key={i.id} onClick={()=>apriDettaglio(i)} style={{...S.card,cursor:"pointer"}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:10}}>
           <div style={{minWidth:0}}>
             <div style={{display:"flex",gap:6,marginBottom:5,alignItems:"center",flexWrap:"wrap"}}>
-              <Tag tone="primary">{TIPO_LABELS[i.tipo]||i.tipo}</Tag>
-              {i.data_pianificata && <span className="tnum" style={{fontSize:10.5,color:scaduto?C.danger:"#9AA3AB",fontFamily:F_MONO,fontWeight:scaduto?700:400}}>{new Date(i.data_pianificata).toLocaleDateString("it-IT")}</span>}
-              {i.manca_info && <Tag tone="warn">⚠ manca info</Tag>}
+              <Tag tone="primary">{TIPO_LABELS[i.tipo]||i.tipo||"Intervento"}</Tag>
+              {i.data_pianificata && <span className="tnum" style={{fontSize:10.5,color:"#9AA3AB",fontFamily:F_MONO}}>{new Date(i.data_pianificata).toLocaleDateString("it-IT")}{i.ora_pianificata?` · ${i.ora_pianificata}`:""}</span>}
             </div>
             <div style={{fontWeight:600,fontSize:13.5}}>{i.cliente_nome || "Cliente non specificato"}</div>
             {i.note && <div style={{fontSize:11.5,color:"#8A929A",marginTop:2}}>{i.note}</div>}
-            {i.manca_info && i.nota_manca_info && <div style={{fontSize:11.5,color:"#8a6418",marginTop:4}}>ⓘ {i.nota_manca_info}</div>}
+            {(i.tecnico_assegnato_nome || i.assistenza_id) && <div style={{fontSize:11,color:"#9AA3AB",marginTop:4}}>→ {i.tecnico_assegnato_nome || "assistenza esterna"}</div>}
           </div>
-          <Tag tone={i.stato==="Completato"?"ok":i.priorita==="alta"?"danger":i.priorita==="media"?"warn":"steel"}>{i.stato==="Completato"?"✓ completato":i.priorita}</Tag>
+          <span style={{fontSize:16,color:"#9AA3AB",flexShrink:0}}>›</span>
         </div>
-        {i.stato==="Pianificato" && (<>
-          <div style={{marginTop:10,display:"flex",gap:8,flexWrap:"wrap"}}>
-            <button onClick={()=>{setInterventoDaCompletare(i); setArea("rapporti");}} style={{...S.btnS,padding:"7px 12px",fontSize:12}}>
-              Compila rapporto e completa →
-            </button>
-            {i.manca_info ? (
-              <button onClick={()=>salvaManca(i,false,"")} style={{...S.btnS,padding:"7px 12px",fontSize:12,color:"#8a6418",borderColor:C.warn,background:"rgba(217,164,65,0.08)"}}>
-                ⚠ Rimuovi segnalazione
-              </button>
-            ) : (
-              <button onClick={()=>{setModificaBloccoId(i.id); setNotaBlocco("");}} style={{...S.btnS,padding:"7px 12px",fontSize:12}}>
-                ⚠ Segnala: manca qualcosa
-              </button>
-            )}
-          </div>
-          {modificaBloccoId===i.id && (
-            <div style={{marginTop:10,paddingTop:10,borderTop:`1px solid ${C.paperLine}`}}>
-              <textarea value={notaBlocco} onChange={e=>setNotaBlocco(e.target.value)} placeholder="Cosa manca per chiudere? (opzionale)" rows={2} style={{...S.inp,resize:"vertical",marginBottom:8}}/>
-              <div style={{display:"flex",gap:8}}>
-                <button onClick={()=>salvaManca(i,true,notaBlocco)} style={{...S.btnAccent,padding:"7px 12px",fontSize:12}}>Conferma</button>
-                <button onClick={()=>{setModificaBloccoId(null); setNotaBlocco("");}} style={{...S.btnS,padding:"7px 12px",fontSize:12}}>Annulla</button>
-              </div>
-            </div>
-          )}
-        </>)}
       </div>
+    );
+  }
+
+  if(vista==="dettaglio" && interventoSel){
+    return (
+      <DettaglioIntervento
+        intervento={interventoSel}
+        attrezzature={attrezzature}
+        sessione={sessione}
+        onIndietro={tornaAlleListe}
+        onAggiornato={onInterventoAggiornato}
+      />
     );
   }
 
@@ -7164,7 +7575,7 @@ function Interventi({interventi, setInterventi, attrezzature, sessione, setArea,
         sessione={sessione}
         setInterventi={setInterventi}
         onSalvato={()=>{ setVista("preventivi-intervento"); setPreventivoInterventoSel(null); ricaricaPreventiviIntervento(); }}
-        onAnnulla={()=>{ setVista(preventivoInterventoSel?"preventivi-intervento":"interventi"); setPreventivoInterventoSel(null); }}
+        onAnnulla={()=>{ setVista(preventivoInterventoSel?"preventivi-intervento":"home"); setPreventivoInterventoSel(null); }}
       />
     );
   }
@@ -7172,7 +7583,7 @@ function Interventi({interventi, setInterventi, attrezzature, sessione, setArea,
   if(vista==="preventivi-intervento"){
     return (
       <div>
-        <button onClick={()=>setVista("interventi")} style={{...S.btnS,marginBottom:14}}>← Torna agli interventi</button>
+        <button onClick={()=>setVista("home")} style={{...S.btnS,marginBottom:14}}>← Torna ad Assistenza</button>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
           <div style={S.eyebrow}>Preventivi intervento ({(preventiviIntervento||[]).length})</div>
           <button onClick={()=>{ setPreventivoInterventoSel(null); setVista("nuovo-preventivo-intervento"); }} style={S.btnP}>+ Nuovo</button>
@@ -7197,14 +7608,116 @@ function Interventi({interventi, setInterventi, attrezzature, sessione, setArea,
     );
   }
 
+  if(vista==="richiesti" || vista==="da-pianificare"){
+    const elenco = vista==="richiesti" ? richiesti : daPianificare;
+    const titolo = vista==="richiesti" ? "Interventi richiesti" : "Interventi da pianificare";
+    const vuoto = vista==="richiesti" ? "Nessuna richiesta in attesa." : "Nessun intervento in attesa di conferma data/ora.";
+    return (
+      <div>
+        <button onClick={()=>setVista("home")} style={{...S.btnS,marginBottom:14}}>← Torna ad Assistenza</button>
+        <div style={S.eyebrow}>{titolo} ({elenco.length})</div>
+        {elenco.length===0 && <div style={{fontSize:12.5,color:"#9AA3AB",padding:"8px 0"}}>{vuoto}</div>}
+        {elenco.map(cardIntervento)}
+      </div>
+    );
+  }
+
+  if(vista==="pianificati"){
+    return (
+      <div>
+        <button onClick={()=>setVista("home")} style={{...S.btnS,marginBottom:14}}>← Torna ad Assistenza</button>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16,flexWrap:"wrap",gap:10}}>
+          <div style={S.eyebrow}>Interventi pianificati ({pianificati.length})</div>
+          <button onClick={()=>setVista("planning")} style={S.btnS}>📅 Planning per tecnico</button>
+        </div>
+        {pianificati.length===0 && <div style={{fontSize:12.5,color:"#9AA3AB",padding:"8px 0"}}>Nessun intervento pianificato.</div>}
+        {pianificati.map(cardIntervento)}
+      </div>
+    );
+  }
+
+  if(vista==="planning"){
+    return (
+      <div>
+        <button onClick={()=>setVista("pianificati")} style={{...S.btnS,marginBottom:14}}>← Torna ai pianificati</button>
+        <div style={S.eyebrow}>Planning</div>
+        <select value={tecnicoPlanning} onChange={e=>setTecnicoPlanning(e.target.value)} style={{...S.inp,marginTop:8,marginBottom:16}}>
+          <option value="">Tutti i tecnici</option>
+          {tecniciInPlanning.map(t=>(<option key={t} value={t}>{t}</option>))}
+        </select>
+        {pianificatiPerGiorno.length===0 && <div style={{fontSize:12.5,color:"#9AA3AB"}}>Nessun intervento pianificato.</div>}
+        {pianificatiPerGiorno.map(([giorno, elenco])=>(
+          <div key={giorno} style={{marginBottom:18}}>
+            <div style={{fontSize:12,fontWeight:700,color:C.steel,marginBottom:8,fontFamily:F_MONO}}>
+              {giorno==="Senza data" ? "Senza data" : new Date(giorno).toLocaleDateString("it-IT",{weekday:"long",day:"numeric",month:"long"})}
+            </div>
+            {elenco.map(i=>(
+              <div key={i.id} onClick={()=>apriDettaglio(i)} style={{...S.card,cursor:"pointer",display:"flex",justifyContent:"space-between",alignItems:"center",gap:10,marginBottom:6}}>
+                <div style={{minWidth:0}}>
+                  <div style={{fontWeight:600,fontSize:13}}>{i.cliente_nome}</div>
+                  <div style={{fontSize:11,color:"#9AA3AB",marginTop:2}}>{TIPO_LABELS[i.tipo]||i.tipo} · {i.tecnico_assegnato_nome}</div>
+                </div>
+                {i.ora_pianificata && <span className="tnum" style={{fontSize:12,fontFamily:F_MONO,color:C.ink,flexShrink:0}}>{i.ora_pianificata}</span>}
+              </div>
+            ))}
+          </div>
+        ))}
+      </div>
+    );
+  }
+
+  if(vista==="conclusi"){
+    return (
+      <div>
+        <button onClick={()=>setVista("home")} style={{...S.btnS,marginBottom:14}}>← Torna ad Assistenza</button>
+        <div style={S.eyebrow}>Interventi conclusi ({conclusiFiltrati.length})</div>
+        <input value={ricercaConclusi} onChange={e=>setRicercaConclusi(e.target.value)} placeholder="Cerca per cliente, tipo, tecnico, note…" style={{...S.inp,marginTop:8,marginBottom:16}}/>
+        {conclusiFiltrati.length===0 && <div style={{fontSize:12.5,color:"#9AA3AB"}}>Nessun intervento trovato.</div>}
+        {conclusiFiltrati.map(i=>(
+          <div key={i.id} onClick={()=>apriDettaglio(i)} style={{...S.card,cursor:"pointer",display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:10}}>
+            <div style={{minWidth:0}}>
+              <div style={{display:"flex",gap:6,marginBottom:5,alignItems:"center",flexWrap:"wrap"}}>
+                <Tag tone="primary">{TIPO_LABELS[i.tipo]||i.tipo}</Tag>
+                {i.completato_il && <span className="tnum" style={{fontSize:10.5,color:"#9AA3AB",fontFamily:F_MONO}}>{new Date(i.completato_il).toLocaleDateString("it-IT")}</span>}
+              </div>
+              <div style={{fontWeight:600,fontSize:13.5}}>{i.cliente_nome}</div>
+              <div style={{fontSize:11,color:"#9AA3AB",marginTop:2}}>{i.tecnico_assegnato_nome || "—"}</div>
+            </div>
+            <Tag tone={i.inviato_fatturazione?"ok":"warn"}>{i.inviato_fatturazione?"✓ fatturato":"da fatturare"}</Tag>
+          </div>
+        ))}
+      </div>
+    );
+  }
+
+  // ── Home: landing con i quattro stadi + accessori ──────────────────────
   return (
     <div>
       <div style={{display:"flex",justifyContent:"flex-end",marginBottom:16}}>
-        <button onClick={()=>setVista("preventivi-intervento")} style={S.btnP}>🧾 Preventivi intervento ({(preventiviIntervento||[]).length})</button>
+        <button onClick={()=>{ setPreventivoInterventoSel(null); setVista("nuovo-preventivo-intervento"); }} style={S.btnP}>+ Nuovo preventivo intervento</button>
       </div>
 
+      {[
+        ["richiesti","📥 Interventi richiesti",richiesti.length,"Da ordini o preventivi confermati, in attesa di essere presi in carico"],
+        ["da-pianificare","🗂 Interventi da pianificare",daPianificare.length,"Presi in carico, in attesa di data e ora"],
+        ["pianificati","📅 Interventi pianificati",pianificati.length,"Con data confermata — anche vista planning per tecnico"],
+        ["conclusi","✓ Interventi conclusi",conclusi.length,"Chiusi con conferma cliente, in archivio"],
+      ].map(([id,lbl,n,sub])=>(
+        <div key={id} onClick={()=>setVista(id)} style={{...S.card,cursor:"pointer",display:"flex",justifyContent:"space-between",alignItems:"center",gap:10,marginBottom:8}}>
+          <div>
+            <div style={{fontWeight:600,fontSize:14}}>{lbl}</div>
+            <div style={{fontSize:12,color:C.steel,marginTop:2}}>{sub}</div>
+          </div>
+          <span className="tnum" style={{fontSize:15,fontWeight:700,color:n>0?C.ink:"#9AA3AB",fontFamily:F_MONO,flexShrink:0}}>{n}</span>
+        </div>
+      ))}
+
+      <button onClick={()=>setVista("preventivi-intervento")} style={{...S.btnS,width:"100%",marginTop:8,marginBottom:20}}>
+        🧾 Preventivi intervento ({(preventiviIntervento||[]).length})
+      </button>
+
       {scadenzePromemoria.length>0 && (
-        <div style={{marginBottom:24}}>
+        <div>
           <div style={S.eyebrow}>Scadenze attrezzature ({scadenzePromemoria.length})</div>
           {scadenzePromemoria.map((s,i)=>(
             <div key={i} style={{...S.card,cursor:"default",borderColor:s.scaduta?C.danger:C.warn}}>
@@ -7219,19 +7732,6 @@ function Interventi({interventi, setInterventi, attrezzature, sessione, setArea,
             </div>
           ))}
         </div>
-      )}
-
-      <div style={S.eyebrow}>Pianificati ({pianificati.length})</div>
-      {pianificati.length===0 ? (
-        <div style={{fontSize:12.5,color:"#9AA3AB",padding:"8px 0",marginBottom:18}}>Nessun intervento pianificato — puoi crearne uno dalla scheda di un cliente.</div>
-      ) : pianificati.map(riga)}
-
-
-      {completati.length>0 && (
-        <>
-          <div style={{...S.eyebrow,marginTop:22}}>Completati di recente</div>
-          {completati.map(riga)}
-        </>
       )}
     </div>
   );
