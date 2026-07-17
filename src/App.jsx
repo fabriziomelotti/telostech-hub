@@ -783,8 +783,20 @@ function Home({r,role,setArea,isMobile,preventivi,interventi,promemoria,sessione
   const ora = new Date();
   const saluto = ora.getHours()<12?"Buongiorno":ora.getHours()<18?"Buon pomeriggio":"Buonasera";
   const dataFmt = ora.toLocaleDateString("it-IT",{weekday:"short",day:"numeric",month:"short"}).toUpperCase();
-  const interventiPianificati = (interventi||[]).filter(i=>i.stato==="Pianificato")
-    .sort((a,b)=>new Date(a.data_pianificata||"9999-12-31")-new Date(b.data_pianificata||"9999-12-31"));
+  // Interventi assegnati proprio a questo tecnico (per nome — non abbiamo
+  // l'id utente lato client) — sia "Pianificato" (data/ora già confermata)
+  // sia "Da pianificare" già preso in carico/assegnato: quest'ultimo è il
+  // caso di un intervento creato direttamente in Assistenza con tecnico e
+  // periodo già assegnati, che deve comparire qui anche prima che la
+  // data/ora esatta sia confermata.
+  const interventiPianificati = (interventi||[]).filter(i=>
+    (i.stato==="Pianificato" || i.stato==="Da pianificare") &&
+    (i.tecnico_assegnato_nome===sessione?.nome || (i.tecnici_assegnati||[]).includes(sessione?.nome))
+  ).sort((a,b)=>{
+    const da = a.data_pianificata || a.periodo_richiesto_da || "9999-12-31";
+    const db = b.data_pianificata || b.periodo_richiesto_da || "9999-12-31";
+    return new Date(da)-new Date(db);
+  });
   // Promemoria propri (per nome, come già fatto altrove nell'app — es.
   // mieiSaltati in ListaPreventivi — non abbiamo l'id utente lato client).
   const promemoriaPropri = (promemoria||[]).filter(p=>p.autore_nome===sessione?.nome);
@@ -812,7 +824,11 @@ function Home({r,role,setArea,isMobile,preventivi,interventi,promemoria,sessione
               <div style={{fontWeight:600,fontSize:13.5}}>{TIPO_LABELS[i.tipo]||i.tipo}</div>
               <div style={{fontSize:11.5,color:"#8A929A",marginTop:2}}>{i.cliente_nome || "Cliente non specificato"}</div>
             </div>
-            {i.data_pianificata && <span style={{fontFamily:F_MONO,fontSize:10.5,color:"#8A929A",flexShrink:0}}>{new Date(i.data_pianificata).toLocaleDateString("it-IT")}</span>}
+            {i.data_pianificata ? (
+              <span style={{fontFamily:F_MONO,fontSize:10.5,color:"#8A929A",flexShrink:0}}>{new Date(i.data_pianificata).toLocaleDateString("it-IT")}</span>
+            ) : i.periodo_richiesto_da ? (
+              <span style={{fontFamily:F_MONO,fontSize:10.5,color:"#8A929A",flexShrink:0}}>dal {new Date(i.periodo_richiesto_da).toLocaleDateString("it-IT")}</span>
+            ) : null}
           </div>
         </div>
       )) : (
@@ -7265,6 +7281,178 @@ function FormPreventivoIntervento({ preventivo, catalog, attrezzature, sessione,
 // Il collegamento allo strumento del cliente (attrezzatura) è sempre
 // disponibile e facoltativo, con alternativa in testo libero, modificabile
 // in qualunque stadio.
+// Crea direttamente un intervento nello stadio "Da pianificare" — senza
+// passare da un ordine o da un preventivo intervento confermato. A
+// differenza della presa in carico singola (vedi DettaglioIntervento),
+// qui si può assegnare a più tecnici Telos contemporaneamente, o a
+// un'assistenza esterna, con un periodo indicativo richiesto invece di
+// una data/ora esatta (quella si conferma dopo, nello stadio successivo).
+function FormNuovoInterventoDaPianificare({ attrezzature, sessione, onCreato, onAnnulla }){
+  const accessToken = trovaAccessToken(sessione);
+  const [cliente, setCliente] = useState(null);
+  const [tipo, setTipo] = useState("");
+  const [note, setNote] = useState("");
+  const [priorita, setPriorita] = useState("media");
+  const [modoEsecutore, setModoEsecutore] = useState("interno"); // interno | esterna
+  const [tecniciScelti, setTecniciScelti] = useState([]); // nomi selezionati
+  const [assistenzaScelta, setAssistenzaScelta] = useState("");
+  const [periodoDa, setPeriodoDa] = useState("");
+  const [periodoA, setPeriodoA] = useState("");
+  const [attrezzaturaId, setAttrezzaturaId] = useState("");
+  const [attrezzaturaTesto, setAttrezzaturaTesto] = useState("");
+  const [utentiTelos, setUtentiTelos] = useState(null);
+  const [assistenze, setAssistenze] = useState(null);
+  const [salvando, setSalvando] = useState(false);
+  const [errore, setErrore] = useState("");
+
+  useEffect(()=>{
+    chiamaUtentiInfo(accessToken).then(d=>setUtentiTelos(d?.utenti ?? [])).catch(()=>setUtentiTelos([]));
+    sbGetAuth("assistenze", "select=*&attivo=eq.true&interno=eq.false&order=nome.asc", accessToken)
+      .then(setAssistenze).catch(()=>setAssistenze([]));
+  },[]);
+
+  const attrezzatureCliente = useMemo(()=>
+    (attrezzature||[]).filter(a=>a.cliente_codice===cliente?.codice && a.stato!=="Dismessa")
+  ,[attrezzature, cliente]);
+
+  function toggleTecnico(nome){
+    setTecniciScelti(prev => prev.includes(nome) ? prev.filter(n=>n!==nome) : [...prev, nome]);
+  }
+
+  async function salva(){
+    if(!cliente || !tipo) return;
+    if(modoEsecutore==="interno" && tecniciScelti.length===0) return;
+    if(modoEsecutore==="esterna" && !assistenzaScelta) return;
+    setSalvando(true); setErrore("");
+    const payload = {
+      titolo: `${TIPO_LABELS[tipo]||tipo} — ${cliente.ragione_sociale}`,
+      tipo,
+      cliente_codice: cliente.codice || null,
+      cliente_nome: cliente.ragione_sociale,
+      stato: "Da pianificare",
+      priorita,
+      note: note.trim() || null,
+      tecnici_assegnati: modoEsecutore==="interno" ? tecniciScelti : null,
+      assistenza_id: modoEsecutore==="esterna" ? assistenzaScelta : null,
+      periodo_richiesto_da: periodoDa || null,
+      periodo_richiesto_a: periodoA || null,
+      attrezzatura_id: attrezzaturaId || null,
+      attrezzatura_testo: attrezzaturaId ? null : (attrezzaturaTesto.trim() || null),
+      preso_in_carico_da_nome: sessione?.nome || null,
+      creato_da_nome: sessione?.nome || null,
+    };
+    try{
+      const [salvato] = await sbAuth("POST","interventi","",payload,accessToken);
+      onCreato(salvato);
+    }catch(err){
+      setErrore("Salvataggio non riuscito: "+err.message);
+    }
+    setSalvando(false);
+  }
+
+  const pillStile = on => ({
+    border:`1px solid ${on?C.ink:C.paperLine}`, borderRadius:7, padding:"8px 14px",
+    fontSize:12.5, cursor:"pointer", fontWeight:on?600:400,
+    background:on?C.ink:"#fff", color:on?"#fff":"#5B6770",
+  });
+
+  return (
+    <div>
+      <button onClick={onAnnulla} style={{...S.btnS,marginBottom:14}}>← Indietro</button>
+      <div style={{fontFamily:F_DISPLAY,fontSize:18,fontWeight:600,marginBottom:16}}>NUOVO INTERVENTO DA PIANIFICARE</div>
+
+      <div style={S.eyebrow}>Cliente *</div>
+      <div style={{marginBottom:16}}>
+        <SelezioneCliente sessione={sessione} clienteSelezionato={cliente} onSeleziona={c=>{ setCliente(c); setAttrezzaturaId(""); }}/>
+      </div>
+
+      <div style={S.eyebrow}>Tipo intervento *</div>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:16}}>
+        {Object.keys(TIPO_LABELS).filter(t=>t!=="intervento_tecnico").map(t=>(
+          <button key={t} onClick={()=>setTipo(t)} style={{
+            border:`1px solid ${tipo===t?C.ink:C.paperLine}`,borderRadius:8,padding:"10px 8px",fontSize:12.5,cursor:"pointer",
+            background:tipo===t?C.ink:"#fff",color:tipo===t?"#fff":"#5B6770",fontWeight:tipo===t?600:500
+          }}>{TIPO_LABELS[t]}</button>
+        ))}
+      </div>
+
+      {cliente && attrezzatureCliente.length>0 && (
+        <>
+          <div style={S.eyebrow}>Strumento (facoltativo)</div>
+          <select value={attrezzaturaId} onChange={e=>{ setAttrezzaturaId(e.target.value); setAttrezzaturaTesto(""); }} style={{...S.inp,marginBottom:16}}>
+            <option value="">— Nessuno / non specificato —</option>
+            {attrezzatureCliente.map(a=>(<option key={a.id} value={a.id}>{a.nome_prodotto}{a.numero_serie?` · S/N ${a.numero_serie}`:""}</option>))}
+          </select>
+        </>
+      )}
+      {cliente && attrezzatureCliente.length===0 && (
+        <>
+          <div style={S.eyebrow}>Strumento (facoltativo)</div>
+          <input value={attrezzaturaTesto} onChange={e=>setAttrezzaturaTesto(e.target.value)} placeholder="Descrivilo qui, se non è registrato" style={{...S.inp,marginBottom:16}}/>
+        </>
+      )}
+
+      <div style={S.eyebrow}>Note</div>
+      <textarea value={note} onChange={e=>setNote(e.target.value)} rows={2} placeholder="Facoltative" style={{...S.inp,resize:"vertical",marginBottom:16}}/>
+
+      <div style={S.eyebrow}>Priorità</div>
+      <select value={priorita} onChange={e=>setPriorita(e.target.value)} style={{...S.inp,marginBottom:16}}>
+        <option value="bassa">Bassa</option>
+        <option value="media">Media</option>
+        <option value="alta">Alta</option>
+      </select>
+
+      <div style={S.eyebrow}>Chi esegue *</div>
+      <div style={{display:"flex",gap:6,marginBottom:12}}>
+        <button onClick={()=>setModoEsecutore("interno")} style={pillStile(modoEsecutore==="interno")}>Tecnici Telos</button>
+        <button onClick={()=>setModoEsecutore("esterna")} style={pillStile(modoEsecutore==="esterna")}>Assistenza esterna</button>
+      </div>
+
+      {modoEsecutore==="interno" ? (
+        <div style={{marginBottom:16}}>
+          <div style={{fontSize:11.5,color:"#9AA3AB",marginBottom:8}}>Seleziona uno o più tecnici.</div>
+          {(utentiTelos||[]).map(u=>{
+            const nomeCompleto = `${u.nome} ${u.cognome||""}`.trim();
+            const on = tecniciScelti.includes(nomeCompleto);
+            return (
+              <label key={u.id} style={{display:"flex",alignItems:"center",gap:10,padding:"7px 0",cursor:"pointer"}}>
+                <input type="checkbox" checked={on} onChange={()=>toggleTecnico(nomeCompleto)} style={{width:16,height:16,accentColor:C.ink,flexShrink:0}}/>
+                <span style={{fontSize:13}}>{nomeCompleto} {u.ruolo?`(${u.ruolo})`:""}</span>
+              </label>
+            );
+          })}
+        </div>
+      ) : (
+        <select value={assistenzaScelta} onChange={e=>setAssistenzaScelta(e.target.value)} style={{...S.inp,marginBottom:16}}>
+          <option value="">— scegli un'assistenza —</option>
+          {(assistenze||[]).map(a=>(<option key={a.id} value={a.id}>{a.nome}</option>))}
+        </select>
+      )}
+
+      <div style={S.eyebrow}>Periodo in cui si chiede l'intervento</div>
+      <div style={{display:"flex",gap:10,flexWrap:"wrap",marginBottom:16}}>
+        <div>
+          <div style={{fontSize:11,color:"#9AA3AB",marginBottom:4}}>Dal</div>
+          <input type="date" value={periodoDa} onChange={e=>setPeriodoDa(e.target.value)} style={{...S.inp,width:170}}/>
+        </div>
+        <div>
+          <div style={{fontSize:11,color:"#9AA3AB",marginBottom:4}}>Al</div>
+          <input type="date" value={periodoA} onChange={e=>setPeriodoA(e.target.value)} style={{...S.inp,width:170}}/>
+        </div>
+      </div>
+
+      {errore && <div style={{fontSize:12.5,color:C.danger,marginBottom:12}}>⚠ {errore}</div>}
+      <button
+        disabled={salvando || !cliente || !tipo || (modoEsecutore==="interno"?tecniciScelti.length===0:!assistenzaScelta)}
+        onClick={salva}
+        style={{...S.btnAccent,width:"100%",padding:"13px",fontWeight:700,opacity:salvando?0.6:1}}
+      >
+        {salvando?"Salvo…":"Crea intervento da pianificare"}
+      </button>
+    </div>
+  );
+}
+
 function DettaglioIntervento({ intervento, attrezzature, sessione, onIndietro, onAggiornato }){
   const accessToken = trovaAccessToken(sessione);
   const [assistenze, setAssistenze] = useState(null);
@@ -7451,7 +7639,14 @@ function DettaglioIntervento({ intervento, attrezzature, sessione, onIndietro, o
       {/* ── Stadio: Da pianificare ───────────────────────────────────── */}
       {intervento.stato==="Da pianificare" && (
         <div style={{...S.card,cursor:"default",marginBottom:16}}>
-          <div style={{fontSize:13.5,fontWeight:700,marginBottom:4}}>In carico a {intervento.tecnico_assegnato_nome || assistenzaAssegnata?.nome || "—"}</div>
+          <div style={{fontSize:13.5,fontWeight:700,marginBottom:4}}>
+            In carico a {intervento.tecnico_assegnato_nome || (intervento.tecnici_assegnati||[]).join(", ") || assistenzaAssegnata?.nome || "—"}
+          </div>
+          {intervento.periodo_richiesto_da && (
+            <div style={{fontSize:12,color:C.steel,marginBottom:4}}>
+              Periodo richiesto: {new Date(intervento.periodo_richiesto_da).toLocaleDateString("it-IT")}{intervento.periodo_richiesto_a?` – ${new Date(intervento.periodo_richiesto_a).toLocaleDateString("it-IT")}`:""}
+            </div>
+          )}
           <div style={{fontSize:12,color:"#9AA3AB",marginBottom:12}}>Conferma data e ora per pianificarlo.</div>
           <div style={{display:"flex",gap:10,flexWrap:"wrap",marginBottom:12}}>
             <div>
@@ -7478,7 +7673,7 @@ function DettaglioIntervento({ intervento, attrezzature, sessione, onIndietro, o
             <div style={{fontSize:13.5,fontWeight:700,marginBottom:4}}>
               {intervento.data_pianificata && new Date(intervento.data_pianificata).toLocaleDateString("it-IT")}{intervento.ora_pianificata?` · ${intervento.ora_pianificata}`:""}
             </div>
-            <div style={{fontSize:12,color:"#9AA3AB"}}>Assegnato a {intervento.tecnico_assegnato_nome || assistenzaAssegnata?.nome || "—"}</div>
+            <div style={{fontSize:12,color:"#9AA3AB"}}>Assegnato a {intervento.tecnico_assegnato_nome || (intervento.tecnici_assegnati||[]).join(", ") || assistenzaAssegnata?.nome || "—"}</div>
           </div>
 
           {perTelos && checklist.length>0 && (
@@ -7666,10 +7861,19 @@ function Interventi({interventi, setInterventi, attrezzature, sessione, setArea,
             <div style={{display:"flex",gap:6,marginBottom:5,alignItems:"center",flexWrap:"wrap"}}>
               <Tag tone="primary">{TIPO_LABELS[i.tipo]||i.tipo||"Intervento"}</Tag>
               {i.data_pianificata && <span className="tnum" style={{fontSize:10.5,color:"#9AA3AB",fontFamily:F_MONO}}>{new Date(i.data_pianificata).toLocaleDateString("it-IT")}{i.ora_pianificata?` · ${i.ora_pianificata}`:""}</span>}
+              {!i.data_pianificata && i.periodo_richiesto_da && (
+                <span className="tnum" style={{fontSize:10.5,color:"#9AA3AB",fontFamily:F_MONO}}>
+                  {new Date(i.periodo_richiesto_da).toLocaleDateString("it-IT")}{i.periodo_richiesto_a?` – ${new Date(i.periodo_richiesto_a).toLocaleDateString("it-IT")}`:""}
+                </span>
+              )}
             </div>
             <div style={{fontWeight:600,fontSize:13.5}}>{i.cliente_nome || "Cliente non specificato"}</div>
             {i.note && <div style={{fontSize:11.5,color:"#8A929A",marginTop:2}}>{i.note}</div>}
-            {(i.tecnico_assegnato_nome || i.assistenza_id) && <div style={{fontSize:11,color:"#9AA3AB",marginTop:4}}>→ {i.tecnico_assegnato_nome || "assistenza esterna"}</div>}
+            {(i.tecnico_assegnato_nome || (i.tecnici_assegnati||[]).length>0 || i.assistenza_id) && (
+              <div style={{fontSize:11,color:"#9AA3AB",marginTop:4}}>
+                → {i.tecnico_assegnato_nome || (i.tecnici_assegnati||[]).join(", ") || "assistenza esterna"}
+              </div>
+            )}
           </div>
           <span style={{fontSize:16,color:"#9AA3AB",flexShrink:0}}>›</span>
         </div>
@@ -7731,6 +7935,17 @@ function Interventi({interventi, setInterventi, attrezzature, sessione, setArea,
     );
   }
 
+  if(vista==="nuovo-intervento"){
+    return (
+      <FormNuovoInterventoDaPianificare
+        attrezzature={attrezzature}
+        sessione={sessione}
+        onCreato={(salvato)=>{ setInterventi(prev=>[salvato,...prev]); setVista("da-pianificare"); }}
+        onAnnulla={()=>setVista("da-pianificare")}
+      />
+    );
+  }
+
   if(vista==="richiesti" || vista==="da-pianificare"){
     const elenco = vista==="richiesti" ? richiesti : daPianificare;
     const titolo = vista==="richiesti" ? "Interventi richiesti" : "Interventi da pianificare";
@@ -7738,7 +7953,10 @@ function Interventi({interventi, setInterventi, attrezzature, sessione, setArea,
     return (
       <div>
         <button onClick={()=>setVista("home")} style={{...S.btnS,marginBottom:14}}>← Torna ad Assistenza</button>
-        <div style={S.eyebrow}>{titolo} ({elenco.length})</div>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+          <div style={S.eyebrow}>{titolo} ({elenco.length})</div>
+          {vista==="da-pianificare" && <button onClick={()=>setVista("nuovo-intervento")} style={S.btnP}>+ Nuovo</button>}
+        </div>
         {elenco.length===0 && <div style={{fontSize:12.5,color:"#9AA3AB",padding:"8px 0"}}>{vuoto}</div>}
         {elenco.map(cardIntervento)}
       </div>
