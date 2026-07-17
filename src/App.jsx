@@ -791,7 +791,8 @@ function Home({r,role,setArea,isMobile,preventivi,interventi,promemoria,sessione
   // data/ora esatta sia confermata.
   const interventiPianificati = (interventi||[]).filter(i=>
     (i.stato==="Pianificato" || i.stato==="Da pianificare") &&
-    (i.tecnico_assegnato_nome===sessione?.nome || (i.tecnici_assegnati||[]).includes(sessione?.nome))
+    (i.tecnico_assegnato_id===sessione?.user?.id || (i.tecnici_assegnati_ids||[]).includes(sessione?.user?.id)
+      || i.tecnico_assegnato_nome===sessione?.nome || (i.tecnici_assegnati||[]).includes(sessione?.nome))
   ).sort((a,b)=>{
     const da = a.data_pianificata || a.periodo_richiesto_da || "9999-12-31";
     const db = b.data_pianificata || b.periodo_richiesto_da || "9999-12-31";
@@ -7315,8 +7316,8 @@ function FormNuovoInterventoDaPianificare({ attrezzature, sessione, onCreato, on
     (attrezzature||[]).filter(a=>a.cliente_codice===cliente?.codice && a.stato!=="Dismessa")
   ,[attrezzature, cliente]);
 
-  function toggleTecnico(nome){
-    setTecniciScelti(prev => prev.includes(nome) ? prev.filter(n=>n!==nome) : [...prev, nome]);
+  function toggleTecnico(id){
+    setTecniciScelti(prev => prev.includes(id) ? prev.filter(x=>x!==id) : [...prev, id]);
   }
 
   async function salva(){
@@ -7324,6 +7325,10 @@ function FormNuovoInterventoDaPianificare({ attrezzature, sessione, onCreato, on
     if(modoEsecutore==="interno" && tecniciScelti.length===0) return;
     if(modoEsecutore==="esterna" && !assistenzaScelta) return;
     setSalvando(true); setErrore("");
+    const nomiTecniciScelti = tecniciScelti
+      .map(id => (utentiTelos||[]).find(u=>u.id===id))
+      .filter(Boolean)
+      .map(u => `${u.nome} ${u.cognome||""}`.trim());
     const payload = {
       titolo: `${TIPO_LABELS[tipo]||tipo} — ${cliente.ragione_sociale}`,
       tipo,
@@ -7332,7 +7337,8 @@ function FormNuovoInterventoDaPianificare({ attrezzature, sessione, onCreato, on
       stato: "Da pianificare",
       priorita,
       note: note.trim() || null,
-      tecnici_assegnati: modoEsecutore==="interno" ? tecniciScelti : null,
+      tecnici_assegnati_ids: modoEsecutore==="interno" ? tecniciScelti : null,
+      tecnici_assegnati: modoEsecutore==="interno" ? nomiTecniciScelti : null,
       assistenza_id: modoEsecutore==="esterna" ? assistenzaScelta : null,
       periodo_richiesto_da: periodoDa || null,
       periodo_richiesto_a: periodoA || null,
@@ -7413,10 +7419,10 @@ function FormNuovoInterventoDaPianificare({ attrezzature, sessione, onCreato, on
           <div style={{fontSize:11.5,color:"#9AA3AB",marginBottom:8}}>Seleziona uno o più tecnici.</div>
           {(utentiTelos||[]).map(u=>{
             const nomeCompleto = `${u.nome} ${u.cognome||""}`.trim();
-            const on = tecniciScelti.includes(nomeCompleto);
+            const on = tecniciScelti.includes(u.id);
             return (
               <label key={u.id} style={{display:"flex",alignItems:"center",gap:10,padding:"7px 0",cursor:"pointer"}}>
-                <input type="checkbox" checked={on} onChange={()=>toggleTecnico(nomeCompleto)} style={{width:16,height:16,accentColor:C.ink,flexShrink:0}}/>
+                <input type="checkbox" checked={on} onChange={()=>toggleTecnico(u.id)} style={{width:16,height:16,accentColor:C.ink,flexShrink:0}}/>
                 <span style={{fontSize:13}}>{nomeCompleto} {u.ruolo?`(${u.ruolo})`:""}</span>
               </label>
             );
@@ -7458,7 +7464,7 @@ function DettaglioIntervento({ intervento, attrezzature, sessione, onIndietro, o
   const [assistenze, setAssistenze] = useState(null);
   const [utentiTelos, setUtentiTelos] = useState(null);
   const [modoEsecutore, setModoEsecutore] = useState(intervento.assistenza_id ? "esterna" : "interno");
-  const [tecnicoScelto, setTecnicoScelto] = useState(intervento.tecnico_assegnato_nome || "");
+  const [tecnicoScelto, setTecnicoScelto] = useState(intervento.tecnico_assegnato_id || "");
   const [assistenzaScelta, setAssistenzaScelta] = useState(intervento.assistenza_id || "");
   const [dataPianificata, setDataPianificata] = useState(intervento.data_pianificata || "");
   const [oraPianificata, setOraPianificata] = useState(intervento.ora_pianificata || "");
@@ -7509,9 +7515,11 @@ function DettaglioIntervento({ intervento, attrezzature, sessione, onIndietro, o
   function prendiInCarico(){
     if(modoEsecutore==="interno" && !tecnicoScelto) return;
     if(modoEsecutore==="esterna" && !assistenzaScelta) return;
+    const tecnico = (utentiTelos||[]).find(u=>u.id===tecnicoScelto);
     salvaPatch({
       stato: "Da pianificare",
-      tecnico_assegnato_nome: modoEsecutore==="interno" ? tecnicoScelto : null,
+      tecnico_assegnato_id: modoEsecutore==="interno" ? tecnicoScelto : null,
+      tecnico_assegnato_nome: modoEsecutore==="interno" ? (tecnico?`${tecnico.nome} ${tecnico.cognome||""}`.trim():null) : null,
       assistenza_id: modoEsecutore==="esterna" ? assistenzaScelta : null,
       preso_in_carico_da_nome: sessione?.nome || null,
     });
@@ -7618,7 +7626,7 @@ function DettaglioIntervento({ intervento, attrezzature, sessione, onIndietro, o
           {modoEsecutore==="interno" ? (
             <select value={tecnicoScelto} onChange={e=>setTecnicoScelto(e.target.value)} style={{...S.inp,marginBottom:12}}>
               <option value="">— scegli un tecnico —</option>
-              {(utentiTelos||[]).map(u=>(<option key={u.id} value={`${u.nome} ${u.cognome||""}`.trim()}>{u.nome} {u.cognome} {u.ruolo?`(${u.ruolo})`:""}</option>))}
+              {(utentiTelos||[]).map(u=>(<option key={u.id} value={u.id}>{u.nome} {u.cognome} {u.ruolo?`(${u.ruolo})`:""}</option>))}
             </select>
           ) : (
             <select value={assistenzaScelta} onChange={e=>setAssistenzaScelta(e.target.value)} style={{...S.inp,marginBottom:12}}>
