@@ -2900,6 +2900,7 @@ function ClienteDettaglio({cliente, onIndietro, preventivi, ordini, attrezzature
     setSalvandoIntervento(true); setErroreLocale("");
     try{
       const payload = {
+        titolo: `${TIPO_LABELS[tipoIntervento]||tipoIntervento} — ${cliente.ragione_sociale}`,
         cliente_codice: cliente.codice,
         cliente_nome: cliente.ragione_sociale,
         tipo: tipoIntervento,
@@ -6018,6 +6019,7 @@ function Ordini({ordini,setOrdini,preventivi,setPreventivi,setInterventi,catalog
     if(!selezionato) return;
     setSalvandoGestione(true); setMsgGestione("");
     const payload = {
+      titolo: `Installazione — ${selezionato.cliente}`,
       tipo: "installazione",
       cliente_codice: selezionato.cliente_codice || null,
       cliente_nome: selezionato.cliente,
@@ -6908,6 +6910,7 @@ function FormPreventivoIntervento({ preventivo, catalog, attrezzature, sessione,
     if(!preventivo) return;
     setSalvandoPianificazione(true); setMsgPianificazione("");
     const payload = {
+      titolo: oggetto || `Intervento tecnico — ${cliente?.ragione_sociale || preventivo.cliente}`,
       tipo: "intervento_tecnico",
       cliente_codice: preventivo.cliente_codice || null,
       cliente_nome: cliente?.ragione_sociale || preventivo.cliente,
@@ -7821,6 +7824,7 @@ function RapportoDemo({sessione, interventi, setInterventi, interventoDaCompleta
         // rapporto nuovo, non legato a un intervento pianificato in precedenza
         const payload = {
           ...payloadComune,
+          titolo: `${TIPO_LABELS[tipo]||tipo} — ${clienteSel?.ragione_sociale || "cliente"}`,
           cliente_codice: clienteSel?.codice || null,
           cliente_nome: clienteSel?.ragione_sociale || "",
           priorita: "media",
