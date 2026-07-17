@@ -1,7 +1,7 @@
 import { useState, useMemo, useEffect, useRef } from "react";
 import html2canvas from "html2canvas";
 import jsPDF from "jspdf";
-import { ImportClienti, SelezioneCliente, CreaProdotto, EditaProdotto } from "./ClientiComponenti";
+import { ImportClienti, SelezioneCliente, CreaProdotto, EditaProdotto, normalizzaTesto, tokenRicerca, corrispondeRicerca, filtroServerRicerca } from "./ClientiComponenti";
 import { useAuth, LoginReale } from "./Auth";
 
 // ─── SUPABASE REST (fetch diretto — nessuna libreria esterna) ────────────────
@@ -2209,53 +2209,53 @@ function Clienti({sessione, preventivi, ordini, attrezzature, setAttrezzature, i
   const [risultati,setRisultati] = useState([]);
   const [caricando,setCaricando] = useState(false);
   const [errore,setErrore] = useState("");
+  const [cercato,setCercato] = useState(false);
   const [selezionato,setSelezionato] = useState(null);
   const [tabInizialeCliente,setTabInizialeCliente] = useState("dati");
   const [qAttrezzatura,setQAttrezzatura] = useState("");
+  const [termineAttrezzatura,setTermineAttrezzatura] = useState(""); // valorizzato solo al click su Cerca
   const [attrezzaturaAperta,setAttrezzaturaAperta] = useState(null);
   // Quale ricerca è attiva: null (nessuna scelta ancora), "clienti" o
   // "attrezzatura". Prima i due campi erano sempre visibili insieme (con
   // font diversi tra loro, confuso su mobile) — ora si sceglie con un
   // pulsante grande e compare solo il campo pertinente.
   const [modalita,setModalita] = useState(null);
-  const timer = useRef(null);
 
   function selezionaModalita(m){
     setModalita(prev=>prev===m?null:m);
-    setQ(""); setQAttrezzatura(""); setRisultati([]); setErrore("");
+    setQ(""); setQAttrezzatura(""); setTermineAttrezzatura(""); setRisultati([]); setErrore(""); setCercato(false);
   }
 
-  useEffect(()=>{
-    clearTimeout(timer.current);
-    if(!q.trim()){ setRisultati([]); setErrore(""); return; }
-    timer.current = setTimeout(async ()=>{
-      setCaricando(true); setErrore("");
-      try{
-        const safe = q.trim().replace(/[,()]/g,"");
-        const pattern = "*"+encodeURIComponent(safe)+"*"; // * non va MAI url-encodato
-        const orExpr = CAMPI_RICERCA_CLIENTI.map(c=>`${c}.ilike.${pattern}`).join(",");
-        const params = `select=codice,ragione_sociale,rag_sociale_agg,indirizzo,localita,provincia,cap,partita_iva,codice_fiscale,telefono,mail,filiale,agente&or=(${orExpr})&limit=30`;
-        const dati = await sbGetAuth("clienti", params, accessToken);
-        setRisultati(dati||[]);
-      }catch(err){
-        setErrore(err.message); setRisultati([]);
-      }
-      setCaricando(false);
-    }, 350);
-    return ()=>clearTimeout(timer.current);
-  },[q]);
+  // Ricerca clienti, avviata solo dal pulsante "Cerca" (o invio) — non ad
+  // ogni carattere: una richiesta a Supabase per ogni battuta era la causa
+  // più probabile dei 500 intermittenti visti in produzione. La ricerca è
+  // "intelligente": ignora punteggiatura/accenti e trova il cliente anche
+  // scrivendo insieme ragione sociale e città (vedi filtroServerRicerca).
+  async function eseguiRicercaClienti(){
+    const term = q.trim();
+    if(!term){ return; }
+    setCaricando(true); setErrore(""); setCercato(true);
+    try{
+      const filtro = filtroServerRicerca(term, CAMPI_RICERCA_CLIENTI);
+      const params = `select=codice,ragione_sociale,rag_sociale_agg,indirizzo,localita,provincia,cap,partita_iva,codice_fiscale,telefono,mail,filiale,agente&${filtro}&limit=30`;
+      const dati = await sbGetAuth("clienti", params, accessToken);
+      setRisultati(dati||[]);
+    }catch(err){
+      setErrore("Ricerca non riuscita: "+err.message+" — riprova.");
+      setRisultati([]);
+    }
+    setCaricando(false);
+  }
 
   // Ricerca per attrezzatura: filtro lato client sull'elenco già caricato
-  // (nome prodotto, numero di serie, marca).
+  // (nome prodotto, numero di serie, marca) — anch'essa avviata solo dal
+  // pulsante "Cerca", per coerenza con tutti gli altri campi di ricerca.
   const risultatiAttrezzatura = useMemo(()=>{
-    if(!qAttrezzatura.trim()) return [];
-    const qq = qAttrezzatura.trim().toLowerCase();
+    if(!termineAttrezzatura.trim()) return [];
     return (attrezzature||[]).filter(a=>
-      (a.nome_prodotto||"").toLowerCase().includes(qq) ||
-      (a.numero_serie||"").toLowerCase().includes(qq) ||
-      (a.marchio||"").toLowerCase().includes(qq)
+      corrispondeRicerca(termineAttrezzatura, [a.nome_prodotto, a.numero_serie, a.marchio])
     ).slice(0,30);
-  },[qAttrezzatura,attrezzature]);
+  },[termineAttrezzatura,attrezzature]);
 
   if(attrezzaturaAperta){
     return <ModificaAttrezzatura
@@ -2303,23 +2303,38 @@ function Clienti({sessione, preventivi, ordini, attrezzature, setAttrezzature, i
       </div>
 
       {modalita==="clienti" && (
-        <input
-          value={q} onChange={e=>setQ(e.target.value)}
-          placeholder="Cerca per ragione sociale, città, P.IVA, codice fiscale…"
-          style={{...S.inp,padding:"13px 16px",fontSize:14,marginBottom:14}}
-          autoFocus
-        />
+        <div style={{display:"flex",gap:8,marginBottom:14}}>
+          <input
+            value={q} onChange={e=>setQ(e.target.value)}
+            onKeyDown={e=>{ if(e.key==="Enter"){ e.preventDefault(); eseguiRicercaClienti(); } }}
+            placeholder="Cerca per ragione sociale, città, P.IVA, codice fiscale…"
+            style={{...S.inp,padding:"13px 16px",fontSize:14,flex:1}}
+            autoFocus
+          />
+          <button onClick={eseguiRicercaClienti} disabled={caricando} style={{...S.btnAccent,padding:"0 18px",flexShrink:0,opacity:caricando?0.6:1}}>
+            {caricando?"…":"🔍 Cerca"}
+          </button>
+        </div>
       )}
       {modalita==="attrezzatura" && (
-        <input
-          value={qAttrezzatura} onChange={e=>setQAttrezzatura(e.target.value)}
-          placeholder="Cerca per nome, numero di serie o marca…"
-          style={{...S.inp,padding:"13px 16px",fontSize:14,marginBottom:14}}
-          autoFocus
-        />
+        <div style={{display:"flex",gap:8,marginBottom:14}}>
+          <input
+            value={qAttrezzatura} onChange={e=>setQAttrezzatura(e.target.value)}
+            onKeyDown={e=>{ if(e.key==="Enter"){ e.preventDefault(); setTermineAttrezzatura(qAttrezzatura); } }}
+            placeholder="Cerca per nome, numero di serie o marca…"
+            style={{...S.inp,padding:"13px 16px",fontSize:14,flex:1}}
+            autoFocus
+          />
+          <button onClick={()=>setTermineAttrezzatura(qAttrezzatura)} style={{...S.btnAccent,padding:"0 18px",flexShrink:0}}>🔍 Cerca</button>
+        </div>
       )}
 
-      {errore && <div style={{fontSize:12,color:C.danger,background:"rgba(200,75,58,0.08)",borderRadius:6,padding:"9px 11px",marginBottom:14}}>⚠ {errore}</div>}
+      {errore && (
+        <div style={{fontSize:12,color:C.danger,background:"rgba(200,75,58,0.08)",borderRadius:6,padding:"9px 11px",marginBottom:14,display:"flex",alignItems:"center",gap:10}}>
+          <span>⚠ {errore}</span>
+          <button onClick={eseguiRicercaClienti} style={{...S.btnS,padding:"4px 10px",fontSize:11}}>Riprova</button>
+        </div>
+      )}
 
       {modalita===null && (
         <div style={{textAlign:"center",padding:"2.5rem 1rem",color:"#9AA3AB"}}>
@@ -2329,10 +2344,10 @@ function Clienti({sessione, preventivi, ordini, attrezzature, setAttrezzature, i
       )}
 
       {modalita==="attrezzatura" && (<>
-        {qAttrezzatura.trim() ? (<>
+        {termineAttrezzatura.trim() ? (<>
           <div style={{...S.eyebrow,marginBottom:8}}>Attrezzature ({risultatiAttrezzatura.length})</div>
           {risultatiAttrezzatura.length===0 && (
-            <div style={{textAlign:"center",padding:"1.5rem 1rem",color:"#9AA3AB",fontSize:13,marginBottom:8}}>Nessuna attrezzatura per «{qAttrezzatura}»</div>
+            <div style={{textAlign:"center",padding:"1.5rem 1rem",color:"#9AA3AB",fontSize:13,marginBottom:8}}>Nessuna attrezzatura per «{termineAttrezzatura}»</div>
           )}
           {risultatiAttrezzatura.map(a=>(
             <div key={a.id} onClick={()=>setAttrezzaturaAperta(a)} style={S.card}>
@@ -2347,17 +2362,17 @@ function Clienti({sessione, preventivi, ordini, attrezzature, setAttrezzature, i
             </div>
           ))}
         </>) : (
-          <div style={{textAlign:"center",padding:"2rem 1rem",color:"#9AA3AB",fontSize:13}}>Digita per cercare un'attrezzatura</div>
+          <div style={{textAlign:"center",padding:"2rem 1rem",color:"#9AA3AB",fontSize:13}}>Scrivi e premi "Cerca" per trovare un'attrezzatura</div>
         )}
       </>)}
 
       {modalita==="clienti" && (<>
         {caricando && <div style={{fontSize:12.5,color:"#8A929A",padding:"8px 0"}}>Ricerca in corso…</div>}
-        {!caricando && q.trim() && !errore && risultati.length===0 && (
+        {!caricando && cercato && !errore && risultati.length===0 && (
           <div style={{textAlign:"center",padding:"2rem 1rem",color:"#9AA3AB",fontSize:13}}>Nessun cliente trovato per «{q}»</div>
         )}
-        {!caricando && !q.trim() && (
-          <div style={{textAlign:"center",padding:"2rem 1rem",color:"#9AA3AB",fontSize:13}}>Digita per cercare un cliente</div>
+        {!caricando && !cercato && (
+          <div style={{textAlign:"center",padding:"2rem 1rem",color:"#9AA3AB",fontSize:13}}>Scrivi e premi "Cerca" per trovare un cliente</div>
         )}
         {risultati.length>0 && (
           <div style={{...S.eyebrow,marginBottom:8}}>Clienti ({risultati.length})</div>
@@ -5706,8 +5721,8 @@ function FirmaPad({ onSalva, onAnnulla }){
 
 function ListaPreventivi({preventivi,onApri,sessione}){
   const [filtro,setFiltro]=useState("");
-  const q=filtro.trim().toLowerCase();
-  const filtra = arr => q ? arr.filter(p=>(p.cliente||"").toLowerCase().includes(q)) : arr;
+  const [termineCercato,setTermineCercato]=useState(""); // valorizzato solo al click su Cerca/invio
+  const filtra = arr => termineCercato ? arr.filter(p=>corrispondeRicerca(termineCercato, [p.cliente])) : arr;
 
   const daCompletare = filtra(preventivi.filter(p=>p.stato==="Bozza"));
   const daGestire = filtra(preventivi.filter(p=>p.stato==="Inviato"));
@@ -5770,19 +5785,17 @@ function ListaPreventivi({preventivi,onApri,sessione}){
 
   return (
     <div>
-      <div style={{position:"relative",marginBottom:22}}>
+      <div style={{display:"flex",gap:8,marginBottom:22}}>
         <input
           value={filtro}
           onChange={e=>setFiltro(e.target.value)}
+          onKeyDown={e=>{ if(e.key==="Enter"){ e.preventDefault(); setTermineCercato(filtro); } }}
           placeholder="🔍 Cerca preventivo per cliente…"
-          style={{...S.inp,padding:"13px 16px",fontSize:14,paddingRight:filtro?38:16}}
+          style={{...S.inp,padding:"13px 16px",fontSize:14,flex:1}}
         />
-        {filtro && (
-          <button
-            onClick={()=>setFiltro("")}
-            style={{position:"absolute",right:10,top:"50%",transform:"translateY(-50%)",border:"none",background:"none",cursor:"pointer",color:"#9AA3AB",fontSize:18,lineHeight:1}}
-            title="Pulisci filtro"
-          >×</button>
+        <button onClick={()=>setTermineCercato(filtro)} style={{...S.btnAccent,padding:"0 18px",flexShrink:0}}>Cerca</button>
+        {termineCercato && (
+          <button onClick={()=>{ setFiltro(""); setTermineCercato(""); }} style={{...S.btnS,flexShrink:0}}>✕</button>
         )}
       </div>
 
@@ -5794,7 +5807,7 @@ function ListaPreventivi({preventivi,onApri,sessione}){
       )}
       {preventivi.length>0 && totaleVisibile===0 && (
         <div style={{textAlign:"center",padding:"2rem 1rem",color:"#9AA3AB",fontSize:13}}>
-          {q ? `Nessun preventivo per «${filtro}»` : "Nessun preventivo in queste categorie."}
+          {termineCercato ? `Nessun preventivo per «${termineCercato}»` : "Nessun preventivo in queste categorie."}
         </div>
       )}
 
@@ -7792,6 +7805,7 @@ function Interventi({interventi, setInterventi, attrezzature, sessione, setArea,
   const [vista,setVista] = useState("home"); // home | richiesti | da-pianificare | pianificati | planning | conclusi | dettaglio | preventivi-intervento | nuovo-preventivo-intervento
   const [interventoSel,setInterventoSel] = useState(null);
   const [ricercaConclusi,setRicercaConclusi] = useState("");
+  const [termineCercatoConclusi,setTermineCercatoConclusi] = useState("");
   const [tecnicoPlanning,setTecnicoPlanning] = useState("");
   const [preventiviIntervento,setPreventiviIntervento] = useState(null);
   const [preventivoInterventoSel,setPreventivoInterventoSel] = useState(null); // per la modifica
@@ -7835,15 +7849,11 @@ function Interventi({interventi, setInterventi, attrezzature, sessione, setArea,
   },[pianificatiFiltrati]);
 
   const conclusiFiltrati = useMemo(()=>{
-    const q = ricercaConclusi.trim().toLowerCase();
-    if(!q) return conclusi;
-    return conclusi.filter(i =>
-      (i.cliente_nome||"").toLowerCase().includes(q) ||
-      (TIPO_LABELS[i.tipo]||i.tipo||"").toLowerCase().includes(q) ||
-      (i.tecnico_assegnato_nome||"").toLowerCase().includes(q) ||
-      (i.note||"").toLowerCase().includes(q)
-    );
-  },[conclusi, ricercaConclusi]);
+    if(!termineCercatoConclusi) return conclusi;
+    return conclusi.filter(i => corrispondeRicerca(termineCercatoConclusi, [
+      i.cliente_nome, TIPO_LABELS[i.tipo]||i.tipo, i.tecnico_assegnato_nome, i.note,
+    ]));
+  },[conclusi, termineCercatoConclusi]);
 
   // Promemoria scadenze attrezzature (aggiornamenti/verifiche): entro 30
   // giorni o già scadute, visibili qui a responsabili e tecnici.
@@ -8020,7 +8030,16 @@ function Interventi({interventi, setInterventi, attrezzature, sessione, setArea,
       <div>
         <button onClick={()=>setVista("home")} style={{...S.btnS,marginBottom:14}}>← Torna ad Assistenza</button>
         <div style={S.eyebrow}>Interventi conclusi ({conclusiFiltrati.length})</div>
-        <input value={ricercaConclusi} onChange={e=>setRicercaConclusi(e.target.value)} placeholder="Cerca per cliente, tipo, tecnico, note…" style={{...S.inp,marginTop:8,marginBottom:16}}/>
+        <div style={{display:"flex",gap:8,marginTop:8,marginBottom:16}}>
+          <input
+            value={ricercaConclusi}
+            onChange={e=>setRicercaConclusi(e.target.value)}
+            onKeyDown={e=>{ if(e.key==="Enter"){ e.preventDefault(); setTermineCercatoConclusi(ricercaConclusi); } }}
+            placeholder="Cerca per cliente, tipo, tecnico, note…"
+            style={{...S.inp,flex:1}}
+          />
+          <button onClick={()=>setTermineCercatoConclusi(ricercaConclusi)} style={{...S.btnAccent,padding:"0 18px",flexShrink:0}}>Cerca</button>
+        </div>
         {conclusiFiltrati.length===0 && <div style={{fontSize:12.5,color:"#9AA3AB"}}>Nessun intervento trovato.</div>}
         {conclusiFiltrati.map(i=>(
           <div key={i.id} onClick={()=>apriDettaglio(i)} style={{...S.card,cursor:"pointer",display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:10}}>
