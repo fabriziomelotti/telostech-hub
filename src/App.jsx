@@ -4291,7 +4291,7 @@ function Preventivi({cart,setCart,preventivi,setPreventivi,setOrdini,setArea,ruo
   const [bozzaSalvata,setBozzaSalvata]=useState(false); // conferma temporanea dopo il salvataggio
   const [clienteLibero,setClienteLibero]=useState(false); // true = form nome libero al posto della ricerca in anagrafica
   const [nomeClienteLibero,setNomeClienteLibero]=useState("");
-  useEffect(()=>{ setConfermaEliminazione(false); setConfermaSalto(false); setTipoMotivoSalto(""); setDettaglioMotivoSalto(""); setPromemoriaRecupero(""); setBozzaSalvata(false); setMostraFirma(false); setNomeFirmatario(""); setClienteLibero(false); setNomeClienteLibero(""); },[selId]);
+  useEffect(()=>{ setConfermaEliminazione(false); setConfermaSalto(false); setTipoMotivoSalto(""); setDettaglioMotivoSalto(""); setPromemoriaRecupero(""); setBozzaSalvata(false); setClienteLibero(false); setNomeClienteLibero(""); },[selId]);
   const [erroreSync,setErroreSync]=useState("");
   const [utentiTelos,setUtentiTelos]=useState(null); // null=non caricato, [] o [...]
   const [erroreUtentiTelos,setErroreUtentiTelos]=useState("");
