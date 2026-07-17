@@ -335,7 +335,7 @@ const CHECKLIST_TEMPLATES = {
   garanzia:["Verifica condizioni di garanzia","Diagnosi del difetto","Sostituzione in garanzia","Test funzionale"],
   sopralluogo:["Rilievo misure e spazi","Verifica predisposizioni","Foto ambiente di lavoro"],
 };
-const TIPO_LABELS = {installazione:"Installazione",riparazione:"Riparazione",garanzia:"Garanzia",sopralluogo:"Sopralluogo"};
+const TIPO_LABELS = {installazione:"Installazione",riparazione:"Riparazione",garanzia:"Garanzia",sopralluogo:"Sopralluogo",intervento_tecnico:"Intervento tecnico"};
 
 // ─── DESIGN TOKENS — palette derivata dal logo Telos ─────────────────────────
 const C = {
@@ -6720,7 +6720,7 @@ ${o.firma_cliente ? `
 // mano) e manodopera/trasferta (dal listino di Telos interno, di
 // un'assistenza esterna, o inserita a mano) — vedi tabella
 // "preventivi_intervento" e "assistenze".
-function FormPreventivoIntervento({ preventivo, catalog, attrezzature, sessione, onSalvato, onAnnulla }){
+function FormPreventivoIntervento({ preventivo, catalog, attrezzature, sessione, setInterventi, onSalvato, onAnnulla }){
   const accessToken = trovaAccessToken(sessione);
   const [cliente, setCliente] = useState(preventivo ? { codice: preventivo.cliente_codice, ragione_sociale: preventivo.cliente } : null);
   const [attrezzaturaId, setAttrezzaturaId] = useState(preventivo?.attrezzatura_id || "");
@@ -6750,6 +6750,53 @@ function FormPreventivoIntervento({ preventivo, catalog, attrezzature, sessione,
       try{ await sbAuth("PATCH","preventivi_intervento",`id=eq.${preventivo.id}`,patch,accessToken); }
       catch(err){ setErrore("Conferma non salvata: "+err.message); }
     }
+  }
+
+  // Una volta confermato dal cliente (firma o conferma alternativa), si può
+  // pianificare l'intervento vero e proprio — crea una voce in Interventi →
+  // Pianificati, sullo stesso schema già usato per l'installazione da un
+  // ordine commerciale (vedi creaInterventoInstallazione in Ordini): data +
+  // tecnico Telos se l'assistenza è interna, altrimenti va comunque
+  // pianificato ma il "tecnico" è il nome del partner esterno.
+  const [dataPianificata, setDataPianificata] = useState("");
+  const [tecnicoScelto, setTecnicoScelto] = useState("");
+  const [utentiTelos, setUtentiTelos] = useState(null);
+  const [interventoCreato, setInterventoCreato] = useState(!!preventivo?.stato && preventivo.stato==="Confermato");
+  const [salvandoPianificazione, setSalvandoPianificazione] = useState(false);
+  const [msgPianificazione, setMsgPianificazione] = useState("");
+
+  useEffect(()=>{
+    if(utentiTelos!==null) return;
+    chiamaUtentiInfo(accessToken).then(d=>setUtentiTelos(d?.utenti ?? [])).catch(()=>setUtentiTelos([]));
+  },[]);
+
+  async function creaInterventoPianificato(){
+    if(!preventivo || !dataPianificata) return;
+    const perTelos = assistenzaSelezionata?.interno;
+    if(perTelos && !tecnicoScelto) return;
+    setSalvandoPianificazione(true); setMsgPianificazione("");
+    const payload = {
+      tipo: "intervento_tecnico",
+      cliente_codice: preventivo.cliente_codice || null,
+      cliente_nome: cliente?.ragione_sociale || preventivo.cliente,
+      stato: "Pianificato",
+      priorita: "media",
+      data_pianificata: dataPianificata,
+      note: `${oggetto}${descrizioneAttivita?`\n\n${descrizioneAttivita}`:""}`,
+      tecnico_assegnato_nome: perTelos ? tecnicoScelto : (assistenzaSelezionata?.nome || "Assistenza esterna"),
+      preventivo_intervento_id: preventivo.id,
+      creato_da_nome: sessione?.nome || null,
+    };
+    try{
+      const [salvato] = await sbAuth("POST","interventi","",payload,accessToken);
+      if(setInterventi) setInterventi(prev=>[salvato,...prev]);
+      await sbAuth("PATCH","preventivi_intervento",`id=eq.${preventivo.id}`,{stato:"Confermato"},accessToken);
+      setInterventoCreato(true);
+      setMsgPianificazione("Intervento pianificato — visibile nel menu Interventi.");
+    }catch(err){
+      setMsgPianificazione("Errore: "+err.message);
+    }
+    setSalvandoPianificazione(false);
   }
 
   const [ricercaRicambio, setRicercaRicambio] = useState("");
@@ -6955,6 +7002,41 @@ function FormPreventivoIntervento({ preventivo, catalog, attrezzature, sessione,
         <SezioneConferma record={confermaLocale} editable={true} onAggiorna={aggiornaConfermaIntervento}/>
       )}
 
+      {preventivo && (confermaLocale.firma_cliente || confermaLocale.conferma_alt_nome) && (
+        <div style={{...S.card,cursor:"default",marginBottom:16}}>
+          <div style={{fontSize:13.5,fontWeight:700,marginBottom:8}}>Pianifica l'intervento</div>
+          {interventoCreato ? (
+            <div style={{fontSize:12.5,color:C.ok}}>✓ Pianificato — visibile nel menu Interventi.</div>
+          ) : (
+            <>
+              <div style={S.eyebrow}>Data prevista</div>
+              <input type="date" value={dataPianificata} onChange={e=>setDataPianificata(e.target.value)} style={{...S.inp,marginBottom:10,width:180}}/>
+              {assistenzaSelezionata?.interno ? (
+                <>
+                  <div style={S.eyebrow}>Assegna a un tecnico</div>
+                  <select value={tecnicoScelto} onChange={e=>setTecnicoScelto(e.target.value)} style={{...S.inp,marginBottom:10}}>
+                    <option value="">— scegli un tecnico —</option>
+                    {(utentiTelos||[]).map(u=>(<option key={u.id} value={`${u.nome} ${u.cognome||""}`.trim()}>{u.nome} {u.cognome} {u.ruolo?`(${u.ruolo})`:""}</option>))}
+                  </select>
+                </>
+              ) : assistenzaSelezionata ? (
+                <div style={{fontSize:12,color:C.steel,marginBottom:10}}>Eseguito da {assistenzaSelezionata.nome} (assistenza esterna).</div>
+              ) : (
+                <div style={{fontSize:12,color:"#9AA3AB",marginBottom:10}}>Scegli sopra "Chi esegue l'intervento" prima di pianificare.</div>
+              )}
+              <button
+                disabled={!dataPianificata || (assistenzaSelezionata?.interno && !tecnicoScelto) || !assistenzaSelezionata || salvandoPianificazione}
+                onClick={creaInterventoPianificato}
+                style={{...S.btnAccent,padding:"9px 15px",fontSize:12.5,opacity:(!dataPianificata||!assistenzaSelezionata||(assistenzaSelezionata?.interno&&!tecnicoScelto))?0.5:1}}
+              >
+                {salvandoPianificazione?"Creo…":"Crea intervento pianificato"}
+              </button>
+              {msgPianificazione && <div style={{fontSize:12,color:msgPianificazione.startsWith("Errore")?C.danger:C.ok,marginTop:8}}>{msgPianificazione}</div>}
+            </>
+          )}
+        </div>
+      )}
+
       {errore && <div style={{fontSize:12.5,color:C.danger,marginBottom:12}}>⚠ {errore}</div>}
       <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
         <button disabled={salvando} onClick={salva} style={{...S.btnP,padding:"12px 20px",fontSize:14,opacity:salvando?0.6:1}}>{salvando?"Salvo…":"Salva preventivo intervento"}</button>
@@ -7080,6 +7162,7 @@ function Interventi({interventi, setInterventi, attrezzature, sessione, setArea,
         catalog={catalog}
         attrezzature={attrezzature}
         sessione={sessione}
+        setInterventi={setInterventi}
         onSalvato={()=>{ setVista("preventivi-intervento"); setPreventivoInterventoSel(null); ricaricaPreventiviIntervento(); }}
         onAnnulla={()=>{ setVista(preventivoInterventoSel?"preventivi-intervento":"interventi"); setPreventivoInterventoSel(null); }}
       />
