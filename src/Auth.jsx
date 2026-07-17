@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 
 // ═══════════════════════════════════════════════════════════════════════════
 // AUTENTICAZIONE — Supabase Auth via REST (nessuna libreria esterna)
@@ -79,6 +79,18 @@ export function useAuth(){
   const [sessione, setSessione] = useState(null);
   const [caricando, setCaricando] = useState(true);
   const [errore, setErrore] = useState("");
+  // Rinnovo automatico del token: Supabase emette access_token validi circa
+  // un'ora (expires_in, in secondi, nella risposta di login/refresh). Prima
+  // non c'era alcun rinnovo dopo il caricamento iniziale della pagina: una
+  // volta scaduto il token, ogni chiamata falliva con 401 finché non si
+  // ricaricava la pagina (che forza un nuovo refresh all'avvio). Questi tre
+  // riferimenti tengono traccia del timer pianificato, di QUANDO scade il
+  // token corrente e dell'ultima sessione nota (per poterla leggere dagli
+  // event listener sotto, che restano montati una volta sola).
+  const timerRef = useRef(null);
+  const scadenzaRef = useRef(0); // Date.now() + ms alla prossima scadenza
+  const sessioneRef = useRef(null);
+  useEffect(()=>{ sessioneRef.current = sessione; },[sessione]);
 
   // costruisce l'oggetto sessione a partire dai dati Auth + profilo
   async function componiSessione(auth){
@@ -92,12 +104,68 @@ export function useAuth(){
     return {
       token: auth.access_token,
       refresh: auth.refresh_token,
+      expiresIn: auth.expires_in || 3600,
       user: auth.user,
       ruolo: profilo.ruolo,
       nome: profilo.nome || profilo.email,
       email: profilo.email,
     };
   }
+
+  // Rinnova subito il token con il refresh_token dato, aggiorna la sessione
+  // e pianifica il prossimo rinnovo automatico 5 minuti prima della
+  // scadenza reale. Lancia se il refresh_token non è più valido (scaduto o
+  // revocato) — i chiamanti decidono cosa fare in quel caso.
+  async function rinnovaESchedula(refreshToken){
+    const auth = await authRefresh(refreshToken);
+    const nuova = await componiSessione(auth);
+    setSessione(nuova);
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ refresh: nuova.refresh }));
+    pianificaProssimoRefresh(nuova.refresh, nuova.expiresIn);
+    return nuova;
+  }
+
+  function pianificaProssimoRefresh(refreshToken, expiresIn){
+    if(timerRef.current) clearTimeout(timerRef.current);
+    const margineSec = 300; // rinnova 5 minuti prima della scadenza reale
+    const attesaSec = Math.max((expiresIn||3600) - margineSec, 30);
+    scadenzaRef.current = Date.now() + attesaSec*1000;
+    timerRef.current = setTimeout(()=>{ eseguiRefreshConRetry(refreshToken); }, attesaSec*1000);
+  }
+
+  // Se il rinnovo pianificato fallisce (es. un blip di rete), riprova ogni
+  // minuto fino a 3 volte invece di lasciar scadere la sessione in
+  // silenzio — dopo, l'utente lo scoprirà al prossimo 401 e potrà rifare
+  // login quando preferisce, senza essere interrotto a forza.
+  async function eseguiRefreshConRetry(refreshToken, tentativi=0){
+    try{
+      await rinnovaESchedula(refreshToken);
+    }catch{
+      if(tentativi < 3){
+        timerRef.current = setTimeout(()=>{ eseguiRefreshConRetry(refreshToken, tentativi+1); }, 60000);
+      }
+    }
+  }
+
+  // Se la scheda era in background o il dispositivo in sospensione, i timer
+  // del browser possono non scattare puntuali (spesso vengono sospesi): al
+  // ritorno in primo piano controlliamo se il token risulta già scaduto e,
+  // in tal caso, lo rinnoviamo subito invece di aspettare la prossima
+  // chiamata (che altrimenti fallirebbe con 401).
+  useEffect(()=>{
+    function alRitorno(){
+      if(document.visibilityState!=="visible") return;
+      const s = sessioneRef.current;
+      if(!s) return;
+      if(Date.now() >= scadenzaRef.current) rinnovaESchedula(s.refresh).catch(()=>{});
+    }
+    document.addEventListener("visibilitychange", alRitorno);
+    window.addEventListener("focus", alRitorno);
+    return ()=>{
+      document.removeEventListener("visibilitychange", alRitorno);
+      window.removeEventListener("focus", alRitorno);
+    };
+  }, []);
 
   // al primo mount: prova a ripristinare la sessione salvata
   useEffect(()=>{
@@ -107,20 +175,15 @@ export function useAuth(){
         const raw = localStorage.getItem(STORAGE_KEY);
         if(!raw){ if(vivo) setCaricando(false); return; }
         const salvata = JSON.parse(raw);
-        // rinnova il token col refresh_token salvato
-        const auth = await authRefresh(salvata.refresh);
-        const nuova = await componiSessione(auth);
-        if(vivo){
-          setSessione(nuova);
-          localStorage.setItem(STORAGE_KEY, JSON.stringify({ refresh: nuova.refresh }));
-        }
+        // rinnova il token col refresh_token salvato e pianifica i rinnovi successivi
+        await rinnovaESchedula(salvata.refresh);
       }catch{
         localStorage.removeItem(STORAGE_KEY);
       }finally{
         if(vivo) setCaricando(false);
       }
     })();
-    return ()=>{ vivo = false; };
+    return ()=>{ vivo = false; if(timerRef.current) clearTimeout(timerRef.current); };
   }, []);
 
   async function login(email, password){
@@ -130,6 +193,7 @@ export function useAuth(){
       const nuova = await componiSessione(auth);
       setSessione(nuova);
       localStorage.setItem(STORAGE_KEY, JSON.stringify({ refresh: nuova.refresh }));
+      pianificaProssimoRefresh(nuova.refresh, nuova.expiresIn);
       return true;
     }catch(err){
       setErrore(err.message);
@@ -138,6 +202,7 @@ export function useAuth(){
   }
 
   async function logout(){
+    if(timerRef.current) clearTimeout(timerRef.current);
     if(sessione?.token) await authLogout(sessione.token);
     localStorage.removeItem(STORAGE_KEY);
     setSessione(null);
