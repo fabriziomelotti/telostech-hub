@@ -134,15 +134,15 @@ const RUOLI = {
   tecnico: {label:"Tecnico", initials:"LR", nome:"Luca Rossi",
     nav:["home","ai","interventi","rapporti","clienti","promemoria","prodotti"]},
   responsabile: {label:"Responsabile", initials:"GF", nome:"Giovanni Ferri",
-    nav:["home","ai","prodotti","clienti","promemoria","preventivi","ordini","saltati","interventi","rapporti","analytics","gestione"]},
+    nav:["home","ai","prodotti","clienti","promemoria","preventivi","ordini","interventi","rapporti","analytics","gestione"]},
   admin: {label:"Admin", initials:"AM", nome:"Amministratore",
-    nav:["home","ai","prodotti","clienti","promemoria","preventivi","ordini","saltati","interventi","rapporti","analytics","gestione","admin"]},
+    nav:["home","ai","prodotti","clienti","promemoria","preventivi","ordini","interventi","rapporti","analytics","gestione","admin"]},
 };
 const NAV_META = {
   home:{icon:"⌂",label:"Dashboard"}, ai:{icon:"✦",label:"Assistente"}, prodotti:{icon:"▣",label:"Catalogo"},
   clienti:{icon:"◉",label:"Clienti"}, promemoria:{icon:"⚑",label:"Promemoria"}, preventivi:{icon:"▤",label:"Preventivi"}, ordini:{icon:"⬡",label:"Ordini"},
   interventi:{icon:"⚒",label:"Assistenza"}, rapporti:{icon:"☑",label:"Rapporto"}, analytics:{icon:"◈",label:"Condizioni"},
-  saltati:{icon:"⊘",label:"Trattative bloccate"}, admin:{icon:"⚙",label:"Admin"}, gestione:{icon:"🛠",label:"Gestione"},
+  admin:{icon:"⚙",label:"Admin"}, gestione:{icon:"🛠",label:"Gestione"},
 };
 function navMobile(nav){ return nav.slice(0,4).concat(nav.length>4?["more"]:[]); }
 
@@ -668,8 +668,6 @@ export default function App(){
           {area==="rapporti" && <RapportoDemo sessione={sessione} interventi={interventi} setInterventi={setInterventi} interventoDaCompletare={interventoDaCompletare} setInterventoDaCompletare={setInterventoDaCompletare}/>}
           {area==="analytics" && RUOLI_APPROVATORI.includes(role) && <CondizioniAcquisto/>}
           {area==="analytics" && !RUOLI_APPROVATORI.includes(role) && <Placeholder area={area} setArea={setArea}/>}
-          {area==="saltati" && RUOLI_APPROVATORI.includes(role) && <PreventiviSaltati preventivi={preventivi}/>}
-          {area==="saltati" && !RUOLI_APPROVATORI.includes(role) && <Placeholder area={area} setArea={setArea}/>}
           {area==="admin" && <PannelloAdmin ruolo={role} sessione={sessione}/>}
           {area==="gestione" && <PannelloGestione setCatalog={setCatalog} ruolo={role} sessione={sessione} catalog={catalog}/>}
         </div>
@@ -4412,7 +4410,7 @@ function SchedaProdottoSelezione({p, ruolo, giaPresente, onConferma, onClose}){
 }
 
 function Preventivi({cart,setCart,preventivi,setPreventivi,setOrdini,setArea,ruolo,catalog,sessione}){
-  const [view,setView]=useState("lista"); // lista | nuovo | dettaglio
+  const [view,setView]=useState("home"); // home | cerca | da-gestire | in-ordine | bloccate | nuovo | dettaglio
   const [generandoPdf,setGenerandoPdf]=useState(false);
   const [mostraSelezionePacchetto,setMostraSelezionePacchetto]=useState(false);
   const [selId,setSelId]=useState(null);
@@ -4765,7 +4763,7 @@ function Preventivi({cart,setCart,preventivi,setPreventivi,setOrdini,setArea,ruo
       // mai salvata su Supabase: basta scartare la bozza locale, chiunque può farlo
       setBozzaNonSalvata(null);
       setSelId(null);
-      setView("lista");
+      setView("home");
       return;
     }
     const p = preventivi.find(x=>x.id===id);
@@ -4774,7 +4772,7 @@ function Preventivi({cart,setCart,preventivi,setPreventivi,setOrdini,setArea,ruo
     setErroreSync("");
     setPreventivi(prev=>prev.filter(x=>x.id!==id));
     setSelId(null);
-    setView("lista");
+    setView("home");
     try{
       await sbAuth("DELETE","preventivi",`id=eq.${id}`,null,accessToken);
     }catch(err){
@@ -4784,7 +4782,7 @@ function Preventivi({cart,setCart,preventivi,setPreventivi,setOrdini,setArea,ruo
   }
 
   // ── VISTA: NUOVO PREVENTIVO DA CART (riepilogo prima di salvare) ──
-  if(view==="lista" && cart.length>0){
+  if(view==="home" && cart.length>0){
     return (
       <div>
         {erroreSync && <div style={{fontSize:12,color:C.danger,background:"rgba(200,75,58,0.08)",borderRadius:6,padding:"9px 11px",marginBottom:14}}>⚠ {erroreSync}</div>}
@@ -4805,17 +4803,104 @@ function Preventivi({cart,setCart,preventivi,setPreventivi,setOrdini,setArea,ruo
             <button onClick={()=>setCart([])} style={S.btnS}>Svuota</button>
           </div>
         </div>
-        <ListaPreventivi preventivi={preventivi} onApri={(id)=>{setSelId(id);setView("dettaglio");}} onNuovo={creaVuoto} sessione={sessione}/>
+        <ListaPreventivi preventivi={preventivi} onApri={(id)=>{setSelId(id);setView("dettaglio");}} sessione={sessione}/>
       </div>
     );
   }
 
-  // ── VISTA: LISTA ──
-  if(view==="lista"){
-    return (<>
-      {erroreSync && <div style={{fontSize:12,color:C.danger,background:"rgba(200,75,58,0.08)",borderRadius:6,padding:"9px 11px",marginBottom:14}}>⚠ {erroreSync}</div>}
-      <ListaPreventivi preventivi={preventivi} onApri={(id)=>{setSelId(id);setView("dettaglio");}} onNuovo={creaVuoto} sessione={sessione}/>
-    </>);
+  // ── VISTA: HOME (pulsanti: Nuovo, Cerca, Da gestire, Confermati in ordine, Trattative bloccate) ──
+  if(view==="home"){
+    const daGestireN = preventivi.filter(p=>p.stato==="Inviato").length;
+    const inOrdineN = preventivi.filter(p=>p.stato==="Convertito in ordine").length;
+    const bloccateN = RUOLI_APPROVATORI.includes(ruolo)
+      ? preventivi.filter(p=>p.stato==="Saltato").length
+      : preventivi.filter(p=>p.stato==="Saltato" && p.creato_da_nome===sessione?.nome).length;
+    return (
+      <div>
+        {erroreSync && <div style={{fontSize:12,color:C.danger,background:"rgba(200,75,58,0.08)",borderRadius:6,padding:"9px 11px",marginBottom:14}}>⚠ {erroreSync}</div>}
+        <button onClick={creaVuoto} style={{...S.btnAccent,width:"100%",padding:"14px",fontSize:14.5,fontWeight:700,marginBottom:8}}>+ Nuovo preventivo</button>
+        {[
+          ["cerca","🔍 Cerca preventivo",preventivi.length,"Tutti i preventivi, con ricerca per cliente"],
+          ["da-gestire","📤 Da gestire",daGestireN,"Inviati al cliente, in attesa di firma/conferma"],
+          ["in-ordine","✓ Confermati in ordine",inOrdineN,"Preventivi già convertiti in ordine"],
+          ["bloccate","⊘ Trattative bloccate",bloccateN,"Saltate, con il motivo indicato"],
+        ].map(([id,lbl,n,sub])=>(
+          <div key={id} onClick={()=>setView(id)} style={{...S.card,cursor:"pointer",display:"flex",justifyContent:"space-between",alignItems:"center",gap:10,marginBottom:8}}>
+            <div>
+              <div style={{fontWeight:600,fontSize:14}}>{lbl}</div>
+              <div style={{fontSize:12,color:C.steel,marginTop:2}}>{sub}</div>
+            </div>
+            <span className="tnum" style={{fontSize:15,fontWeight:700,color:n>0?C.ink:"#9AA3AB",fontFamily:F_MONO,flexShrink:0}}>{n}</span>
+          </div>
+        ))}
+      </div>
+    );
+  }
+
+  if(view==="cerca"){
+    return (
+      <div>
+        <button onClick={()=>setView("home")} style={{...S.btnS,marginBottom:14}}>← Preventivi</button>
+        {erroreSync && <div style={{fontSize:12,color:C.danger,background:"rgba(200,75,58,0.08)",borderRadius:6,padding:"9px 11px",marginBottom:14}}>⚠ {erroreSync}</div>}
+        <ListaPreventivi preventivi={preventivi} onApri={(id)=>{setSelId(id);setView("dettaglio");}} sessione={sessione}/>
+      </div>
+    );
+  }
+
+  if(view==="da-gestire" || view==="in-ordine"){
+    const stato = view==="da-gestire" ? "Inviato" : "Convertito in ordine";
+    const titolo = view==="da-gestire" ? "Da gestire" : "Confermati in ordine";
+    const elenco = preventivi.filter(p=>p.stato===stato);
+    return (
+      <div>
+        <button onClick={()=>setView("home")} style={{...S.btnS,marginBottom:14}}>← Preventivi</button>
+        <div style={S.eyebrow}>{titolo} ({elenco.length})</div>
+        {elenco.length===0 && <div style={{fontSize:12.5,color:"#9AA3AB",padding:"8px 0"}}>Nessun preventivo qui.</div>}
+        {elenco.map(p=>(
+          <div key={p.id} onClick={()=>{setSelId(p.id);setView("dettaglio");}} style={{...S.card,cursor:"pointer",display:"flex",justifyContent:"space-between",alignItems:"center",gap:10}}>
+            <div style={{minWidth:0}}>
+              <div className="tnum" style={{fontSize:10.5,color:"#9AA3AB",fontFamily:F_MONO}}>{codicePreventivo(p)}</div>
+              <div style={{fontWeight:600,fontSize:13.5,marginTop:2}}>{p.cliente || "Cliente non specificato"}</div>
+              <div style={{fontSize:11.5,color:"#8A929A",marginTop:1}}>{p.righe.length} articol{p.righe.length===1?"o":"i"}</div>
+            </div>
+            <div style={{textAlign:"right",flexShrink:0}}>
+              <div className="tnum" style={{fontWeight:700,fontSize:14,fontFamily:F_MONO}}>€{p.val.toLocaleString("it-IT")}</div>
+              <Tag tone={STATO_COLORE[p.stato]||"steel"} style={{marginTop:5}}>{p.stato}</Tag>
+            </div>
+          </div>
+        ))}
+      </div>
+    );
+  }
+
+  if(view==="bloccate"){
+    return (
+      <div>
+        <button onClick={()=>setView("home")} style={{...S.btnS,marginBottom:14}}>← Preventivi</button>
+        {RUOLI_APPROVATORI.includes(ruolo) ? (
+          <PreventiviSaltati preventivi={preventivi}/>
+        ) : (
+          <div>
+            <div style={S.eyebrow}>Le tue trattative bloccate</div>
+            {(() => {
+              const mieiSaltati = preventivi.filter(p=>p.stato==="Saltato" && p.creato_da_nome===sessione?.nome)
+                .sort((a,b)=>new Date(b.aggiornato_il||0)-new Date(a.aggiornato_il||0));
+              if(mieiSaltati.length===0) return <div style={{fontSize:12.5,color:"#9AA3AB",padding:"8px 0"}}>Nessuna trattativa bloccata.</div>;
+              return mieiSaltati.map(p=>(
+                <div key={p.id} onClick={()=>{setSelId(p.id);setView("dettaglio");}} style={{...S.card,cursor:"pointer",display:"flex",justifyContent:"space-between",alignItems:"center",gap:10}}>
+                  <div style={{minWidth:0}}>
+                    <div className="tnum" style={{fontSize:10.5,color:"#9AA3AB",fontFamily:F_MONO}}>{codicePreventivo(p)}</div>
+                    <div style={{fontWeight:600,fontSize:13.5,marginTop:2}}>{p.cliente || "Cliente non specificato"}</div>
+                    {p.motivo_saltato_tipo && <Tag tone="danger">{MOTIVI_SALTO[p.motivo_saltato_tipo]}</Tag>}
+                  </div>
+                  <div className="tnum" style={{fontWeight:700,fontSize:14,fontFamily:F_MONO,flexShrink:0}}>€{(p.val||0).toLocaleString("it-IT")}</div>
+                </div>
+              ));
+            })()}
+          </div>
+        )}
+      </div>
+    );
   }
 
   // ── VISTA: DETTAGLIO (sola lettura con azioni di stato) o EDIT (bozza modificabile) ──
@@ -4830,7 +4915,7 @@ function Preventivi({cart,setCart,preventivi,setPreventivi,setOrdini,setArea,ruo
 
     return (
       <div>
-        <button onClick={()=>{ if(selezionato?.id==="__nuovo__") setBozzaNonSalvata(null); setView("lista"); }} style={{...S.btnS,marginBottom:14}}>← Tutti i preventivi</button>
+        <button onClick={()=>{ if(selezionato?.id==="__nuovo__") setBozzaNonSalvata(null); setView("home"); }} style={{...S.btnS,marginBottom:14}}>← Preventivi</button>
 
         {selezionato.id==="__nuovo__" && (
           <div style={{fontSize:12,color:"#8a6418",background:"rgba(217,164,65,0.14)",borderRadius:6,padding:"9px 11px",marginBottom:14}}>
@@ -5602,7 +5687,7 @@ function FirmaPad({ onSalva, onAnnulla }){
   );
 }
 
-function ListaPreventivi({preventivi,onApri,onNuovo,sessione}){
+function ListaPreventivi({preventivi,onApri,sessione}){
   const [filtro,setFiltro]=useState("");
   const q=filtro.trim().toLowerCase();
   const filtra = arr => q ? arr.filter(p=>(p.cliente||"").toLowerCase().includes(q)) : arr;
@@ -5614,15 +5699,12 @@ function ListaPreventivi({preventivi,onApri,onNuovo,sessione}){
   // Sospendi/Riattiva) — resta visibile qui finché l'ordine non riparte.
   const sospesi = filtra(preventivi.filter(p=>p.stato==="Sospeso"));
   // Trattative "vendita rimandata" con un promemoria impostato: categoria a
-  // parte, più visibile, invece che perse in mezzo ai saltati definitivi.
+  // parte, più visibile, invece che perse in mezzo ai saltati definitivi
+  // (quelli si trovano tutti dentro "Trattative bloccate").
   const daRecuperare = filtra(preventivi.filter(p=>p.stato==="Saltato" && p.motivo_saltato_tipo==="rimandata" && p.promemoria_recupero))
     .sort((a,b)=>new Date(a.promemoria_recupero)-new Date(b.promemoria_recupero));
-  // Solo i propri preventivi saltati (esclusi quelli da recuperare, già sopra),
-  // in fondo a tutto il resto — quelli di tutto il team si vedono nell'area
-  // dedicata "Saltati" (responsabile/admin)
-  const mieiSaltati = filtra(preventivi.filter(p=>p.stato==="Saltato" && p.creato_da_nome===sessione?.nome && p.motivo_saltato_tipo!=="rimandata"));
 
-  const totaleVisibile = daCompletare.length+daGestire.length+inOrdine.length+sospesi.length+daRecuperare.length+mieiSaltati.length;
+  const totaleVisibile = daCompletare.length+daGestire.length+inOrdine.length+sospesi.length+daRecuperare.length;
 
   function rigaPreventivo(p){
     return (
@@ -5671,27 +5753,19 @@ function ListaPreventivi({preventivi,onApri,onNuovo,sessione}){
 
   return (
     <div>
-      <div style={S.eyebrow}>Preventivi</div>
-
-      <div style={{display:"flex",alignItems:"flex-start",gap:20,marginTop:10,marginBottom:22,flexWrap:"wrap"}}>
-        <button onClick={onNuovo} style={{...S.btnAccent,padding:"14px 24px",fontSize:14.5,fontWeight:700,flexShrink:0}}>+ Nuovo preventivo</button>
-
-        {preventivi.length>0 && (
-          <div style={{position:"relative",flex:"1 1 260px",minWidth:220}}>
-            <input
-              value={filtro}
-              onChange={e=>setFiltro(e.target.value)}
-              placeholder="🔍 Cerca preventivo per cliente…"
-              style={{...S.inp,padding:"13px 16px",fontSize:14,paddingRight:filtro?38:16}}
-            />
-            {filtro && (
-              <button
-                onClick={()=>setFiltro("")}
-                style={{position:"absolute",right:10,top:"50%",transform:"translateY(-50%)",border:"none",background:"none",cursor:"pointer",color:"#9AA3AB",fontSize:18,lineHeight:1}}
-                title="Pulisci filtro"
-              >×</button>
-            )}
-          </div>
+      <div style={{position:"relative",marginBottom:22}}>
+        <input
+          value={filtro}
+          onChange={e=>setFiltro(e.target.value)}
+          placeholder="🔍 Cerca preventivo per cliente…"
+          style={{...S.inp,padding:"13px 16px",fontSize:14,paddingRight:filtro?38:16}}
+        />
+        {filtro && (
+          <button
+            onClick={()=>setFiltro("")}
+            style={{position:"absolute",right:10,top:"50%",transform:"translateY(-50%)",border:"none",background:"none",cursor:"pointer",color:"#9AA3AB",fontSize:18,lineHeight:1}}
+            title="Pulisci filtro"
+          >×</button>
         )}
       </div>
 
@@ -5717,7 +5791,6 @@ function ListaPreventivi({preventivi,onApri,onNuovo,sessione}){
           {daRecuperare.map(rigaRecupero)}
         </div>
       )}
-      {sezione("I tuoi preventivi saltati", mieiSaltati)}
     </div>
   );
 }
