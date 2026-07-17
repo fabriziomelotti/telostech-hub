@@ -4541,7 +4541,21 @@ function Preventivi({cart,setCart,preventivi,setPreventivi,setOrdini,setArea,ruo
     if(id==="__nuovo__"){
       if(!bozzaNonSalvata) return;
       const righe = patch.righe || bozzaNonSalvata.righe;
-      const aggiornato = { ...bozzaNonSalvata, ...patch, val: totaleRighe(righe) };
+      // Include le eventuali modifiche a scadenza/referente/pagamento fatte
+      // nella card "bozza" ma non ancora salvate esplicitamente col suo
+      // pulsante "Salva" — altrimenti, se il primo salvataggio automatico
+      // scatta proprio mentre l'utente le sta ancora modificando (es. ha
+      // già cambiato il pagamento ma stava aggiungendo cliente/articolo),
+      // quei cambiamenti andrebbero persi: il preventivo verrebbe creato
+      // con i valori di default e il resync della card dal record appena
+      // salvato cancellerebbe le modifiche mai arrivate al server.
+      const datiBozzaPagamento = bozza ? {
+        scadenza: bozza.scadenza,
+        referente_telos: bozza.referente_telos,
+        pagamento_modalita: bozza.pagamento_modalita,
+        pagamento_dettagli: bozza.pagamento_dettagli,
+      } : {};
+      const aggiornato = { ...bozzaNonSalvata, ...datiBozzaPagamento, ...patch, val: totaleRighe(righe) };
       if(aggiornato.cliente && aggiornato.righe.length>0){
         persistiBozza(aggiornato);
       } else {
@@ -7260,6 +7274,20 @@ function DettaglioIntervento({ intervento, attrezzature, sessione, onIndietro, o
     if(!confermaLocale.firma_cliente && !confermaLocale.conferma_alt_nome) return;
     salvaPatch({ stato:"Completato", completato_il:new Date().toISOString(), checklist, note: note.trim()||null });
   }
+  // Chiusura semplificata per le assistenze esterne: il rapporto
+  // firmato (checklist + conferma cliente) è il modo in cui chiudiamo un
+  // intervento fatto da personale interno Telos, ma per un'assistenza
+  // esterna quella documentazione potremmo non riceverla mai dal fornitore
+  // — non ha senso bloccare la chiusura su qualcosa che dipende da terzi.
+  // Se nel frattempo qualche informazione è comunque arrivata (conferma
+  // cliente, checklist compilata) viene comunque salvata.
+  function chiudiInterventoSemplice(){
+    salvaPatch({
+      stato:"Completato", completato_il:new Date().toISOString(),
+      checklist, note: note.trim()||null,
+      ...confermaLocale,
+    });
+  }
   function segnaFatturato(){
     salvaPatch({ inviato_fatturazione:true, inviato_fatturazione_data:new Date().toISOString() });
   }
@@ -7366,7 +7394,9 @@ function DettaglioIntervento({ intervento, attrezzature, sessione, onIndietro, o
       )}
 
       {/* ── Stadio: Pianificato ──────────────────────────────────────── */}
-      {intervento.stato==="Pianificato" && (
+      {intervento.stato==="Pianificato" && (() => {
+        const perTelos = !!intervento.tecnico_assegnato_nome; // eseguito da personale interno
+        return (
         <>
           <div style={{...S.card,cursor:"default",marginBottom:16}}>
             <div style={{fontSize:13.5,fontWeight:700,marginBottom:4}}>
@@ -7375,7 +7405,7 @@ function DettaglioIntervento({ intervento, attrezzature, sessione, onIndietro, o
             <div style={{fontSize:12,color:"#9AA3AB"}}>Assegnato a {intervento.tecnico_assegnato_nome || assistenzaAssegnata?.nome || "—"}</div>
           </div>
 
-          {checklist.length>0 && (
+          {perTelos && checklist.length>0 && (
             <div style={{...S.card,cursor:"default",marginBottom:16}}>
               <div style={{fontSize:12.5,fontWeight:700,marginBottom:8}}>Checklist</div>
               {checklist.map((c,idx)=>(
@@ -7392,17 +7422,34 @@ function DettaglioIntervento({ intervento, attrezzature, sessione, onIndietro, o
             <textarea value={note} onChange={e=>setNote(e.target.value)} rows={3} placeholder="Facoltative" style={{...S.inp,resize:"vertical"}}/>
           </div>
 
-          <SezioneConferma record={confermaLocale} editable={true} onAggiorna={aggiornaConferma}/>
-
-          <button
-            disabled={salvando || (!confermaLocale.firma_cliente && !confermaLocale.conferma_alt_nome)}
-            onClick={chiudiIntervento}
-            style={{...S.btnAccent,width:"100%",padding:"13px",fontWeight:700,opacity:(confermaLocale.firma_cliente||confermaLocale.conferma_alt_nome)?1:0.5}}
-          >
-            {salvando?"…":"✓ Chiudi intervento"}
-          </button>
+          {perTelos ? (
+            <>
+              <SezioneConferma record={confermaLocale} editable={true} onAggiorna={aggiornaConferma}/>
+              <div style={{fontSize:11.5,color:"#9AA3AB",marginBottom:10}}>Il rapporto firmato (checklist + conferma cliente) chiude l'intervento del personale interno.</div>
+              <button
+                disabled={salvando || (!confermaLocale.firma_cliente && !confermaLocale.conferma_alt_nome)}
+                onClick={chiudiIntervento}
+                style={{...S.btnAccent,width:"100%",padding:"13px",fontWeight:700,opacity:(confermaLocale.firma_cliente||confermaLocale.conferma_alt_nome)?1:0.5}}
+              >
+                {salvando?"…":"✓ Chiudi intervento"}
+              </button>
+            </>
+          ) : (
+            <>
+              <div style={{fontSize:11.5,color:"#9AA3AB",marginBottom:10}}>Eseguito da un'assistenza esterna — la chiusura non richiede un rapporto firmato, che potremmo non ricevere dal fornitore. Se hai comunque una conferma del cliente puoi aggiungerla, non è obbligatoria.</div>
+              <SezioneConferma record={confermaLocale} editable={true} onAggiorna={aggiornaConferma}/>
+              <button
+                disabled={salvando}
+                onClick={chiudiInterventoSemplice}
+                style={{...S.btnAccent,width:"100%",padding:"13px",fontWeight:700,opacity:salvando?0.6:1}}
+              >
+                {salvando?"…":"✓ Segna come concluso"}
+              </button>
+            </>
+          )}
         </>
-      )}
+        );
+      })()}
 
       {/* ── Stadio: Completato ("Concluso") ──────────────────────────── */}
       {intervento.stato==="Completato" && (
