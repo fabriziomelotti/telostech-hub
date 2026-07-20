@@ -34,7 +34,11 @@ async function sbGetAuth(table, params = "", accessToken) {
   const res = await fetch(`${SUPABASE_URL}/rest/v1/${table}?${params}`, {
     headers: { ...sbHeaders, "Authorization": `Bearer ${accessToken}` },
   });
-  if (!res.ok) throw new Error(`Supabase ${res.status}`);
+  if (!res.ok) {
+    const corpo = await res.json().catch(()=>null);
+    const dettaglio = corpo?.message || corpo?.error_description || corpo?.hint || "";
+    throw new Error(`Supabase ${res.status}${dettaglio ? " — " + dettaglio : ""}`);
+  }
   return res.json();
 }
 
@@ -337,22 +341,19 @@ export function corrispondeRicerca(query, valori){
   return token.every(t=>testoUnico.includes(t));
 }
 // Filtro PostgREST lato server: OR "piatto" di tutte le combinazioni
-// campo×parola, con cast ::text su ogni campo (necessario perché ilike
-// puro su una colonna non testuale, es. un codice numerico, fa fallire la
-// query con 500 indipendentemente dal termine cercato). Con più di una
-// parola questo restituisce un insieme più ampio del necessario (basta che
-// UNA parola compaia da qualche parte) — va affinato lato client con
-// corrispondeRicerca (che invece pretende TUTTE le parole, anche in campi
-// diversi): la sintassi annidata and=(or(...),or(...)) con cast è stata
-// provata ma PostgREST la rifiuta con 400, questa forma piatta invece è
-// quella più ampiamente supportata.
+// campo×parola. Con più di una parola questo restituisce un insieme più
+// ampio del necessario (basta che UNA parola compaia da qualche parte) —
+// va affinato lato client con corrispondeRicerca (che invece pretende
+// TUTTE le parole, anche in campi diversi): la sintassi annidata
+// and=(or(...),or(...)) è stata provata ma PostgREST la rifiuta con 400,
+// questa forma piatta invece è quella più ampiamente supportata.
 export function filtroServerRicerca(query, campi){
   const token = tokenRicerca(query);
   if(token.length===0) return null;
   const condizioni = [];
   token.forEach(t=>{
     const pattern = "*"+encodeURIComponent(t)+"*";
-    campi.forEach(c=>condizioni.push(`${c}::text.ilike.${pattern}`));
+    campi.forEach(c=>condizioni.push(`${c}.ilike.${pattern}`));
   });
   return `or=(${condizioni.join(",")})`;
 }

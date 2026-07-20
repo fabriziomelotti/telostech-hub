@@ -34,7 +34,14 @@ async function sbGetAuth(table, params = "", accessToken) {
   const res = await fetch(`${SUPABASE_URL}/rest/v1/${table}?${params}`, {
     headers: { ...sbHeaders, "Authorization": `Bearer ${accessToken}` },
   });
-  if (!res.ok) throw new Error(`Supabase ${res.status}`);
+  if (!res.ok) {
+    // Legge il corpo dell'errore (PostgREST restituisce {message,details,hint,code})
+    // invece di mostrare solo "Supabase 400" — senza dettagli è impossibile
+    // capire cosa non va senza aprire gli strumenti sviluppatore.
+    const corpo = await res.json().catch(()=>null);
+    const dettaglio = corpo?.message || corpo?.error_description || corpo?.hint || "";
+    throw new Error(`Supabase ${res.status}${dettaglio ? " — " + dettaglio : ""}`);
+  }
   return res.json();
 }
 
