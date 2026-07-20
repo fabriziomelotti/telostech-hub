@@ -2216,54 +2216,53 @@ function Clienti({sessione, preventivi, ordini, attrezzature, setAttrezzature, i
   const [risultati,setRisultati] = useState([]);
   const [caricando,setCaricando] = useState(false);
   const [errore,setErrore] = useState("");
-  const [cercato,setCercato] = useState(false);
   const [selezionato,setSelezionato] = useState(null);
   const [tabInizialeCliente,setTabInizialeCliente] = useState("dati");
   const [qAttrezzatura,setQAttrezzatura] = useState("");
-  const [termineAttrezzatura,setTermineAttrezzatura] = useState(""); // valorizzato solo al click su Cerca
   const [attrezzaturaAperta,setAttrezzaturaAperta] = useState(null);
   // Quale ricerca è attiva: null (nessuna scelta ancora), "clienti" o
   // "attrezzatura". Prima i due campi erano sempre visibili insieme (con
   // font diversi tra loro, confuso su mobile) — ora si sceglie con un
   // pulsante grande e compare solo il campo pertinente.
   const [modalita,setModalita] = useState(null);
+  const timer = useRef(null);
 
   function selezionaModalita(m){
     setModalita(prev=>prev===m?null:m);
-    setQ(""); setQAttrezzatura(""); setTermineAttrezzatura(""); setRisultati([]); setErrore(""); setCercato(false);
+    setQ(""); setQAttrezzatura(""); setRisultati([]); setErrore("");
   }
 
-  // Ricerca clienti, avviata solo dal pulsante "Cerca" (o invio) — non ad
-  // ogni carattere: una richiesta a Supabase per ogni battuta era la causa
-  // più probabile dei 500 intermittenti visti in produzione. La ricerca è
-  // "intelligente": ignora punteggiatura/accenti e trova il cliente anche
-  // scrivendo insieme ragione sociale e città (vedi filtroServerRicerca).
-  async function eseguiRicercaClienti(){
-    const term = q.trim();
-    if(!term){ return; }
-    setCaricando(true); setErrore(""); setCercato(true);
-    try{
-      const filtro = filtroServerRicerca(term, CAMPI_RICERCA_CLIENTI);
-      const params = `select=codice,ragione_sociale,rag_sociale_agg,indirizzo,localita,provincia,cap,partita_iva,codice_fiscale,telefono,mail,filiale,agente&${filtro}&limit=120`;
-      const dati = await sbGetAuth("clienti", params, accessToken);
-      const affinati = affinaRicerca(term, dati||[], c=>[c.ragione_sociale,c.rag_sociale_agg,c.localita,c.provincia,c.partita_iva,c.codice_fiscale,c.mail,c.telefono,c.codice,c.agente]);
-      setRisultati(affinati.slice(0,30));
-    }catch(err){
-      setErrore("Ricerca non riuscita: "+err.message+" — riprova.");
-      setRisultati([]);
-    }
-    setCaricando(false);
-  }
+  useEffect(()=>{
+    clearTimeout(timer.current);
+    if(!q.trim()){ setRisultati([]); setErrore(""); return; }
+    timer.current = setTimeout(async ()=>{
+      setCaricando(true); setErrore("");
+      try{
+        const safe = q.trim().replace(/[,()]/g,"");
+        const pattern = "*"+encodeURIComponent(safe)+"*"; // * non va MAI url-encodato
+        const orExpr = CAMPI_RICERCA_CLIENTI.map(c=>`${c}.ilike.${pattern}`).join(",");
+        const params = `select=codice,ragione_sociale,rag_sociale_agg,indirizzo,localita,provincia,cap,partita_iva,codice_fiscale,telefono,mail,filiale,agente&or=(${orExpr})&limit=30`;
+        const dati = await sbGetAuth("clienti", params, accessToken);
+        setRisultati(dati||[]);
+      }catch(err){
+        setErrore(err.message); setRisultati([]);
+      }
+      setCaricando(false);
+    }, 350);
+    return ()=>clearTimeout(timer.current);
+  },[q]);
 
   // Ricerca per attrezzatura: filtro lato client sull'elenco già caricato
-  // (nome prodotto, numero di serie, marca) — anch'essa avviata solo dal
-  // pulsante "Cerca", per coerenza con tutti gli altri campi di ricerca.
+  // (nome prodotto, numero di serie, marca).
   const risultatiAttrezzatura = useMemo(()=>{
-    if(!termineAttrezzatura.trim()) return [];
+    if(!qAttrezzatura.trim()) return [];
+    const qq = qAttrezzatura.trim().toLowerCase();
     return (attrezzature||[]).filter(a=>
-      corrispondeRicerca(termineAttrezzatura, [a.nome_prodotto, a.numero_serie, a.marchio])
+      (a.nome_prodotto||"").toLowerCase().includes(qq) ||
+      (a.numero_serie||"").toLowerCase().includes(qq) ||
+      (a.marchio||"").toLowerCase().includes(qq)
     ).slice(0,30);
-  },[termineAttrezzatura,attrezzature]);
+  },[qAttrezzatura,attrezzature]);
 
   if(attrezzaturaAperta){
     return <ModificaAttrezzatura
@@ -2311,38 +2310,23 @@ function Clienti({sessione, preventivi, ordini, attrezzature, setAttrezzature, i
       </div>
 
       {modalita==="clienti" && (
-        <div style={{display:"flex",gap:8,marginBottom:14}}>
-          <input
-            value={q} onChange={e=>setQ(e.target.value)}
-            onKeyDown={e=>{ if(e.key==="Enter"){ e.preventDefault(); eseguiRicercaClienti(); } }}
-            placeholder="Cerca per ragione sociale, città, P.IVA, codice fiscale…"
-            style={{...S.inp,padding:"13px 16px",fontSize:14,flex:1}}
-            autoFocus
-          />
-          <button onClick={eseguiRicercaClienti} disabled={caricando} style={{...S.btnAccent,padding:"0 18px",flexShrink:0,opacity:caricando?0.6:1}}>
-            {caricando?"…":"🔍 Cerca"}
-          </button>
-        </div>
+        <input
+          value={q} onChange={e=>setQ(e.target.value)}
+          placeholder="Cerca per ragione sociale, città, P.IVA, codice fiscale…"
+          style={{...S.inp,padding:"13px 16px",fontSize:14,marginBottom:14}}
+          autoFocus
+        />
       )}
       {modalita==="attrezzatura" && (
-        <div style={{display:"flex",gap:8,marginBottom:14}}>
-          <input
-            value={qAttrezzatura} onChange={e=>setQAttrezzatura(e.target.value)}
-            onKeyDown={e=>{ if(e.key==="Enter"){ e.preventDefault(); setTermineAttrezzatura(qAttrezzatura); } }}
-            placeholder="Cerca per nome, numero di serie o marca…"
-            style={{...S.inp,padding:"13px 16px",fontSize:14,flex:1}}
-            autoFocus
-          />
-          <button onClick={()=>setTermineAttrezzatura(qAttrezzatura)} style={{...S.btnAccent,padding:"0 18px",flexShrink:0}}>🔍 Cerca</button>
-        </div>
+        <input
+          value={qAttrezzatura} onChange={e=>setQAttrezzatura(e.target.value)}
+          placeholder="Cerca per nome, numero di serie o marca…"
+          style={{...S.inp,padding:"13px 16px",fontSize:14,marginBottom:14}}
+          autoFocus
+        />
       )}
 
-      {errore && (
-        <div style={{fontSize:12,color:C.danger,background:"rgba(200,75,58,0.08)",borderRadius:6,padding:"9px 11px",marginBottom:14,display:"flex",alignItems:"center",gap:10}}>
-          <span>⚠ {errore}</span>
-          <button onClick={eseguiRicercaClienti} style={{...S.btnS,padding:"4px 10px",fontSize:11}}>Riprova</button>
-        </div>
-      )}
+      {errore && <div style={{fontSize:12,color:C.danger,background:"rgba(200,75,58,0.08)",borderRadius:6,padding:"9px 11px",marginBottom:14}}>⚠ {errore}</div>}
 
       {modalita===null && (
         <div style={{textAlign:"center",padding:"2.5rem 1rem",color:"#9AA3AB"}}>
@@ -2352,10 +2336,10 @@ function Clienti({sessione, preventivi, ordini, attrezzature, setAttrezzature, i
       )}
 
       {modalita==="attrezzatura" && (<>
-        {termineAttrezzatura.trim() ? (<>
+        {qAttrezzatura.trim() ? (<>
           <div style={{...S.eyebrow,marginBottom:8}}>Attrezzature ({risultatiAttrezzatura.length})</div>
           {risultatiAttrezzatura.length===0 && (
-            <div style={{textAlign:"center",padding:"1.5rem 1rem",color:"#9AA3AB",fontSize:13,marginBottom:8}}>Nessuna attrezzatura per «{termineAttrezzatura}»</div>
+            <div style={{textAlign:"center",padding:"1.5rem 1rem",color:"#9AA3AB",fontSize:13,marginBottom:8}}>Nessuna attrezzatura per «{qAttrezzatura}»</div>
           )}
           {risultatiAttrezzatura.map(a=>(
             <div key={a.id} onClick={()=>setAttrezzaturaAperta(a)} style={S.card}>
@@ -2370,17 +2354,17 @@ function Clienti({sessione, preventivi, ordini, attrezzature, setAttrezzature, i
             </div>
           ))}
         </>) : (
-          <div style={{textAlign:"center",padding:"2rem 1rem",color:"#9AA3AB",fontSize:13}}>Scrivi e premi "Cerca" per trovare un'attrezzatura</div>
+          <div style={{textAlign:"center",padding:"2rem 1rem",color:"#9AA3AB",fontSize:13}}>Digita per cercare un'attrezzatura</div>
         )}
       </>)}
 
       {modalita==="clienti" && (<>
         {caricando && <div style={{fontSize:12.5,color:"#8A929A",padding:"8px 0"}}>Ricerca in corso…</div>}
-        {!caricando && cercato && !errore && risultati.length===0 && (
+        {!caricando && q.trim() && !errore && risultati.length===0 && (
           <div style={{textAlign:"center",padding:"2rem 1rem",color:"#9AA3AB",fontSize:13}}>Nessun cliente trovato per «{q}»</div>
         )}
-        {!caricando && !cercato && (
-          <div style={{textAlign:"center",padding:"2rem 1rem",color:"#9AA3AB",fontSize:13}}>Scrivi e premi "Cerca" per trovare un cliente</div>
+        {!caricando && !q.trim() && (
+          <div style={{textAlign:"center",padding:"2rem 1rem",color:"#9AA3AB",fontSize:13}}>Digita per cercare un cliente</div>
         )}
         {risultati.length>0 && (
           <div style={{...S.eyebrow,marginBottom:8}}>Clienti ({risultati.length})</div>

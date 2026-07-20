@@ -366,11 +366,15 @@ export function affinaRicerca(query, elenco, estraiCampi){
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// SELEZIONE CLIENTE — ricerca server-side su tutti i campi. Avviata solo dal
-// pulsante "Cerca" (o invio), non ad ogni carattere digitato: da un lato
-// evita di intasare Supabase con una richiesta per ogni battuta (causa più
-// probabile dei 500 intermittenti visti in produzione), dall'altro lascia
-// scrivere per intero prima di far scattare la ricerca.
+// SELEZIONE CLIENTE — ricerca server-side su tutti i campi (debounce 300ms,
+// min 2 caratteri, limite 25) via REST `or=(col.ilike.*term*,...)`.
+// Versione "prima maniera": ripristinata dopo che i tentativi di ricerca
+// più sofisticata (multi-parola, pulsante Cerca, ecc.) hanno coinciso con
+// un peggioramento dell'affidabilità in produzione — vedi anche i log
+// Postgres del 20/07 che mostrano un picco di scrittura causato da indici
+// aggiunti nel frattempo (poi rimossi). Non è escluso al 100% che la causa
+// fosse solo quella, ma si torna a questa versione più semplice, che prima
+// non aveva mai dato problemi.
 // Mostra la card del cliente selezionato con pulsante "Cambia".
 // onSeleziona(cliente|null) e clienteSelezionato passati dal padre.
 // ═══════════════════════════════════════════════════════════════════════════
@@ -385,27 +389,38 @@ export function SelezioneCliente({ onSeleziona, clienteSelezionato, sessione }){
   const [risultati, setRisultati] = useState([]);
   const [caricando, setCaricando] = useState(false);
   const [errore, setErrore] = useState("");
-  const [cercato, setCercato] = useState(false);
+  const timer = useRef(null);
 
-  async function esegui(){
+  useEffect(()=>{
+    if(clienteSelezionato) return; // non cercare mentre uno è selezionato
     const term = q.trim();
-    if(term.length < 2){ setErrore("Scrivi almeno 2 caratteri."); return; }
-    setCaricando(true); setErrore(""); setCercato(true);
-    try{
-      const filtro = filtroServerRicerca(term, CAMPI_RICERCA);
-      const params =
-        `select=codice,ragione_sociale,rag_sociale_agg,indirizzo,localita,provincia,cap,partita_iva,codice_fiscale,telefono,mail,filiale` +
-        `&${filtro}&limit=100&order=ragione_sociale`;
-      const dati = await sbGetAuth("clienti", params, accessToken);
-      const affinati = affinaRicerca(term, dati||[], c=>[c.ragione_sociale,c.rag_sociale_agg,c.localita,c.provincia,c.partita_iva,c.codice_fiscale,c.mail,c.telefono,c.codice]);
-      setRisultati(affinati.slice(0,25));
-    }catch(err){
-      setErrore("Ricerca non riuscita: " + err.message + " — riprova.");
-      setRisultati([]);
-    }finally{
-      setCaricando(false);
-    }
-  }
+    if(term.length < 2){ setRisultati([]); setErrore(""); return; }
+
+    if(timer.current) clearTimeout(timer.current);
+    timer.current = setTimeout(async ()=>{
+      setCaricando(true); setErrore("");
+      try{
+        // escape: rimuovi caratteri che romperebbero il filtro or=(...)
+        const safe = term.replace(/[,*()]/g, " ").trim();
+        // encoda il termine (spazi, accenti, ecc.) ma lascia gli asterischi
+        // letterali: sono i wildcard che PostgREST usa per ilike.
+        const pattern = "*" + encodeURIComponent(safe) + "*";
+        const orExpr = CAMPI_RICERCA.map(c => `${c}.ilike.${pattern}`).join(",");
+        const params =
+          `select=codice,ragione_sociale,rag_sociale_agg,indirizzo,localita,provincia,cap,partita_iva,codice_fiscale,telefono,mail,filiale` +
+          `&or=(${orExpr})&limit=25&order=ragione_sociale`;
+        const dati = await sbGetAuth("clienti", params, accessToken);
+        setRisultati(dati || []);
+      }catch(err){
+        setErrore("Ricerca non disponibile: " + err.message);
+        setRisultati([]);
+      }finally{
+        setCaricando(false);
+      }
+    }, 300);
+
+    return ()=>{ if(timer.current) clearTimeout(timer.current); };
+  }, [q, clienteSelezionato]);
 
   // ── Cliente già selezionato: card + Cambia ──
   if(clienteSelezionato){
@@ -423,7 +438,7 @@ export function SelezioneCliente({ onSeleziona, clienteSelezionato, sessione }){
             </div>
             <div className="tnum" style={{fontSize:11,color:"#9AA3AB",fontFamily:F_MONO,marginTop:4}}>COD {c.codice}</div>
           </div>
-          <button onClick={()=>{ onSeleziona(null); setQ(""); setRisultati([]); setCercato(false); }} style={{...S.btnS,flexShrink:0}}>
+          <button onClick={()=>{ onSeleziona(null); setQ(""); setRisultati([]); }} style={{...S.btnS,flexShrink:0}}>
             Cambia
           </button>
         </div>
@@ -435,27 +450,21 @@ export function SelezioneCliente({ onSeleziona, clienteSelezionato, sessione }){
   return (
     <div>
       <div style={{...S.eyebrow}}>Seleziona cliente</div>
-      <div style={{display:"flex",gap:8}}>
-        <input
-          value={q}
-          onChange={e=>setQ(e.target.value)}
-          onKeyDown={e=>{ if(e.key==="Enter"){ e.preventDefault(); esegui(); } }}
-          placeholder="Cerca per ragione sociale, P.IVA, località, codice…"
-          style={{...S.inp,flex:1}}
-          autoFocus
-        />
-        <button onClick={esegui} disabled={caricando} style={{...S.btnAccent,padding:"0 18px",flexShrink:0,opacity:caricando?0.6:1}}>
-          {caricando?"…":"🔍 Cerca"}
-        </button>
-      </div>
+      <input
+        value={q}
+        onChange={e=>setQ(e.target.value)}
+        placeholder="Cerca per ragione sociale, P.IVA, località, codice…"
+        style={S.inp}
+        autoFocus
+      />
 
-      {errore && (
-        <div style={{fontSize:11.5,fontFamily:F_MONO,color:C.danger,marginTop:10,display:"flex",alignItems:"center",gap:10}}>
-          <span>● {errore}</span>
-          <button onClick={esegui} style={{...S.btnS,padding:"4px 10px",fontSize:11}}>Riprova</button>
-        </div>
+      {caricando && (
+        <div style={{fontSize:11.5,fontFamily:F_MONO,color:C.steel,marginTop:10}}>… ricerca in corso</div>
       )}
-      {!caricando && !errore && cercato && risultati.length===0 && (
+      {errore && (
+        <div style={{fontSize:11.5,fontFamily:F_MONO,color:C.danger,marginTop:10}}>● {errore}</div>
+      )}
+      {!caricando && !errore && q.trim().length>=2 && risultati.length===0 && (
         <div style={{fontSize:12,color:"#9AA3AB",marginTop:12}}>Nessun cliente trovato.</div>
       )}
 
