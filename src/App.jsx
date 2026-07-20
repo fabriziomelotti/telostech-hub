@@ -1,7 +1,7 @@
 import { useState, useMemo, useEffect, useRef } from "react";
 import html2canvas from "html2canvas";
 import jsPDF from "jspdf";
-import { ImportClienti, SelezioneCliente, CreaProdotto, EditaProdotto, normalizzaTesto, tokenRicerca, corrispondeRicerca, filtroServerRicerca } from "./ClientiComponenti";
+import { ImportClienti, SelezioneCliente, CreaProdotto, EditaProdotto, normalizzaTesto, tokenRicerca, corrispondeRicerca, filtroServerRicerca, affinaRicerca } from "./ClientiComponenti";
 import { useAuth, LoginReale } from "./Auth";
 
 // ─── SUPABASE REST (fetch diretto — nessuna libreria esterna) ────────────────
@@ -2237,9 +2237,10 @@ function Clienti({sessione, preventivi, ordini, attrezzature, setAttrezzature, i
     setCaricando(true); setErrore(""); setCercato(true);
     try{
       const filtro = filtroServerRicerca(term, CAMPI_RICERCA_CLIENTI);
-      const params = `select=codice,ragione_sociale,rag_sociale_agg,indirizzo,localita,provincia,cap,partita_iva,codice_fiscale,telefono,mail,filiale,agente&${filtro}&limit=30`;
+      const params = `select=codice,ragione_sociale,rag_sociale_agg,indirizzo,localita,provincia,cap,partita_iva,codice_fiscale,telefono,mail,filiale,agente&${filtro}&limit=120`;
       const dati = await sbGetAuth("clienti", params, accessToken);
-      setRisultati(dati||[]);
+      const affinati = affinaRicerca(term, dati||[], c=>[c.ragione_sociale,c.rag_sociale_agg,c.localita,c.provincia,c.partita_iva,c.codice_fiscale,c.mail,c.telefono,c.codice,c.agente]);
+      setRisultati(affinati.slice(0,30));
     }catch(err){
       setErrore("Ricerca non riuscita: "+err.message+" — riprova.");
       setRisultati([]);

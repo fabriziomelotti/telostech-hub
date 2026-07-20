@@ -336,25 +336,32 @@ export function corrispondeRicerca(query, valori){
   const testoUnico = normalizzaTesto((valori||[]).filter(Boolean).join(" "));
   return token.every(t=>testoUnico.includes(t));
 }
-// Filtro PostgREST lato server sugli stessi criteri: una parola sola usa
-// or=(campo.ilike.*parola*,...); più parole usano and=(or(...),or(...))
-// così ogni parola deve comparire in almeno uno dei campi indicati, ma
-// parole diverse possono stare in campi diversi. Ogni campo viene forzato
-// con ::text — se una colonna non è testo (es. un codice numerico),
-// ilike puro fallisce con un errore del database (500) indipendentemente
-// dal termine cercato; col cast funziona qualunque sia il tipo reale.
+// Filtro PostgREST lato server: OR "piatto" di tutte le combinazioni
+// campo×parola, con cast ::text su ogni campo (necessario perché ilike
+// puro su una colonna non testuale, es. un codice numerico, fa fallire la
+// query con 500 indipendentemente dal termine cercato). Con più di una
+// parola questo restituisce un insieme più ampio del necessario (basta che
+// UNA parola compaia da qualche parte) — va affinato lato client con
+// corrispondeRicerca (che invece pretende TUTTE le parole, anche in campi
+// diversi): la sintassi annidata and=(or(...),or(...)) con cast è stata
+// provata ma PostgREST la rifiuta con 400, questa forma piatta invece è
+// quella più ampiamente supportata.
 export function filtroServerRicerca(query, campi){
   const token = tokenRicerca(query);
   if(token.length===0) return null;
-  if(token.length===1){
-    const pattern = "*"+encodeURIComponent(token[0])+"*";
-    return `or=(${campi.map(c=>`${c}::text.ilike.${pattern}`).join(",")})`;
-  }
-  const gruppi = token.map(t=>{
+  const condizioni = [];
+  token.forEach(t=>{
     const pattern = "*"+encodeURIComponent(t)+"*";
-    return `or(${campi.map(c=>`${c}::text.ilike.${pattern}`).join(",")})`;
+    campi.forEach(c=>condizioni.push(`${c}::text.ilike.${pattern}`));
   });
-  return `and=(${gruppi.join(",")})`;
+  return `or=(${condizioni.join(",")})`;
+}
+// Affina lato client un elenco già scaricato con filtroServerRicerca,
+// pretendendo che OGNI parola compaia in almeno uno dei campi indicati
+// (anche parole diverse in campi diversi) — vedi corrispondeRicerca.
+export function affinaRicerca(query, elenco, estraiCampi){
+  if(tokenRicerca(query).length<=1) return elenco; // una sola parola: il server ha già fatto tutto il lavoro
+  return elenco.filter(el=>corrispondeRicerca(query, estraiCampi(el)));
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -387,9 +394,10 @@ export function SelezioneCliente({ onSeleziona, clienteSelezionato, sessione }){
       const filtro = filtroServerRicerca(term, CAMPI_RICERCA);
       const params =
         `select=codice,ragione_sociale,rag_sociale_agg,indirizzo,localita,provincia,cap,partita_iva,codice_fiscale,telefono,mail,filiale` +
-        `&${filtro}&limit=25&order=ragione_sociale`;
+        `&${filtro}&limit=100&order=ragione_sociale`;
       const dati = await sbGetAuth("clienti", params, accessToken);
-      setRisultati(dati || []);
+      const affinati = affinaRicerca(term, dati||[], c=>[c.ragione_sociale,c.rag_sociale_agg,c.localita,c.provincia,c.partita_iva,c.codice_fiscale,c.mail,c.telefono,c.codice]);
+      setRisultati(affinati.slice(0,25));
     }catch(err){
       setErrore("Ricerca non riuscita: " + err.message + " — riprova.");
       setRisultati([]);
