@@ -339,17 +339,20 @@ export function corrispondeRicerca(query, valori){
 // Filtro PostgREST lato server sugli stessi criteri: una parola sola usa
 // or=(campo.ilike.*parola*,...); più parole usano and=(or(...),or(...))
 // così ogni parola deve comparire in almeno uno dei campi indicati, ma
-// parole diverse possono stare in campi diversi.
+// parole diverse possono stare in campi diversi. Ogni campo viene forzato
+// con ::text — se una colonna non è testo (es. un codice numerico),
+// ilike puro fallisce con un errore del database (500) indipendentemente
+// dal termine cercato; col cast funziona qualunque sia il tipo reale.
 export function filtroServerRicerca(query, campi){
   const token = tokenRicerca(query);
   if(token.length===0) return null;
   if(token.length===1){
     const pattern = "*"+encodeURIComponent(token[0])+"*";
-    return `or=(${campi.map(c=>`${c}.ilike.${pattern}`).join(",")})`;
+    return `or=(${campi.map(c=>`${c}::text.ilike.${pattern}`).join(",")})`;
   }
   const gruppi = token.map(t=>{
     const pattern = "*"+encodeURIComponent(t)+"*";
-    return `or(${campi.map(c=>`${c}.ilike.${pattern}`).join(",")})`;
+    return `or(${campi.map(c=>`${c}::text.ilike.${pattern}`).join(",")})`;
   });
   return `and=(${gruppi.join(",")})`;
 }
