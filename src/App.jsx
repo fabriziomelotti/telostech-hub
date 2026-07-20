@@ -9360,7 +9360,7 @@ function GestioneUtenti({ ruolo, sessione }) {
 // Elenco delle categorie derivate dai prodotti reali, con la possibilità di
 // rinominare/unire una categoria in un'altra (risolve doppioni come
 // "Battery"/"BATTERY" nati da un refuso nel campo libero di CreaProdotto).
-function GestioneCategorie({ sessione, categorie, ricarica }) {
+function GestioneCategorie({ sessione, ruolo, categorie, tipologie, marchi, ricarica }) {
   const accessToken = trovaAccessToken(sessione);
   const [origine, setOrigine] = useState("");
   const [destinazione, setDestinazione] = useState("");
@@ -9369,6 +9369,47 @@ function GestioneCategorie({ sessione, categorie, ricarica }) {
   const [confermaAperta, setConfermaAperta] = useState(false);
   const [normalizzando, setNormalizzando] = useState(false);
   const [msgNorm, setMsgNorm] = useState("");
+
+  // Creazione rapida di categoria/tipologia/marca — indipendente dai
+  // prodotti, riservata all'admin (vedi nota nella Edge Function). Un solo
+  // stato per i tre campi, distinto per tipo.
+  const puoCreareTassonomia = ruolo === "admin";
+  const [nuovoValore, setNuovoValore] = useState({ categoria:"", tipologia:"", marchio:"" });
+  const [creazioneStato, setCreazioneStato] = useState({ categoria:"idle", tipologia:"idle", marchio:"idle" });
+  const [creazioneMsg, setCreazioneMsg] = useState({ categoria:"", tipologia:"", marchio:"" });
+
+  async function creaValoreTassonomia(tipo){
+    const valore = (nuovoValore[tipo]||"").trim();
+    if(!valore) return;
+    setCreazioneStato(s=>({...s,[tipo]:"salvo"})); setCreazioneMsg(m=>({...m,[tipo]:""}));
+    try{
+      await chiamaCatalogAdmin("tassonomiaCrea", { tipo, valore }, accessToken);
+      setCreazioneStato(s=>({...s,[tipo]:"fatto"}));
+      setCreazioneMsg(m=>({...m,[tipo]:`"${valore}" creata — disponibile subito nei menu.`}));
+      setNuovoValore(v=>({...v,[tipo]:""}));
+      ricarica();
+    }catch(err){
+      setCreazioneStato(s=>({...s,[tipo]:"errore"}));
+      setCreazioneMsg(m=>({...m,[tipo]:"Errore: "+err.message}));
+    }
+  }
+
+  async function eliminaValoreTassonomia(tipo, valore){
+    try{
+      await chiamaCatalogAdmin("tassonomiaElimina", { tipo, valore }, accessToken);
+      ricarica();
+    }catch(err){
+      setCreazioneMsg(m=>({...m,[tipo]:"Errore nell'eliminazione: "+err.message}));
+    }
+  }
+
+  // Valori "in attesa": presenti nella lista (che unisce prodotti +
+  // tassonomia pre-dichiarata) ma con conteggio 0 prodotti — solo per le
+  // categorie abbiamo il conteggio; per tipologia/marchio mostriamo comunque
+  // l'elenco intero con possibilità di eliminare (l'eliminazione è
+  // innocua anche se in uso: rimuove solo la pre-dichiarazione, non tocca
+  // i prodotti).
+  const categorieInAttesa = categorie.filter(c=>c.n===0);
 
   async function normalizzaTutte() {
     setNormalizzando(true);
@@ -9417,6 +9458,54 @@ function GestioneCategorie({ sessione, categorie, ricarica }) {
         maiuscole/minuscole o uno spazio — usa "Rinomina/unisci" per spostare tutti i prodotti dall'una
         all'altra in un colpo solo.
       </div>
+
+      {puoCreareTassonomia && (
+        <div style={{...S.card,cursor:"default",marginBottom:16}}>
+          <div style={S.eyebrow}>Crea nuova categoria / tipologia / marca</div>
+          <div style={{fontSize:12.5,color:C.steel,marginTop:6,marginBottom:12,lineHeight:1.6}}>
+            Pre-dichiara un valore prima ancora che un prodotto lo usi — comparirà subito nei menu a
+            tendina di "Nuovo prodotto" e "Completa categoria", senza doverlo ridigitare a mano lì.
+            Riservato all'admin.
+          </div>
+          {["categoria","tipologia","marchio"].map(tipo=>(
+            <div key={tipo} style={{marginBottom:14}}>
+              <label style={{fontSize:11,fontFamily:F_MONO,color:"#9AA3AB",textTransform:"uppercase",letterSpacing:"0.05em",display:"block",marginBottom:4}}>
+                {tipo==="categoria"?"Nuova categoria":tipo==="tipologia"?"Nuova tipologia":"Nuova marca"}
+              </label>
+              <div style={{display:"flex",gap:8}}>
+                <input
+                  value={nuovoValore[tipo]}
+                  onChange={e=>setNuovoValore(v=>({...v,[tipo]:e.target.value}))}
+                  onKeyDown={e=>{ if(e.key==="Enter") creaValoreTassonomia(tipo); }}
+                  placeholder={tipo==="categoria"?"es. PROVAFRENI":tipo==="tipologia"?"es. PONTI 2 COLONNE":"es. WORKY"}
+                  style={{...S.inp,flex:1}}
+                />
+                <button
+                  onClick={()=>creaValoreTassonomia(tipo)}
+                  disabled={!nuovoValore[tipo].trim()||creazioneStato[tipo]==="salvo"}
+                  style={{...S.btnS,padding:"9px 15px",opacity:!nuovoValore[tipo].trim()?0.4:1,flexShrink:0}}
+                >Crea</button>
+              </div>
+              {creazioneMsg[tipo] && <div style={{fontSize:11.5,color:creazioneStato[tipo]==="errore"?C.danger:C.ok,marginTop:6}}>{creazioneMsg[tipo]}</div>}
+            </div>
+          ))}
+          {categorieInAttesa.length>0 && (
+            <div style={{marginTop:4}}>
+              <div style={{fontSize:11,fontFamily:F_MONO,color:"#9AA3AB",textTransform:"uppercase",letterSpacing:"0.05em",marginBottom:6}}>
+                Categorie create ma non ancora usate da nessun prodotto
+              </div>
+              <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+                {categorieInAttesa.map(c=>(
+                  <span key={c.categoria} style={{display:"flex",alignItems:"center",gap:6,border:`1px solid ${C.paperLine}`,borderRadius:20,padding:"4px 6px 4px 12px",fontSize:12}}>
+                    {c.categoria}
+                    <button onClick={()=>eliminaValoreTassonomia("categoria",c.categoria)} title="Rimuovi" style={{background:"none",border:"none",cursor:"pointer",color:C.steel,fontSize:14,lineHeight:1,padding:"2px 4px"}}>×</button>
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       <div style={{...S.card,cursor:"default",marginBottom:16}}>
         <div style={S.eyebrow}>Normalizzazione automatica</div>
@@ -11064,7 +11153,7 @@ function PannelloGestione({ setCatalog, ruolo, sessione, catalog }) {
             <CreaProdotto ruolo={ruolo} onCreato={()=>{ caricaCatalogo(CATALOG).then(d=>setCatalog(d)); ricaricaCategorie(); ricaricaTipologieMarchi(); }} categorieEsistenti={categorie.map(c=>c.categoria)} tipologieEsistenti={tipologie} marchiEsistenti={marchi} sessione={sessione}/>
           )}
 
-          {tab==="categorie" && <GestioneCategorie sessione={sessione} categorie={categorie} ricarica={()=>{ ricaricaCategorie(); caricaCatalogo(CATALOG).then(d=>setCatalog(d)); }}/>}
+          {tab==="categorie" && <GestioneCategorie sessione={sessione} ruolo={ruolo} categorie={categorie} tipologie={tipologie} marchi={marchi} ricarica={()=>{ ricaricaCategorie(); ricaricaTipologieMarchi(); caricaCatalogo(CATALOG).then(d=>setCatalog(d)); }}/>}
 
           {tab==="logistica" && <GestioneLogisticaOrdini sessione={sessione} categorie={categorie}/>}
 
