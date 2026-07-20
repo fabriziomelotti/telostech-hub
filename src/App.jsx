@@ -3781,6 +3781,20 @@ ${meta.includi_copertina!==false ? `
     </div>
 
     ${meta.note ? `<div class="note-box"><div class="lbl">Note:</div><div class="testo">${meta.note}</div></div>` : ""}
+
+    ${(meta.soluzioni||[]).length>0 ? `
+    <div style="margin-top:24px;padding-top:16px;border-top:2px solid #162758">
+      <div style="font-size:13px;font-weight:700;color:#162758;margin-bottom:12px">Soluzioni alternative</div>
+      ${meta.soluzioni.map(s=>`
+        <div style="border:1px solid #E3E5EA;border-radius:6px;padding:12px 14px;margin-bottom:10px">
+          <div style="font-size:12px;font-weight:700;color:#162758;margin-bottom:6px">${s.nome||"Soluzione"}</div>
+          ${(s.righe||[]).map(r=>`<div style="font-size:11px;color:#3A4248;padding:2px 0">${r.mar||""} ${r.nome||""} × ${r.qty||1}${s.finanziaria_importo==null?` — €${(r.netto*(r.qty||1)).toFixed(2)}`:""}</div>`).join("")}
+          <div style="font-size:13px;font-weight:700;color:#162758;margin-top:8px;text-align:right">
+            ${s.finanziaria_importo!=null ? `€${(s.finanziaria_rata||0).toFixed(2)}/mese × ${s.finanziaria_mesi||0} mesi` : `Totale (IVA esclusa): €${(s.val||0).toFixed(2)}`}
+          </div>
+        </div>
+      `).join("")}
+    </div>` : ""}
   </div>
 
   <div class="footer-legale">
@@ -3955,6 +3969,18 @@ async function generaPreventivoInterventoPDF(pv, meta={}){
     </div>
 
     ${meta.note ? `<div class="note-box"><div class="lbl">Note:</div><div class="testo">${meta.note}</div></div>` : ""}
+
+    ${(pv.soluzioni||[]).length>0 ? `
+    <div style="margin-top:24px;padding-top:16px;border-top:2px solid #162758">
+      <div style="font-size:13px;font-weight:700;color:#162758;margin-bottom:12px">Soluzioni alternative</div>
+      ${pv.soluzioni.map(s=>`
+        <div style="border:1px solid #E3E5EA;border-radius:6px;padding:12px 14px;margin-bottom:10px">
+          <div style="font-size:12px;font-weight:700;color:#162758;margin-bottom:6px">${s.nome||"Soluzione"}</div>
+          ${(s.righe||[]).map(r=>`<div style="font-size:11px;color:#3A4248;padding:2px 0">${r.descrizione||""} — €${(r.prezzo*(r.qty||1)).toFixed(2)}</div>`).join("")}
+          <div style="font-size:13px;font-weight:700;color:#162758;margin-top:8px;text-align:right">Totale: €${(s.val||0).toFixed(2)}</div>
+        </div>
+      `).join("")}
+    </div>` : ""}
   </div>
 
   <div class="footer-legale">
@@ -4486,6 +4512,202 @@ function SchedaProdottoSelezione({p, ruolo, giaPresente, onConferma, onClose}){
   );
 }
 
+// Selezione cliente con la possibilità di inserirne uno non in anagrafica,
+// con dettagli di contatto facoltativi per un richiamo successivo
+// (indirizzo, località, provincia, referente, telefono, email). Usato da
+// Preventivi, Ordini, Preventivi intervento, Richieste di intervento e
+// Rapporti — ovunque prima si potesse scegliere solo un cliente già
+// registrato.
+// `valore`: oggetto con (un sottoinsieme di) cliente, cliente_codice,
+// cliente_localita, cliente_provincia, cliente_piva, cliente_agente,
+// cliente_indirizzo, cliente_referente, cliente_telefono, cliente_email.
+// `onCambia(patch)`: chiamato con l'intero nuovo set di campi cliente.
+function SelezioneClienteEstesa({ valore, onCambia, sessione }){
+  const v = valore || {};
+  const [modificaLibero, setModificaLibero] = useState(false);
+  const [nome, setNome] = useState("");
+  const [indirizzo, setIndirizzo] = useState("");
+  const [localita, setLocalita] = useState("");
+  const [provincia, setProvincia] = useState("");
+  const [referente, setReferente] = useState("");
+  const [telefono, setTelefono] = useState("");
+  const [email, setEmail] = useState("");
+
+  const eLibero = !v.cliente_codice && !!v.cliente;
+
+  function apriModificaLibero(){
+    setNome(v.cliente||""); setIndirizzo(v.cliente_indirizzo||""); setLocalita(v.cliente_localita||"");
+    setProvincia(v.cliente_provincia||""); setReferente(v.cliente_referente||"");
+    setTelefono(v.cliente_telefono||""); setEmail(v.cliente_email||"");
+    setModificaLibero(true);
+  }
+  function salvaLibero(){
+    if(!nome.trim()) return;
+    onCambia({
+      cliente: nome.trim(), cliente_codice: null, cliente_piva: null, cliente_agente: null,
+      cliente_indirizzo: indirizzo.trim()||null, cliente_localita: localita.trim()||null,
+      cliente_provincia: provincia.trim()||null, cliente_referente: referente.trim()||null,
+      cliente_telefono: telefono.trim()||null, cliente_email: email.trim()||null,
+    });
+    setModificaLibero(false);
+  }
+
+  if(modificaLibero){
+    return (
+      <div style={{...S.card,cursor:"default",border:`1px solid ${C.ink}`}}>
+        <div style={S.eyebrow}>Cliente non in anagrafica</div>
+        <input value={nome} onChange={e=>setNome(e.target.value)} placeholder="Ragione sociale / nome cliente *" style={{...S.inp,marginTop:8,marginBottom:8}} autoFocus/>
+        <input value={indirizzo} onChange={e=>setIndirizzo(e.target.value)} placeholder="Indirizzo (facoltativo)" style={{...S.inp,marginBottom:8}}/>
+        <div style={{display:"flex",gap:8,marginBottom:8}}>
+          <input value={localita} onChange={e=>setLocalita(e.target.value)} placeholder="Località" style={{...S.inp,flex:2}}/>
+          <input value={provincia} onChange={e=>setProvincia(e.target.value.toUpperCase())} placeholder="Prov." maxLength={2} style={{...S.inp,flex:1}}/>
+        </div>
+        <input value={referente} onChange={e=>setReferente(e.target.value)} placeholder="Referente (facoltativo)" style={{...S.inp,marginBottom:8}}/>
+        <div style={{display:"flex",gap:8,marginBottom:10}}>
+          <input value={telefono} onChange={e=>setTelefono(e.target.value)} placeholder="Telefono" style={{...S.inp,flex:1}}/>
+          <input value={email} onChange={e=>setEmail(e.target.value)} placeholder="Email" style={{...S.inp,flex:1}}/>
+        </div>
+        <div style={{display:"flex",gap:8}}>
+          <button onClick={salvaLibero} disabled={!nome.trim()} style={{...S.btnAccent,padding:"9px 15px",opacity:nome.trim()?1:0.4}}>Usa questo cliente</button>
+          <button onClick={()=>setModificaLibero(false)} style={{...S.btnS,padding:"9px 15px"}}>Annulla</button>
+        </div>
+        <div style={{fontSize:11,color:"#9AA3AB",marginTop:10,lineHeight:1.5}}>
+          Non essendo in anagrafica, non comparirà nella scheda di nessun cliente — se in seguito lo aggiungi ai
+          Clienti, torna qui e usa la ricerca per collegarlo.
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      {eLibero && (
+        <div style={{fontSize:12,color:C.steel,marginBottom:8}}>
+          Cliente attuale (non in anagrafica): <strong>{v.cliente}</strong>
+          {(v.cliente_referente||v.cliente_telefono||v.cliente_email) && (
+            <div style={{fontSize:11,color:"#9AA3AB",marginTop:2}}>
+              {[v.cliente_referente, v.cliente_telefono, v.cliente_email].filter(Boolean).join(" · ")}
+            </div>
+          )}
+        </div>
+      )}
+      <SelezioneCliente
+        clienteSelezionato={v.cliente_codice ? {
+          codice: v.cliente_codice, ragione_sociale: v.cliente,
+          localita: v.cliente_localita, provincia: v.cliente_provincia,
+          partita_iva: v.cliente_piva, agente: v.cliente_agente,
+        } : null}
+        onSeleziona={(c)=>onCambia(c ? {
+          cliente: c.ragione_sociale, cliente_codice: c.codice,
+          cliente_localita: c.localita||"", cliente_provincia: c.provincia||"",
+          cliente_piva: c.partita_iva||"", cliente_agente: c.agente||"",
+          cliente_indirizzo: null, cliente_referente: null, cliente_telefono: null, cliente_email: null,
+        } : {
+          cliente:"", cliente_codice:null, cliente_localita:"", cliente_provincia:"", cliente_piva:"", cliente_agente:"",
+          cliente_indirizzo:null, cliente_referente:null, cliente_telefono:null, cliente_email:null,
+        })}
+        sessione={sessione}
+      />
+      {!v.cliente_codice && (
+        <button onClick={apriModificaLibero} style={{...S.btnS,marginTop:8,padding:"7px 12px",fontSize:12}}>
+          {v.cliente ? "✎ Modifica cliente non in anagrafica" : "+ Cliente non in anagrafica"}
+        </button>
+      )}
+    </div>
+  );
+}
+
+// Pillola di selezione compatta, riusata nei blocchi soluzione (vendita e
+// intervento) per "vendita diretta / finanziaria" senza dover ripetere lo
+// stile ogni volta.
+function pillStileCompatta(on){
+  return {
+    border:`1px solid ${on?C.ink:C.paperLine}`, borderRadius:7, padding:"7px 12px",
+    fontSize:12, cursor:"pointer", fontWeight:on?600:400,
+    background:on?C.ink:"#fff", color:on?"#fff":"#5B6770",
+  };
+}
+
+// Una soluzione ALTERNATIVA in un preventivo commerciale con più opzioni —
+// la prima soluzione resta quella "classica" (righe/val/finanziaria in
+// cima al preventivo, stessa logica di sempre per invio/approvazione/
+// conversione in ordine); queste sono opzioni aggiuntive mostrate per
+// confronto nello stesso documento, con proprio totale e propria
+// finanziaria. Se il cliente sceglie un'alternativa, va riportata nella
+// soluzione principale prima di convertire in ordine.
+function BloccoSoluzioneVendita({ soluzione, indice, onCambia, onRimuovi, catalog, ruolo, sessione }){
+  const righe = soluzione.righe || [];
+  const totale = righe.reduce((s,r)=>s+r.netto*(r.qty||1),0);
+  const finanziariaAttiva = soluzione.finanziaria_importo!=null;
+
+  function aggiornaRighe(nuove){
+    onCambia({ righe: nuove, val: nuove.reduce((s,r)=>s+r.netto*(r.qty||1),0) });
+  }
+  function aggiungiRiga(p){
+    const esiste = righe.some(r=>r.cod===p.cod);
+    aggiornaRighe(esiste ? righe.map(r=>r.cod===p.cod?{...r,qty:(r.qty||1)+1}:r) : [...righe, {cod:p.cod, nome:p.nome, mar:p.mar, netto:p.netto, qty:1}]);
+  }
+  function modificaRiga(cod, campo, valore){
+    aggiornaRighe(righe.map(r=>r.cod===cod?{...r,[campo]:valore}:r));
+  }
+  function eliminaRiga(cod){
+    aggiornaRighe(righe.filter(r=>r.cod!==cod));
+  }
+
+  return (
+    <div style={{...S.card,cursor:"default",border:`1px solid ${C.paperLine}`,marginBottom:16}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10,gap:8}}>
+        <input value={soluzione.nome||`Soluzione ${indice+2}`} onChange={e=>onCambia({nome:e.target.value})} style={{...S.inp,fontWeight:700,fontSize:14,flex:1}}/>
+        <button onClick={onRimuovi} style={{background:"none",border:"none",fontSize:18,color:"#9AA3AB",cursor:"pointer",flexShrink:0}}>✕</button>
+      </div>
+
+      <RicercaProdottiInline onSeleziona={aggiungiRiga} righeEsistenti={righe} ruolo={ruolo} catalog={catalog} sessione={sessione}/>
+
+      {righe.length===0 && <div style={{fontSize:12,color:"#9AA3AB",padding:"8px 0"}}>Nessun articolo ancora.</div>}
+      {righe.map(r=>(
+        <div key={r.cod} style={{...S.card,cursor:"default",display:"flex",justifyContent:"space-between",alignItems:"center",gap:10,marginTop:6}}>
+          <div style={{minWidth:0}}>
+            <Tag tone="steel">{r.mar}</Tag>
+            <div style={{fontWeight:600,fontSize:13,marginTop:4}}>{r.nome}</div>
+            <div style={{display:"flex",alignItems:"center",gap:5,marginTop:6}}>
+              <input type="number" min="1" value={r.qty||1} onChange={e=>modificaRiga(r.cod,"qty",Math.max(1,parseInt(e.target.value,10)||1))} style={{width:46,padding:"5px 6px",fontSize:12,border:`1px solid ${C.paperLine}`,borderRadius:5,textAlign:"center"}}/>
+              {!finanziariaAttiva && (<>
+                <span style={{fontSize:11,color:"#9AA3AB"}}>× €</span>
+                <input type="number" min="0" step="0.01" value={r.netto} onChange={e=>modificaRiga(r.cod,"netto",Math.max(0,parseFloat(e.target.value)||0))} style={{width:80,padding:"5px 6px",fontSize:12,border:`1px solid ${C.paperLine}`,borderRadius:5,textAlign:"right"}}/>
+              </>)}
+            </div>
+          </div>
+          <div style={{display:"flex",alignItems:"center",gap:8,flexShrink:0}}>
+            {!finanziariaAttiva && <span className="tnum" style={{fontWeight:700,fontFamily:F_MONO,fontSize:13}}>€{(r.netto*(r.qty||1)).toFixed(2)}</span>}
+            <button onClick={()=>eliminaRiga(r.cod)} style={{background:"none",border:"none",fontSize:15,color:"#9AA3AB",cursor:"pointer"}}>✕</button>
+          </div>
+        </div>
+      ))}
+
+      <div style={{marginTop:12,paddingTop:12,borderTop:`1px solid ${C.paperLine}`}}>
+        <div style={{display:"flex",gap:6,marginBottom:8}}>
+          <button onClick={()=>onCambia({finanziaria_importo:null,finanziaria_rata:null,finanziaria_mesi:null,finanziaria_iva_inclusa:null})} style={pillStileCompatta(soluzione.finanziaria_importo==null)}>Vendita diretta</button>
+          <button onClick={()=>{ if(soluzione.finanziaria_importo==null) onCambia({finanziaria_importo:totale, finanziaria_mesi:36, finanziaria_rata:null, finanziaria_iva_inclusa:false}); }} style={pillStileCompatta(finanziariaAttiva)}>Finanziaria fornitore</button>
+        </div>
+        {finanziariaAttiva && (
+          <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
+            <div><div style={S.eyebrow}>Importo (€)</div><input type="number" min="0" step="0.01" value={soluzione.finanziaria_importo} onChange={e=>onCambia({finanziaria_importo:parseFloat(e.target.value)||0})} style={{...S.inp,width:110}}/></div>
+            <div><div style={S.eyebrow}>Rata (€)</div><input type="number" min="0" step="0.01" value={soluzione.finanziaria_rata||""} onChange={e=>onCambia({finanziaria_rata:parseFloat(e.target.value)||0})} style={{...S.inp,width:110}}/></div>
+            <div><div style={S.eyebrow}>Mesi</div><input type="number" min="1" step="1" value={soluzione.finanziaria_mesi||""} onChange={e=>onCambia({finanziaria_mesi:Math.max(1,parseInt(e.target.value,10)||1)})} style={{...S.inp,width:70}}/></div>
+          </div>
+        )}
+      </div>
+
+      <div style={{display:"flex",justifyContent:"space-between",padding:"12px 0 0",marginTop:10,borderTop:`1px solid ${C.paperLine}`}}>
+        <span style={{fontWeight:600,fontSize:13}}>Totale soluzione</span>
+        <span className="tnum" style={{fontWeight:700,fontSize:16,fontFamily:F_MONO}}>
+          {finanziariaAttiva ? `€${(soluzione.finanziaria_rata||0).toFixed(2)}/mese × ${soluzione.finanziaria_mesi||0}` : `€${totale.toFixed(2)}`}
+        </span>
+      </div>
+    </div>
+  );
+}
+
 function Preventivi({cart,setCart,preventivi,setPreventivi,setOrdini,setArea,ruolo,catalog,sessione}){
   const [view,setView]=useState("home"); // home | cerca | da-gestire | in-ordine | bloccate | nuovo | dettaglio
   const [generandoPdf,setGenerandoPdf]=useState(false);
@@ -4498,8 +4720,6 @@ function Preventivi({cart,setCart,preventivi,setPreventivi,setOrdini,setArea,ruo
   const [promemoriaRecupero,setPromemoriaRecupero]=useState("");
   const [bozza,setBozza]=useState(null); // scadenza/referente/pagamento in modifica locale, salvati solo al click su "Salva"
   const [bozzaSalvata,setBozzaSalvata]=useState(false); // conferma temporanea dopo il salvataggio
-  const [clienteLibero,setClienteLibero]=useState(false); // true = form nome libero al posto della ricerca in anagrafica
-  const [nomeClienteLibero,setNomeClienteLibero]=useState("");
   useEffect(()=>{ setConfermaEliminazione(false); setConfermaSalto(false); setTipoMotivoSalto(""); setDettaglioMotivoSalto(""); setPromemoriaRecupero(""); setBozzaSalvata(false); setClienteLibero(false); setNomeClienteLibero(""); },[selId]);
   const [erroreSync,setErroreSync]=useState("");
   const [utentiTelos,setUtentiTelos]=useState(null); // null=non caricato, [] o [...]
@@ -4771,6 +4991,16 @@ function Preventivi({cart,setCart,preventivi,setPreventivi,setOrdini,setArea,ruo
       preventivo_progressivo: p.progressivo,
       cliente: p.cliente,
       cliente_codice: p.cliente_codice || null,
+      cliente_localita: p.cliente_localita || null,
+      cliente_provincia: p.cliente_provincia || null,
+      cliente_piva: p.cliente_piva || null,
+      cliente_agente: p.cliente_agente || null,
+      cliente_indirizzo: p.cliente_indirizzo || null,
+      cliente_referente: p.cliente_referente || null,
+      cliente_telefono: p.cliente_telefono || null,
+      cliente_email: p.cliente_email || null,
+      pagamento_modalita: p.pagamento_modalita || null,
+      pagamento_dettagli: p.pagamento_dettagli || null,
       righe: p.righe,
       val: p.val,
       stato: "Inserito",
@@ -4834,6 +5064,40 @@ function Preventivi({cart,setCart,preventivi,setPreventivi,setOrdini,setArea,ruo
   // senza leggere. Aggiornamento ottimistico con rollback se la cancellazione
   // sul server fallisce, per non far credere all'utente che sia sparito
   // quando in realtà è ancora lì.
+  // Crea un nuovo preventivo (Bozza) a partire da uno esistente — stessi
+  // articoli/soluzioni, cliente, pagamento e finanziaria; scadenza
+  // ricalcolata da oggi e tutto ciò che riguarda l'iter (stato, firma,
+  // conferma) riparte da zero, per non trascinarsi dietro l'accettazione
+  // di un altro documento.
+  async function duplicaPreventivo(p){
+    setErroreSync("");
+    const payload = {
+      cliente: p.cliente, cliente_codice: p.cliente_codice||null,
+      cliente_localita: p.cliente_localita||null, cliente_provincia: p.cliente_provincia||null,
+      cliente_piva: p.cliente_piva||null, cliente_agente: p.cliente_agente||null,
+      cliente_indirizzo: p.cliente_indirizzo||null, cliente_referente: p.cliente_referente||null,
+      cliente_telefono: p.cliente_telefono||null, cliente_email: p.cliente_email||null,
+      righe: p.righe||[], val: p.val||0, soluzioni: p.soluzioni||null,
+      pagamento_modalita: p.pagamento_modalita||"USUALE CODIFICATA", pagamento_dettagli: p.pagamento_dettagli||"",
+      referente_telos: p.referente_telos||sessione?.nome||"", note: p.note||"",
+      finanziaria_importo: p.finanziaria_importo, finanziaria_rata: p.finanziaria_rata, finanziaria_mesi: p.finanziaria_mesi,
+      finanziaria_iva_inclusa: p.finanziaria_iva_inclusa,
+      finanziaria_importo_senza_iva: p.finanziaria_importo_senza_iva, finanziaria_rata_senza_iva: p.finanziaria_rata_senza_iva,
+      finanziaria_importo_con_iva: p.finanziaria_importo_con_iva, finanziaria_rata_con_iva: p.finanziaria_rata_con_iva,
+      finanziaria_documenti: p.finanziaria_documenti,
+      stato: "Bozza", approvato: false,
+      scadenza: aggiungiGiorniLavorativi(new Date().toISOString().slice(0,10), 20),
+      creato_da_nome: sessione?.nome || null,
+    };
+    try{
+      const [salvato] = await sbAuth("POST","preventivi","",payload,accessToken);
+      setPreventivi(prev=>[salvato,...prev]);
+      setSelId(salvato.id);
+      setView("dettaglio");
+    }catch(err){
+      setErroreSync("Duplicazione non riuscita: "+err.message);
+    }
+  }
   async function eliminaPreventivo(id){
     setConfermaEliminazione(false);
     if(id==="__nuovo__"){
@@ -5009,68 +5273,11 @@ function Preventivi({cart,setCart,preventivi,setPreventivi,setOrdini,setArea,ruo
 
         {editable ? (
           <div style={{marginBottom:14}}>
-            {clienteLibero ? (
-              <div style={{...S.card,cursor:"default",border:`1px solid ${C.ink}`}}>
-                <div style={S.eyebrow}>Cliente non in anagrafica</div>
-                <input
-                  value={nomeClienteLibero}
-                  onChange={e=>setNomeClienteLibero(e.target.value)}
-                  placeholder="Ragione sociale / nome cliente"
-                  style={{...S.inp,marginTop:8,marginBottom:10}}
-                  autoFocus
-                />
-                <div style={{display:"flex",gap:8}}>
-                  <button
-                    onClick={()=>{
-                      aggiorna(selezionato.id, {
-                        cliente: nomeClienteLibero.trim(),
-                        cliente_codice: null, cliente_localita: "", cliente_provincia: "", cliente_piva: "",
-                      });
-                      setClienteLibero(false);
-                    }}
-                    disabled={!nomeClienteLibero.trim()}
-                    style={{...S.btnAccent,padding:"9px 15px",opacity:nomeClienteLibero.trim()?1:0.4}}
-                  >
-                    Usa questo nome
-                  </button>
-                  <button onClick={()=>{ setClienteLibero(false); setNomeClienteLibero(""); }} style={{...S.btnS,padding:"9px 15px"}}>Annulla</button>
-                </div>
-                <div style={{fontSize:11,color:"#9AA3AB",marginTop:10,lineHeight:1.5}}>
-                  Non essendo in anagrafica, questo preventivo non comparirà nella scheda di nessun cliente —
-                  se in seguito lo aggiungi ai Clienti, torna qui e usa la ricerca per collegarlo.
-                </div>
-              </div>
-            ) : (<>
-              {!selezionato.cliente_codice && selezionato.cliente && (
-                <div style={{fontSize:12,color:C.steel,marginBottom:8}}>
-                  Cliente attuale (non in anagrafica): <strong>{selezionato.cliente}</strong>
-                </div>
-              )}
-              <SelezioneCliente
-                clienteSelezionato={selezionato.cliente_codice ? {
-                  codice: selezionato.cliente_codice,
-                  ragione_sociale: selezionato.cliente,
-                  localita: selezionato.cliente_localita,
-                  provincia: selezionato.cliente_provincia,
-                  partita_iva: selezionato.cliente_piva,
-                } : null}
-                onSeleziona={(c)=>aggiorna(selezionato.id, c ? {
-                  cliente: c.ragione_sociale,
-                  cliente_codice: c.codice,
-                  cliente_localita: c.localita || "",
-                  cliente_provincia: c.provincia || "",
-                  cliente_piva: c.partita_iva || "",
-                } : {
-                  cliente:"", cliente_codice:null, cliente_localita:"", cliente_provincia:"", cliente_piva:"",
-                })}
-                sessione={sessione}
-              />
-              {!selezionato.cliente_codice && (
-                <button onClick={()=>{ setClienteLibero(true); setNomeClienteLibero(selezionato.cliente||""); }} style={{...S.btnS,marginTop:8,padding:"7px 12px",fontSize:12}}>
-                  {selezionato.cliente ? "✎ Modifica nome cliente" : "+ Cliente non in anagrafica"}
-                </button>
-              )}
-            </>)}
+            <SelezioneClienteEstesa
+              valore={selezionato}
+              onCambia={patch=>aggiorna(selezionato.id, patch)}
+              sessione={sessione}
+            />
           </div>
         ) : (
           <div style={{fontFamily:F_DISPLAY,fontSize:19,fontWeight:600,marginBottom:14}}>{selezionato.cliente || "Cliente non specificato"}</div>
@@ -5390,6 +5597,65 @@ function Preventivi({cart,setCart,preventivi,setPreventivi,setOrdini,setArea,ruo
           )}
         </div>
 
+        {/* Soluzioni alternative — opzioni aggiuntive mostrate a confronto
+            nello stesso preventivo, ciascuna con proprio totale e propria
+            finanziaria. La soluzione principale (sopra) resta quella che
+            guida invio/approvazione/conversione in ordine. */}
+        <div style={{...S.card,cursor:"default",marginBottom:16}}>
+          <label style={{display:"flex",alignItems:"center",gap:8,cursor:editable?"pointer":"default"}}>
+            <input
+              type="checkbox"
+              checked={!!(selezionato.soluzioni && selezionato.soluzioni.length>0)}
+              disabled={!editable}
+              onChange={e=>{
+                if(e.target.checked) aggiorna(selezionato.id, {soluzioni:[{nome:"Soluzione 2", righe:[], val:0}]});
+                else aggiorna(selezionato.id, {soluzioni:null});
+              }}
+              style={{width:16,height:16,accentColor:C.ink}}
+            />
+            <span style={{fontSize:12.5,fontWeight:600}}>Proponi anche soluzioni alternative</span>
+          </label>
+          {(selezionato.soluzioni && selezionato.soluzioni.length>0) && (
+            <div style={{marginTop:14}}>
+              {selezionato.soluzioni.map((s,i)=>(
+                editable ? (
+                  <BloccoSoluzioneVendita
+                    key={i}
+                    soluzione={s}
+                    indice={i}
+                    catalog={catalog}
+                    ruolo={ruolo}
+                    sessione={sessione}
+                    onCambia={patch=>{
+                      const nuove = selezionato.soluzioni.map((x,idx)=>idx===i?{...x,...patch}:x);
+                      aggiorna(selezionato.id, {soluzioni:nuove});
+                    }}
+                    onRimuovi={()=>{
+                      const nuove = selezionato.soluzioni.filter((_,idx)=>idx!==i);
+                      aggiorna(selezionato.id, {soluzioni: nuove.length>0 ? nuove : null});
+                    }}
+                  />
+                ) : (
+                  <div key={i} style={{...S.card,cursor:"default",marginBottom:10}}>
+                    <div style={{fontWeight:700,fontSize:13.5,marginBottom:6}}>{s.nome||`Soluzione ${i+2}`}</div>
+                    {(s.righe||[]).map(r=>(
+                      <div key={r.cod} style={{fontSize:12,color:C.steel,padding:"3px 0"}}>{r.nome} × {r.qty||1}</div>
+                    ))}
+                    <div style={{fontWeight:700,fontSize:14,marginTop:8,fontFamily:F_MONO}} className="tnum">
+                      {s.finanziaria_importo!=null ? `€${(s.finanziaria_rata||0).toFixed(2)}/mese × ${s.finanziaria_mesi||0}` : `€${(s.val||0).toFixed(2)}`}
+                    </div>
+                  </div>
+                )
+              ))}
+              {editable && (
+                <button onClick={()=>aggiorna(selezionato.id, {soluzioni:[...selezionato.soluzioni, {nome:`Soluzione ${selezionato.soluzioni.length+2}`, righe:[], val:0}]})} style={{...S.btnS,width:"100%"}}>
+                  + Aggiungi un'altra soluzione
+                </button>
+              )}
+            </div>
+          )}
+        </div>
+
         {/* Azioni di stato */}
         <div style={{display:"flex",flexDirection:"column",gap:8,marginTop:6}}>
           {editable && (
@@ -5444,6 +5710,7 @@ function Preventivi({cart,setCart,preventivi,setPreventivi,setOrdini,setArea,ruo
                 conferma_alt_nome: selezionato.conferma_alt_nome,
                 conferma_alt_tipo: selezionato.conferma_alt_tipo,
                 conferma_alt_data: selezionato.conferma_alt_data,
+                soluzioni: selezionato.soluzioni,
               });
             } finally { setGenerandoPdf(false); }
           }} style={{...S.btnAccent,padding:"14px",fontSize:14,fontWeight:700,background:C.cyan,color:C.inkDeep,opacity:generandoPdf?0.6:1}}>
@@ -5535,6 +5802,14 @@ function Preventivi({cart,setCart,preventivi,setPreventivi,setOrdini,setArea,ruo
                 </div>
               </div>
             )}
+          </div>
+        )}
+
+        {selezionato.id!=="__nuovo__" && (
+          <div style={{marginTop:20,paddingTop:20,borderTop:`1px solid ${C.paperLine}`}}>
+            <button onClick={()=>duplicaPreventivo(selezionato)} style={{width:"100%",padding:"12px",background:"#fff",color:C.ink,border:`1px solid ${C.ink}`,borderRadius:9,fontSize:13.5,fontWeight:600,cursor:"pointer"}}>
+              📋 Duplica in un nuovo preventivo
+            </button>
           </div>
         )}
 
@@ -6005,9 +6280,7 @@ function Ordini({ordini,setOrdini,preventivi,setPreventivi,setInterventi,catalog
 
   // ── Nuovo ordine senza preventivo ───────────────────────────────────────
   const [creandoNuovo,setCreandoNuovo] = useState(false);
-  const [nuovoCliente,setNuovoCliente] = useState(null);
-  const [nuovoClienteLibero,setNuovoClienteLibero] = useState(false);
-  const [nuovoNomeClienteLibero,setNuovoNomeClienteLibero] = useState("");
+  const [clienteInfoNuovoOrdine,setClienteInfoNuovoOrdine] = useState({});
   const [nuoveRighe,setNuoveRighe] = useState([]);
   const [nuovaFinanziaria,setNuovaFinanziaria] = useState(null); // { importo, rata, mesi, ivaInclusa, importoSenzaIva, rataSenzaIva, importoConIva, rataConIva, documenti }
   const [mostraSelezionePacchettoOrdine,setMostraSelezionePacchettoOrdine] = useState(false);
@@ -6015,8 +6288,8 @@ function Ordini({ordini,setOrdini,preventivi,setPreventivi,setInterventi,catalog
   const [erroreNuovo,setErroreNuovo] = useState("");
 
   function annullaNuovoOrdine(){
-    setCreandoNuovo(false); setNuovoCliente(null); setNuovoClienteLibero(false);
-    setNuovoNomeClienteLibero(""); setNuoveRighe([]); setNuovaFinanziaria(null);
+    setCreandoNuovo(false); setClienteInfoNuovoOrdine({});
+    setNuoveRighe([]); setNuovaFinanziaria(null);
     setMostraSelezionePacchettoOrdine(false); setErroreNuovo("");
   }
   function aggiungiRigaNuovoOrdine(rigaNuova){
@@ -6068,14 +6341,22 @@ function Ordini({ordini,setOrdini,preventivi,setPreventivi,setInterventi,catalog
   function rimuoviRigaNuovoOrdine(cod){
     setNuoveRighe(prev=>prev.filter(r=>r.cod!==cod));
   }
-  const nomeClienteNuovoOrdine = nuovoClienteLibero ? nuovoNomeClienteLibero.trim() : (nuovoCliente?.ragione_sociale||"");
+  const nomeClienteNuovoOrdine = clienteInfoNuovoOrdine.cliente || "";
   async function salvaNuovoOrdine(){
     if(!nomeClienteNuovoOrdine || nuoveRighe.length===0) return;
     setSalvandoNuovo(true); setErroreNuovo("");
     const payload = {
       preventivo_id: null,
       cliente: nomeClienteNuovoOrdine,
-      cliente_codice: nuovoClienteLibero ? null : (nuovoCliente?.codice || null),
+      cliente_codice: clienteInfoNuovoOrdine.cliente_codice || null,
+      cliente_localita: clienteInfoNuovoOrdine.cliente_localita || null,
+      cliente_provincia: clienteInfoNuovoOrdine.cliente_provincia || null,
+      cliente_piva: clienteInfoNuovoOrdine.cliente_piva || null,
+      cliente_agente: clienteInfoNuovoOrdine.cliente_agente || null,
+      cliente_indirizzo: clienteInfoNuovoOrdine.cliente_indirizzo || null,
+      cliente_referente: clienteInfoNuovoOrdine.cliente_referente || null,
+      cliente_telefono: clienteInfoNuovoOrdine.cliente_telefono || null,
+      cliente_email: clienteInfoNuovoOrdine.cliente_email || null,
       righe: nuoveRighe,
       val: ricalcolaVal(nuoveRighe),
       stato: "Inserito",
@@ -6496,7 +6777,7 @@ function Ordini({ordini,setOrdini,preventivi,setPreventivi,setInterventi,catalog
       <td style="padding:8px 6px;border-bottom:1px solid #E3E5EA;font-size:12px;font-family:monospace">${r.cod}</td>
       <td style="padding:8px 6px;border-bottom:1px solid #E3E5EA;font-size:12px;text-align:center">${r.qty||1}</td>
       <td style="padding:8px 6px;border-bottom:1px solid #E3E5EA;font-size:12px;text-align:right">€${(r.netto*(r.qty||1)).toFixed(2)}</td></tr>`).join("");
-    const html = `<!DOCTYPE html><html><head><title>Ordine ${codiceOrdine(o)}</title>
+    const html = `<!DOCTYPE html><html><head><meta charset="utf-8"/><title>Ordine ${codiceOrdine(o)}</title>
 <style>
   *{box-sizing:border-box;margin:0;padding:0}
   body{font-family:Arial,sans-serif;padding:36px 40px;color:#232323;font-size:13px}
@@ -6506,6 +6787,10 @@ function Ordini({ordini,setOrdini,preventivi,setPreventivi,setInterventi,catalog
   table{width:100%;border-collapse:collapse;margin-top:10px}
   th{background:#162758;color:#fff;padding:8px 6px;font-size:11px;text-align:left}
   .tot{text-align:right;margin-top:18px;font-size:18px;font-weight:700;color:#162758}
+  .blocco{margin-top:18px;border:1px solid #E3E5EA;border-radius:6px;padding:12px 14px}
+  .blocco .titolo{font-size:11px;font-weight:700;color:#162758;text-transform:uppercase;letter-spacing:.03em;margin-bottom:8px}
+  .blocco .riga{display:flex;justify-content:space-between;font-size:12px;padding:3px 0}
+  .blocco .riga .lbl{color:#7C879E}
   .firma{margin-top:24px;border:1px solid #E3E5EA;border-radius:6px;padding:14px}
   .firma img{max-width:200px;max-height:80px;display:block}
   .firma-nota{font-size:10px;color:#7C879E;margin-top:6px;font-style:italic}
@@ -6513,9 +6798,48 @@ function Ordini({ordini,setOrdini,preventivi,setPreventivi,setInterventi,catalog
 </style></head><body>
 <div class="hd"><div><div class="brand">Telos Tech</div><div style="font-size:11px;color:#7C879E">Conferma d'ordine</div></div>
 <div class="meta"><div>N° ${codiceOrdine(o)}</div><div>Rif. preventivo ${codicePreventivoRif(o)}</div><div>Data: ${o.creato_il ? new Date(o.creato_il).toLocaleDateString("it-IT") : ""}</div></div></div>
-<div style="font-size:15px;font-weight:600;margin-bottom:6px">${o.cliente}</div>
+
+<div style="font-size:15px;font-weight:600;margin-bottom:2px">${o.cliente}</div>
+<div style="font-size:11px;color:#7C879E">
+  ${[o.cliente_codice?`Cod. ${o.cliente_codice}`:"", [o.cliente_localita,o.cliente_provincia?`(${o.cliente_provincia})`:""].filter(Boolean).join(" "), o.cliente_piva?`P.IVA ${o.cliente_piva}`:"", o.cliente_agente?`Agente: ${o.cliente_agente}`:""].filter(Boolean).join(" · ")}
+</div>
+${(o.cliente_indirizzo||o.cliente_referente||o.cliente_telefono||o.cliente_email) ? `
+<div style="font-size:11px;color:#7C879E">
+  ${[o.cliente_indirizzo, o.cliente_referente?`Referente: ${o.cliente_referente}`:"", o.cliente_telefono, o.cliente_email].filter(Boolean).join(" · ")}
+</div>` : ""}
+
 <table><thead><tr><th>Articolo</th><th>Codice</th><th style="text-align:center">Qtà</th><th style="text-align:right">Totale</th></tr></thead><tbody>${righe}</tbody></table>
 <div class="tot">Totale: €${o.val.toFixed(2)}</div>
+
+${o.pagamento_modalita ? `
+<div class="blocco">
+  <div class="titolo">Pagamento</div>
+  <div class="riga"><span class="lbl">Modalità</span><span>${o.pagamento_modalita}${o.pagamento_dettagli?` — ${o.pagamento_dettagli}`:""}</span></div>
+</div>` : ""}
+
+${(o.installazione_attiva || o.formazione_attiva) ? `
+<div class="blocco">
+  <div class="titolo">Installazione e formazione</div>
+  ${o.installazione_attiva ? `<div class="riga"><span class="lbl">Installazione</span><span>Richiesta${o.installazione_tecnico?` — ${o.installazione_tecnico}`:""}</span></div>` : ""}
+  ${o.formazione_attiva ? `<div class="riga"><span class="lbl">Formazione</span><span>Richiesta${o.formazione_tecnico?` — ${o.formazione_tecnico}`:""}</span></div>` : ""}
+</div>` : ""}
+
+${(o.destinazione_diversa_attiva || o.mezzi_movimentazione_attiva) ? `
+<div class="blocco">
+  <div class="titolo">Trasporto e movimentazione</div>
+  ${o.destinazione_diversa_attiva ? `<div class="riga"><span class="lbl">Destinazione diversa</span><span>${o.destinazione_diversa_testo||"—"}</span></div>` : ""}
+  ${o.mezzi_movimentazione_attiva ? `<div class="riga"><span class="lbl">Mezzi di movimentazione</span><span>${o.mezzi_movimentazione_disponibili?"Disponibili presso il cliente":"Da concordare"}</span></div>` : ""}
+</div>` : ""}
+
+${o.rottamazione_attiva ? `
+<div class="blocco">
+  <div class="titolo">Rottamazione</div>
+  ${o.rottamazione_modello ? `<div class="riga"><span class="lbl">Modello</span><span>${o.rottamazione_modello}</span></div>` : ""}
+  ${o.rottamazione_seriale ? `<div class="riga"><span class="lbl">Matricola</span><span>${o.rottamazione_seriale}</span></div>` : ""}
+  ${o.rottamazione_valore ? `<div class="riga"><span class="lbl">Valore riconosciuto</span><span>€${(+o.rottamazione_valore).toFixed(2)}</span></div>` : ""}
+  ${o.rottamazione_gestione ? `<div class="riga"><span class="lbl">Gestione</span><span>${o.rottamazione_gestione}</span></div>` : ""}
+</div>` : ""}
+
 ${o.firma_cliente ? `
 <div class="firma">
   <div style="font-size:11px;font-weight:600;color:#3A4248;margin-bottom:6px">Accettato con firma del cliente</div>
@@ -6923,19 +7247,13 @@ ${o.firma_cliente ? `
             "Inserito", con lo stesso modulo logistico degli altri.
           </div>
 
-          {nuovoClienteLibero ? (
-            <div style={{marginBottom:12}}>
-              <input value={nuovoNomeClienteLibero} onChange={e=>setNuovoNomeClienteLibero(e.target.value)} placeholder="Ragione sociale / nome cliente" style={{...S.inp,marginBottom:8}} autoFocus/>
-              <button onClick={()=>{ setNuovoClienteLibero(false); setNuovoNomeClienteLibero(""); }} style={{...S.btnS,padding:"6px 11px",fontSize:11.5}}>← Cerca in anagrafica</button>
-            </div>
-          ) : (
-            <div style={{marginBottom:12}}>
-              <SelezioneCliente clienteSelezionato={nuovoCliente} onSeleziona={setNuovoCliente} sessione={sessione}/>
-              {!nuovoCliente && (
-                <button onClick={()=>setNuovoClienteLibero(true)} style={{...S.btnS,marginTop:8,padding:"7px 12px",fontSize:12}}>+ Cliente non in anagrafica</button>
-              )}
-            </div>
-          )}
+          <div style={{marginBottom:12}}>
+            <SelezioneClienteEstesa
+              valore={clienteInfoNuovoOrdine}
+              onCambia={patch=>setClienteInfoNuovoOrdine(patch)}
+              sessione={sessione}
+            />
+          </div>
 
           <RicercaProdottiInline onSeleziona={aggiungiRigaNuovoOrdine} righeEsistenti={nuoveRighe} ruolo={ruolo} catalog={catalog} sessione={sessione}/>
           <button onClick={()=>setMostraSelezionePacchettoOrdine(true)} style={{...S.btnS,marginTop:8,marginBottom:4}}>📦 Aggiungi un pacchetto</button>
@@ -7061,9 +7379,69 @@ ${o.firma_cliente ? `
 // mano) e manodopera/trasferta (dal listino di Telos interno, di
 // un'assistenza esterna, o inserita a mano) — vedi tabella
 // "preventivi_intervento" e "assistenze".
-function FormPreventivoIntervento({ preventivo, catalog, attrezzature, sessione, setInterventi, onSalvato, onAnnulla }){
+// Una soluzione ALTERNATIVA in un preventivo intervento — voci libere
+// (ricambio o manodopera, senza distinzione: qui si tratta di opzioni
+// alternative rapide da confrontare, non della lavorazione dettagliata
+// della soluzione principale). La soluzione principale resta quella che
+// guida richiesta di intervento/conferma cliente.
+function BloccoSoluzioneIntervento({ soluzione, indice, onCambia, onRimuovi }){
+  const righe = soluzione.righe || [];
+  const totale = righe.reduce((s,r)=>s+(r.prezzo||0)*(r.qty||1),0);
+  const [descr, setDescr] = useState("");
+  const [prezzo, setPrezzo] = useState("");
+
+  function aggiungi(){
+    if(!descr.trim() || !prezzo) return;
+    const nuove = [...righe, {descrizione:descr.trim(), prezzo:parseFloat(prezzo)||0, qty:1}];
+    onCambia({ righe: nuove, val: nuove.reduce((s,r)=>s+(r.prezzo||0)*(r.qty||1),0) });
+    setDescr(""); setPrezzo("");
+  }
+  function rimuoviRiga(i){
+    const nuove = righe.filter((_,idx)=>idx!==i);
+    onCambia({ righe: nuove, val: nuove.reduce((s,r)=>s+(r.prezzo||0)*(r.qty||1),0) });
+  }
+
+  return (
+    <div style={{...S.card,cursor:"default",border:`1px solid ${C.paperLine}`,marginBottom:16}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10,gap:8}}>
+        <input value={soluzione.nome||`Soluzione ${indice+2}`} onChange={e=>onCambia({nome:e.target.value})} style={{...S.inp,fontWeight:700,fontSize:14,flex:1}}/>
+        <button onClick={onRimuovi} style={{background:"none",border:"none",fontSize:18,color:"#9AA3AB",cursor:"pointer",flexShrink:0}}>✕</button>
+      </div>
+      {righe.length===0 && <div style={{fontSize:12,color:"#9AA3AB",padding:"6px 0"}}>Nessuna voce ancora.</div>}
+      {righe.map((r,i)=>(
+        <div key={i} style={{...S.card,cursor:"default",display:"flex",justifyContent:"space-between",alignItems:"center",gap:8,marginBottom:6}}>
+          <div style={{fontSize:12.5,flex:1}}>{r.descrizione}</div>
+          <span className="tnum" style={{fontWeight:700,fontSize:12.5,fontFamily:F_MONO}}>€{(r.prezzo*(r.qty||1)).toFixed(2)}</span>
+          <button onClick={()=>rimuoviRiga(i)} style={{background:"none",border:"none",fontSize:15,color:"#9AA3AB",cursor:"pointer"}}>✕</button>
+        </div>
+      ))}
+      <div style={{display:"flex",gap:8,marginTop:8}}>
+        <input value={descr} onChange={e=>setDescr(e.target.value)} placeholder="Voce (ricambio o manodopera)…" style={{...S.inp,flex:1}}/>
+        <input type="number" min="0" step="0.01" value={prezzo} onChange={e=>setPrezzo(e.target.value)} placeholder="€" style={{width:80,padding:"10px 12px",fontSize:13,border:`1px solid ${C.paperLine}`,borderRadius:7}}/>
+        <button onClick={aggiungi} style={S.btnS}>+ Aggiungi</button>
+      </div>
+      <div style={{display:"flex",justifyContent:"space-between",padding:"12px 0 0",marginTop:10,borderTop:`1px solid ${C.paperLine}`}}>
+        <span style={{fontWeight:600,fontSize:13}}>Totale soluzione</span>
+        <span className="tnum" style={{fontWeight:700,fontSize:16,fontFamily:F_MONO}}>€{totale.toFixed(2)}</span>
+      </div>
+    </div>
+  );
+}
+
+function FormPreventivoIntervento({ preventivo, catalog, attrezzature, sessione, setInterventi, onSalvato, onAnnulla, onDuplicato }){
   const accessToken = trovaAccessToken(sessione);
-  const [cliente, setCliente] = useState(preventivo ? { codice: preventivo.cliente_codice, ragione_sociale: preventivo.cliente } : null);
+  const [clienteInfo, setClienteInfo] = useState({
+    cliente: preventivo?.cliente || "",
+    cliente_codice: preventivo?.cliente_codice || null,
+    cliente_localita: preventivo?.cliente_localita || null,
+    cliente_provincia: preventivo?.cliente_provincia || null,
+    cliente_piva: preventivo?.cliente_piva || null,
+    cliente_agente: preventivo?.cliente_agente || null,
+    cliente_indirizzo: preventivo?.cliente_indirizzo || null,
+    cliente_referente: preventivo?.cliente_referente || null,
+    cliente_telefono: preventivo?.cliente_telefono || null,
+    cliente_email: preventivo?.cliente_email || null,
+  });
   const [attrezzaturaId, setAttrezzaturaId] = useState(preventivo?.attrezzatura_id || "");
   const [assistenze, setAssistenze] = useState(null);
   const [assistenzaId, setAssistenzaId] = useState(preventivo?.assistenza_id || "");
@@ -7071,6 +7449,7 @@ function FormPreventivoIntervento({ preventivo, catalog, attrezzature, sessione,
   const [descrizioneAttivita, setDescrizioneAttivita] = useState(preventivo?.descrizione_attivita || "");
   const [righeRicambi, setRigheRicambi] = useState(preventivo?.righe_ricambi || []);
   const [righeManodopera, setRigheManodopera] = useState(preventivo?.righe_manodopera || []);
+  const [soluzioni, setSoluzioni] = useState(preventivo?.soluzioni || null);
   const [salvando, setSalvando] = useState(false);
   const [generandoPdf, setGenerandoPdf] = useState(false);
   const [errore, setErrore] = useState("");
@@ -7108,10 +7487,10 @@ function FormPreventivoIntervento({ preventivo, catalog, attrezzature, sessione,
     if(!preventivo) return;
     setSalvandoPianificazione(true); setMsgPianificazione("");
     const payload = {
-      titolo: oggetto || `Intervento tecnico — ${cliente?.ragione_sociale || preventivo.cliente}`,
+      titolo: oggetto || `Intervento tecnico — ${clienteInfo.cliente || preventivo.cliente}`,
       tipo: "intervento_tecnico",
       cliente_codice: preventivo.cliente_codice || null,
-      cliente_nome: cliente?.ragione_sociale || preventivo.cliente,
+      cliente_nome: clienteInfo.cliente || preventivo.cliente,
       stato: "Richiesto",
       priorita: "media",
       note: `${oggetto}${descrizioneAttivita?`\n\n${descrizioneAttivita}`:""}`,
@@ -7145,9 +7524,9 @@ function FormPreventivoIntervento({ preventivo, catalog, attrezzature, sessione,
   },[]);
 
   const attrezzatureCliente = useMemo(()=>{
-    if(!cliente) return [];
-    return (attrezzature||[]).filter(a=>a.cliente_codice===cliente.codice && a.stato!=="Dismessa");
-  },[attrezzature, cliente]);
+    if(!clienteInfo.cliente_codice) return [];
+    return (attrezzature||[]).filter(a=>a.cliente_codice===clienteInfo.cliente_codice && a.stato!=="Dismessa");
+  },[attrezzature, clienteInfo.cliente_codice]);
 
   const assistenzaSelezionata = useMemo(()=>(assistenze||[]).find(a=>a.id===assistenzaId), [assistenze, assistenzaId]);
 
@@ -7189,17 +7568,21 @@ function FormPreventivoIntervento({ preventivo, catalog, attrezzature, sessione,
   const totale = [...righeRicambi, ...righeManodopera].reduce((s,r)=>s+(r.prezzo||0)*(r.qty||1), 0);
 
   async function salva(){
-    if(!cliente){ setErrore("Seleziona un cliente."); return; }
+    if(!clienteInfo.cliente){ setErrore("Seleziona un cliente."); return; }
     if(!oggetto.trim()){ setErrore("Inserisci l'oggetto del preventivo."); return; }
     setErrore(""); setSalvando(true);
     const payload = {
-      cliente: cliente.ragione_sociale, cliente_codice: cliente.codice || null,
+      cliente: clienteInfo.cliente, cliente_codice: clienteInfo.cliente_codice || null,
+      cliente_localita: clienteInfo.cliente_localita || null, cliente_provincia: clienteInfo.cliente_provincia || null,
+      cliente_indirizzo: clienteInfo.cliente_indirizzo || null, cliente_referente: clienteInfo.cliente_referente || null,
+      cliente_telefono: clienteInfo.cliente_telefono || null, cliente_email: clienteInfo.cliente_email || null,
       attrezzatura_id: attrezzaturaId || null,
       oggetto: oggetto.trim(),
       descrizione_attivita: descrizioneAttivita.trim() || null,
       assistenza_id: assistenzaId || null,
       righe_ricambi: righeRicambi,
       righe_manodopera: righeManodopera,
+      soluzioni: soluzioni,
       val: totale,
       aggiornato_il: new Date().toISOString(),
     };
@@ -7212,6 +7595,37 @@ function FormPreventivoIntervento({ preventivo, catalog, attrezzature, sessione,
     }
     setSalvando(false);
   }
+  // Crea un nuovo preventivo intervento (Bozza) a partire da questo — stessi
+  // cliente/oggetto/descrizione/ricambi/manodopera, iter (stato, firma,
+  // conferma) riparte da zero.
+  const [duplicando, setDuplicando] = useState(false);
+  async function duplica(){
+    if(!preventivo) return;
+    setDuplicando(true); setErrore("");
+    const payload = {
+      cliente: clienteInfo.cliente, cliente_codice: clienteInfo.cliente_codice || null,
+      cliente_localita: clienteInfo.cliente_localita || null, cliente_provincia: clienteInfo.cliente_provincia || null,
+      cliente_indirizzo: clienteInfo.cliente_indirizzo || null, cliente_referente: clienteInfo.cliente_referente || null,
+      cliente_telefono: clienteInfo.cliente_telefono || null, cliente_email: clienteInfo.cliente_email || null,
+      attrezzatura_id: attrezzaturaId || null,
+      oggetto: oggetto.trim(),
+      descrizione_attivita: descrizioneAttivita.trim() || null,
+      assistenza_id: assistenzaId || null,
+      righe_ricambi: righeRicambi,
+      righe_manodopera: righeManodopera,
+      soluzioni: soluzioni,
+      val: totale,
+      stato: "Bozza",
+      creato_da_nome: sessione?.nome || null,
+    };
+    try{
+      const [salvato] = await sbAuth("POST","preventivi_intervento","",payload,accessToken);
+      onDuplicato(salvato);
+    }catch(err){
+      setErrore("Duplicazione non riuscita: "+err.message);
+    }
+    setDuplicando(false);
+  }
 
   return (
     <div>
@@ -7220,11 +7634,14 @@ function FormPreventivoIntervento({ preventivo, catalog, attrezzature, sessione,
 
       <div style={S.eyebrow}>Cliente *</div>
       <div style={{marginBottom:16}}>
-        <SelezioneCliente sessione={sessione} clienteSelezionato={cliente} onSeleziona={c=>{ setCliente(c); setAttrezzaturaId(""); }}/>
-        {cliente && <button onClick={()=>{ setCliente(null); setAttrezzaturaId(""); }} style={{...S.btnS,marginTop:8,padding:"5px 10px",fontSize:11.5}}>Cambia cliente</button>}
+        <SelezioneClienteEstesa
+          valore={clienteInfo}
+          onCambia={patch=>{ setClienteInfo(patch); setAttrezzaturaId(""); }}
+          sessione={sessione}
+        />
       </div>
 
-      {cliente && attrezzatureCliente.length>0 && (
+      {clienteInfo.cliente_codice && attrezzatureCliente.length>0 && (
         <>
           <div style={S.eyebrow}>Strumento su cui intervenire (facoltativo)</div>
           <select value={attrezzaturaId} onChange={e=>setAttrezzaturaId(e.target.value)} style={{...S.inp,marginBottom:16}}>
@@ -7329,6 +7746,37 @@ function FormPreventivoIntervento({ preventivo, catalog, attrezzature, sessione,
         <span className="tnum" style={{fontWeight:700,fontSize:18,fontFamily:F_MONO,color:C.ink}}>€{totale.toFixed(2)}</span>
       </div>
 
+      {/* Soluzioni alternative — opzioni aggiuntive mostrate a confronto
+          nello stesso preventivo; la soluzione principale (sopra) resta
+          quella che guida la richiesta di intervento. */}
+      <div style={{...S.card,cursor:"default",marginBottom:16}}>
+        <label style={{display:"flex",alignItems:"center",gap:8,cursor:"pointer"}}>
+          <input
+            type="checkbox"
+            checked={!!(soluzioni && soluzioni.length>0)}
+            onChange={e=>setSoluzioni(e.target.checked ? [{nome:"Soluzione 2", righe:[], val:0}] : null)}
+            style={{width:16,height:16,accentColor:C.ink}}
+          />
+          <span style={{fontSize:12.5,fontWeight:600}}>Proponi anche soluzioni alternative</span>
+        </label>
+        {(soluzioni && soluzioni.length>0) && (
+          <div style={{marginTop:14}}>
+            {soluzioni.map((s,i)=>(
+              <BloccoSoluzioneIntervento
+                key={i}
+                soluzione={s}
+                indice={i}
+                onCambia={patch=>setSoluzioni(prev=>prev.map((x,idx)=>idx===i?{...x,...patch}:x))}
+                onRimuovi={()=>setSoluzioni(prev=>{ const nuove=prev.filter((_,idx)=>idx!==i); return nuove.length>0?nuove:null; })}
+              />
+            ))}
+            <button onClick={()=>setSoluzioni(prev=>[...prev, {nome:`Soluzione ${prev.length+2}`, righe:[], val:0}])} style={{...S.btnS,width:"100%"}}>
+              + Aggiungi un'altra soluzione
+            </button>
+          </div>
+        )}
+      </div>
+
       {preventivo && (
         <SezioneConferma record={confermaLocale} editable={true} onAggiorna={aggiornaConfermaIntervento}/>
       )}
@@ -7364,7 +7812,7 @@ function FormPreventivoIntervento({ preventivo, catalog, attrezzature, sessione,
               setGenerandoPdf(true);
               try{
                 await generaPreventivoInterventoPDF(
-                  { ...preventivo, ...confermaLocale, cliente: cliente?.ragione_sociale, oggetto, descrizione_attivita: descrizioneAttivita, righe_ricambi: righeRicambi, righe_manodopera: righeManodopera, val: totale },
+                  { ...preventivo, ...confermaLocale, cliente: clienteInfo.cliente, oggetto, descrizione_attivita: descrizioneAttivita, righe_ricambi: righeRicambi, righe_manodopera: righeManodopera, soluzioni: soluzioni, val: totale },
                   { assistenzaNome: assistenzaSelezionata ? (assistenzaSelezionata.interno?"Telos (interno)":assistenzaSelezionata.nome) : "Da definire" }
                 );
               } finally { setGenerandoPdf(false); }
@@ -7398,7 +7846,7 @@ function FormPreventivoIntervento({ preventivo, catalog, attrezzature, sessione,
 // una data/ora esatta (quella si conferma dopo, nello stadio successivo).
 function FormNuovoInterventoDaPianificare({ attrezzature, sessione, onCreato, onAnnulla }){
   const accessToken = trovaAccessToken(sessione);
-  const [cliente, setCliente] = useState(null);
+  const [clienteInfo, setClienteInfo] = useState({});
   const [tipo, setTipo] = useState("");
   const [note, setNote] = useState("");
   const [priorita, setPriorita] = useState("media");
@@ -7421,15 +7869,15 @@ function FormNuovoInterventoDaPianificare({ attrezzature, sessione, onCreato, on
   },[]);
 
   const attrezzatureCliente = useMemo(()=>
-    (attrezzature||[]).filter(a=>a.cliente_codice===cliente?.codice && a.stato!=="Dismessa")
-  ,[attrezzature, cliente]);
+    (attrezzature||[]).filter(a=>a.cliente_codice===clienteInfo.cliente_codice && a.stato!=="Dismessa")
+  ,[attrezzature, clienteInfo.cliente_codice]);
 
   function toggleTecnico(id){
     setTecniciScelti(prev => prev.includes(id) ? prev.filter(x=>x!==id) : [...prev, id]);
   }
 
   async function salva(){
-    if(!cliente || !tipo) return;
+    if(!clienteInfo.cliente || !tipo) return;
     if(modoEsecutore==="interno" && tecniciScelti.length===0) return;
     if(modoEsecutore==="esterna" && !assistenzaScelta) return;
     setSalvando(true); setErrore("");
@@ -7438,10 +7886,16 @@ function FormNuovoInterventoDaPianificare({ attrezzature, sessione, onCreato, on
       .filter(Boolean)
       .map(u => `${u.nome} ${u.cognome||""}`.trim());
     const payload = {
-      titolo: `${TIPO_LABELS[tipo]||tipo} — ${cliente.ragione_sociale}`,
+      titolo: `${TIPO_LABELS[tipo]||tipo} — ${clienteInfo.cliente}`,
       tipo,
-      cliente_codice: cliente.codice || null,
-      cliente_nome: cliente.ragione_sociale,
+      cliente_codice: clienteInfo.cliente_codice || null,
+      cliente_nome: clienteInfo.cliente,
+      cliente_localita: clienteInfo.cliente_localita || null,
+      cliente_provincia: clienteInfo.cliente_provincia || null,
+      cliente_indirizzo: clienteInfo.cliente_indirizzo || null,
+      cliente_referente: clienteInfo.cliente_referente || null,
+      cliente_telefono: clienteInfo.cliente_telefono || null,
+      cliente_email: clienteInfo.cliente_email || null,
       stato: "Da pianificare",
       priorita,
       note: note.trim() || null,
@@ -7477,7 +7931,11 @@ function FormNuovoInterventoDaPianificare({ attrezzature, sessione, onCreato, on
 
       <div style={S.eyebrow}>Cliente *</div>
       <div style={{marginBottom:16}}>
-        <SelezioneCliente sessione={sessione} clienteSelezionato={cliente} onSeleziona={c=>{ setCliente(c); setAttrezzaturaId(""); }}/>
+        <SelezioneClienteEstesa
+          valore={clienteInfo}
+          onCambia={patch=>{ setClienteInfo(patch); setAttrezzaturaId(""); }}
+          sessione={sessione}
+        />
       </div>
 
       <div style={S.eyebrow}>Tipo intervento *</div>
@@ -7490,7 +7948,7 @@ function FormNuovoInterventoDaPianificare({ attrezzature, sessione, onCreato, on
         ))}
       </div>
 
-      {cliente && attrezzatureCliente.length>0 && (
+      {clienteInfo.cliente_codice && attrezzatureCliente.length>0 && (
         <>
           <div style={S.eyebrow}>Strumento (facoltativo)</div>
           <select value={attrezzaturaId} onChange={e=>{ setAttrezzaturaId(e.target.value); setAttrezzaturaTesto(""); }} style={{...S.inp,marginBottom:16}}>
@@ -7557,7 +8015,7 @@ function FormNuovoInterventoDaPianificare({ attrezzature, sessione, onCreato, on
 
       {errore && <div style={{fontSize:12.5,color:C.danger,marginBottom:12}}>⚠ {errore}</div>}
       <button
-        disabled={salvando || !cliente || !tipo || (modoEsecutore==="interno"?tecniciScelti.length===0:!assistenzaScelta)}
+        disabled={salvando || !clienteInfo.cliente || !tipo || (modoEsecutore==="interno"?tecniciScelti.length===0:!assistenzaScelta)}
         onClick={salva}
         style={{...S.btnAccent,width:"100%",padding:"13px",fontWeight:700,opacity:salvando?0.6:1}}
       >
@@ -8016,6 +8474,7 @@ function Interventi({interventi, setInterventi, attrezzature, sessione, setArea,
         setInterventi={setInterventi}
         onSalvato={()=>{ setVista("preventivi-intervento"); setPreventivoInterventoSel(null); ricaricaPreventiviIntervento(); }}
         onAnnulla={()=>{ setVista(preventivoInterventoSel?"preventivi-intervento":"home"); setPreventivoInterventoSel(null); }}
+        onDuplicato={(nuovo)=>{ setPreventivoInterventoSel(nuovo); ricaricaPreventiviIntervento(); }}
       />
     );
   }
@@ -8208,7 +8667,7 @@ function RapportoDemo({sessione, interventi, setInterventi, interventoDaCompleta
   const daCompletare = interventoDaCompletare;
   const [step,setStep]=useState(daCompletare ? "checklist" : "dettagli");
   const [tipo,setTipo]=useState(daCompletare?.tipo || "");
-  const [clienteSel,setClienteSel]=useState(daCompletare ? {codice:daCompletare.cliente_codice, ragione_sociale:daCompletare.cliente_nome} : null);
+  const [clienteInfo,setClienteInfo]=useState(daCompletare ? {cliente_codice:daCompletare.cliente_codice, cliente:daCompletare.cliente_nome} : {});
   const [checklist,setChecklist]=useState(daCompletare ? (CHECKLIST_TEMPLATES[daCompletare.tipo]||[]).map(v=>({voce:v,fatto:false})) : []);
   const [note,setNote]=useState("");
   const [salvando,setSalvando]=useState(false);
@@ -8237,9 +8696,15 @@ function RapportoDemo({sessione, interventi, setInterventi, interventoDaCompleta
         // rapporto nuovo, non legato a un intervento pianificato in precedenza
         const payload = {
           ...payloadComune,
-          titolo: `${TIPO_LABELS[tipo]||tipo} — ${clienteSel?.ragione_sociale || "cliente"}`,
-          cliente_codice: clienteSel?.codice || null,
-          cliente_nome: clienteSel?.ragione_sociale || "",
+          titolo: `${TIPO_LABELS[tipo]||tipo} — ${clienteInfo.cliente || "cliente"}`,
+          cliente_codice: clienteInfo.cliente_codice || null,
+          cliente_nome: clienteInfo.cliente || "",
+          cliente_localita: clienteInfo.cliente_localita || null,
+          cliente_provincia: clienteInfo.cliente_provincia || null,
+          cliente_indirizzo: clienteInfo.cliente_indirizzo || null,
+          cliente_referente: clienteInfo.cliente_referente || null,
+          cliente_telefono: clienteInfo.cliente_telefono || null,
+          cliente_email: clienteInfo.cliente_email || null,
           priorita: "media",
           creato_da_nome: sessione?.nome || null,
         };
@@ -8257,7 +8722,7 @@ function RapportoDemo({sessione, interventi, setInterventi, interventoDaCompleta
     <div>
       <div style={{fontFamily:F_DISPLAY,fontSize:18,fontWeight:600,marginBottom:16}}>NUOVO RAPPORTO</div>
       <div style={{marginBottom:14}}>
-        <SelezioneCliente clienteSelezionato={clienteSel} onSeleziona={setClienteSel} sessione={sessione}/>
+        <SelezioneClienteEstesa valore={clienteInfo} onCambia={setClienteInfo} sessione={sessione}/>
       </div>
       <div style={S.eyebrow}>Tipo intervento</div>
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:18}}>
@@ -8268,14 +8733,14 @@ function RapportoDemo({sessione, interventi, setInterventi, interventoDaCompleta
           }}>{TIPO_LABELS[t]}</button>
         ))}
       </div>
-      <button onClick={()=>setStep("checklist")} disabled={!clienteSel||!tipo} style={{...S.btnAccent,opacity:(!clienteSel||!tipo)?0.4:1,width:"100%",padding:"13px"}}>Continua</button>
+      <button onClick={()=>setStep("checklist")} disabled={!clienteInfo.cliente||!tipo} style={{...S.btnAccent,opacity:(!clienteInfo.cliente||!tipo)?0.4:1,width:"100%",padding:"13px"}}>Continua</button>
     </div>
   );
 
   if(step==="checklist") return (
     <div>
       <div style={{fontFamily:F_DISPLAY,fontSize:18,fontWeight:600,marginBottom:4}}>CHECKLIST · {TIPO_LABELS[tipo]?.toUpperCase()}</div>
-      <div style={{fontSize:12.5,color:C.steel,marginBottom:16}}>{clienteSel?.ragione_sociale}</div>
+      <div style={{fontSize:12.5,color:C.steel,marginBottom:16}}>{clienteInfo.cliente}</div>
       {errore && <div style={{fontSize:12,color:C.danger,background:"rgba(200,75,58,0.08)",borderRadius:6,padding:"9px 11px",marginBottom:14}}>⚠ {errore}</div>}
       {checklist.map((c,i)=>(
         <label key={i} style={{display:"flex",gap:10,padding:"11px 0",borderBottom:`1px solid ${C.paperLine}`,cursor:"pointer",fontSize:13.5,alignItems:"center"}}>
@@ -8295,7 +8760,7 @@ function RapportoDemo({sessione, interventi, setInterventi, interventoDaCompleta
     <div style={{textAlign:"center",padding:"3.5rem 1rem"}}>
       <div style={{width:54,height:54,borderRadius:10,background:C.ok,color:"#fff",fontSize:26,display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto 16px"}}>✓</div>
       <div style={{fontFamily:F_DISPLAY,fontSize:18,fontWeight:600,marginBottom:6}}>RAPPORTO SALVATO</div>
-      <div style={{fontSize:13,color:"#8A929A",marginBottom:20}}>Registrato per {clienteSel?.ragione_sociale}</div>
+      <div style={{fontSize:13,color:"#8A929A",marginBottom:20}}>Registrato per {clienteInfo.cliente}</div>
       <button onClick={resetTutto} style={S.btnP}>+ Nuovo rapporto</button>
     </div>
   );
