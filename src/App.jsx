@@ -4720,7 +4720,7 @@ function Preventivi({cart,setCart,preventivi,setPreventivi,setOrdini,setArea,ruo
   const [promemoriaRecupero,setPromemoriaRecupero]=useState("");
   const [bozza,setBozza]=useState(null); // scadenza/referente/pagamento in modifica locale, salvati solo al click su "Salva"
   const [bozzaSalvata,setBozzaSalvata]=useState(false); // conferma temporanea dopo il salvataggio
-  useEffect(()=>{ setConfermaEliminazione(false); setConfermaSalto(false); setTipoMotivoSalto(""); setDettaglioMotivoSalto(""); setPromemoriaRecupero(""); setBozzaSalvata(false); setClienteLibero(false); setNomeClienteLibero(""); },[selId]);
+  useEffect(()=>{ setConfermaEliminazione(false); setConfermaSalto(false); setTipoMotivoSalto(""); setDettaglioMotivoSalto(""); setPromemoriaRecupero(""); setBozzaSalvata(false); },[selId]);
   const [erroreSync,setErroreSync]=useState("");
   const [utentiTelos,setUtentiTelos]=useState(null); // null=non caricato, [] o [...]
   const [erroreUtentiTelos,setErroreUtentiTelos]=useState("");
