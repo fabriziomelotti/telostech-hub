@@ -4268,6 +4268,29 @@ function RicercaProdottiInline({onSeleziona, righeEsistenti, ruolo, catalog:catP
     return ()=>{annullato=true;clearTimeout(t);};
   },[CATS]);
 
+  // Prodotto manuale non a catalogo — nessun costo/margine disponibile
+  // (mostrato come "N/D" dal resto del codice, già gestito ovunque).
+  const [mostraManuale,setMostraManuale]=useState(false);
+  const [manNome,setManNome]=useState("");
+  const [manMarca,setManMarca]=useState("");
+  const [manNetto,setManNetto]=useState("");
+  const [manQty,setManQty]=useState(1);
+  function aggiungiProdottoManuale(){
+    if(!manNome.trim() || !manNetto) return;
+    onSeleziona({
+      cod: `MANUALE-${Date.now()}`,
+      mar: manMarca.trim(),
+      nome: manNome.trim(),
+      listino: null,
+      netto: parseFloat(manNetto)||0,
+      qty: manQty>0?manQty:1,
+      costo: null,
+      sottoMargine: false,
+      manuale: true,
+    });
+    setManNome(""); setManMarca(""); setManNetto(""); setManQty(1); setMostraManuale(false);
+  }
+
   const tokenResults = useMemo(()=>{
     if(!q.trim()) return [];
     if(!searchIndex) return [];
@@ -4294,6 +4317,28 @@ function RicercaProdottiInline({onSeleziona, righeEsistenti, ruolo, catalog:catP
     <div style={{marginBottom:18}}>
       <div style={S.eyebrow}>Aggiungi articolo</div>
       <input value={q} onChange={e=>setQ(e.target.value)} placeholder="Cerca per nome, codice, marchio…" style={{...S.inp,marginBottom:8}}/>
+
+      {!mostraManuale ? (
+        <button onClick={()=>setMostraManuale(true)} style={{background:"none",border:"none",color:C.steel,fontSize:11.5,cursor:"pointer",textDecoration:"underline",marginBottom:10,padding:0}}>
+          + Aggiungi prodotto non a catalogo
+        </button>
+      ) : (
+        <div style={{...S.card,cursor:"default",marginBottom:12}}>
+          <div style={{fontSize:12,fontWeight:700,marginBottom:8}}>Prodotto non a catalogo</div>
+          <input value={manNome} onChange={e=>setManNome(e.target.value)} placeholder="Nome/descrizione articolo" style={{...S.inp,marginBottom:8}} autoFocus/>
+          <input value={manMarca} onChange={e=>setManMarca(e.target.value)} placeholder="Marca (facoltativo)" style={{...S.inp,marginBottom:8}}/>
+          <div style={{display:"flex",gap:8,marginBottom:10}}>
+            <input type="number" step="0.01" min="0" value={manNetto} onChange={e=>setManNetto(e.target.value)} placeholder="Prezzo netto €" className="tnum" style={{...S.inp,flex:1,fontFamily:F_MONO}}/>
+            <input type="number" min="1" value={manQty} onChange={e=>setManQty(Math.max(1,parseInt(e.target.value)||1))} className="tnum" style={{...S.inp,width:70,fontFamily:F_MONO}}/>
+          </div>
+          <div style={{fontSize:11,color:"#9AA3AB",marginBottom:10}}>Nessun costo/margine disponibile per articoli fuori catalogo.</div>
+          <div style={{display:"flex",gap:8}}>
+            <button disabled={!manNome.trim()||!manNetto} onClick={aggiungiProdottoManuale} style={{...S.btnAccent,flex:1,padding:"9px",opacity:(manNome.trim()&&manNetto)?1:0.5}}>Aggiungi</button>
+            <button onClick={()=>{setMostraManuale(false);setManNome("");setManMarca("");setManNetto("");setManQty(1);}} style={S.btnS}>Annulla</button>
+          </div>
+        </div>
+      )}
+
       {aiSearching && <div style={{fontSize:11.5,color:"#8A929A",marginBottom:8}}>Nessun risultato diretto — interpreto la richiesta…</div>}
       {q.trim() && risultati.length===0 && !aiSearching && (
         <div style={{fontSize:12,color:"#9AA3AB",padding:"8px 0"}}>Nessun prodotto trovato per "{q}"</div>
@@ -4985,6 +5030,7 @@ function Preventivi({cart,setCart,preventivi,setPreventivi,setOrdini,setArea,ruo
   }
   async function convertiInOrdine(p){
     if(!p.firma_cliente && !p.conferma_alt_nome) return; // rete di sicurezza, il pulsante è già disabilitato senza firma né conferma
+    if(p.extra_sconto_euro>0 && !p.extra_sconto_approvato) return; // rete di sicurezza, idem per extra sconto non approvato
     setErroreSync("");
     const nuovo = {
       preventivo_id: p.id,
@@ -5002,7 +5048,10 @@ function Preventivi({cart,setCart,preventivi,setPreventivi,setOrdini,setArea,ruo
       pagamento_modalita: p.pagamento_modalita || null,
       pagamento_dettagli: p.pagamento_dettagli || null,
       righe: p.righe,
-      val: p.val,
+      val: p.extra_sconto_euro ? (p.val - p.extra_sconto_euro) : p.val,
+      extra_sconto_euro: p.extra_sconto_euro || null,
+      extra_sconto_approvato: p.extra_sconto_euro ? !!p.extra_sconto_approvato : null,
+      conferma_note: p.conferma_note || null,
       stato: "Inserito",
       creato_da_nome: sessione?.nome || null,
       firma_cliente: p.firma_cliente,
@@ -5331,7 +5380,7 @@ function Preventivi({cart,setCart,preventivi,setPreventivi,setOrdini,setArea,ruo
               <div style={{fontSize:11,fontFamily:F_MONO,color:"#9AA3AB",textTransform:"uppercase",letterSpacing:"0.05em",marginBottom:4}}>Modalità di pagamento</div>
               <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
                 <select value={bozza.pagamento_modalita} onChange={e=>setBozza(b=>({...b,pagamento_modalita:e.target.value}))} style={{...S.inp,flex:"1 1 180px"}}>
-                  {["USUALE CODIFICATA","RI.BA.","RIMESSA DIRETTA","RID","DA CONCORDARE"].map(o=>(<option key={o} value={o}>{o}</option>))}
+                  {["USUALE CODIFICATA","RI.BA.","RIMESSA DIRETTA","RID","FINANZIAMENTO","NOLEGGIO","DA CONCORDARE"].map(o=>(<option key={o} value={o}>{o}</option>))}
                 </select>
                 <input value={bozza.pagamento_dettagli} onChange={e=>setBozza(b=>({...b,pagamento_dettagli:e.target.value}))} placeholder="Dettagli (es. 60gg fine mese, al 15 del mese…)" style={{...S.inp,flex:"2 1 240px"}}/>
               </div>
@@ -5716,14 +5765,48 @@ function Preventivi({cart,setCart,preventivi,setPreventivi,setOrdini,setArea,ruo
           }} style={{...S.btnAccent,padding:"14px",fontSize:14,fontWeight:700,background:C.cyan,color:C.inkDeep,opacity:generandoPdf?0.6:1}}>
             {generandoPdf ? "Generazione PDF…" : "📄 Genera preventivo PDF"}
           </button>
+          {selezionato.stato==="Inviato" && selezionato.finanziaria_importo==null && (
+            <div style={{...S.card,cursor:"default",marginBottom:16}}>
+              <div style={{fontSize:13.5,fontWeight:700,marginBottom:4}}>Correzione finale imponibile</div>
+              <div style={{fontSize:12,color:C.steel,marginBottom:10}}>
+                Extra sconto in € applicabile alla conferma del cliente — richiede l'approvazione di un responsabile/admin prima di convertire in ordine.
+              </div>
+              {editable ? (
+                <input type="number" min="0" step="0.01" value={selezionato.extra_sconto_euro ?? ""}
+                  onChange={e=>{
+                    const v = e.target.value ? parseFloat(e.target.value) : null;
+                    aggiorna(selezionato.id, { extra_sconto_euro: v, extra_sconto_approvato: false });
+                  }}
+                  placeholder="0.00" className="tnum" style={{...S.inp,width:140,fontFamily:F_MONO}}/>
+              ) : (
+                <div className="tnum" style={{fontSize:13,fontWeight:600,fontFamily:F_MONO}}>{selezionato.extra_sconto_euro ? `€${selezionato.extra_sconto_euro.toFixed(2)}` : "Nessuno"}</div>
+              )}
+              {selezionato.extra_sconto_euro>0 && (
+                <div style={{marginTop:10}}>
+                  <div className="tnum" style={{fontSize:12.5,fontWeight:600,fontFamily:F_MONO}}>Imponibile corretto: €{(selezionato.val-selezionato.extra_sconto_euro).toFixed(2)}</div>
+                  {selezionato.extra_sconto_approvato ? (
+                    <div style={{fontSize:12,color:C.ok,fontWeight:600,marginTop:6}}>✓ Extra sconto approvato</div>
+                  ) : puoModificarePrezzoLiberamente(ruolo) ? (
+                    <button onClick={()=>aggiorna(selezionato.id,{extra_sconto_approvato:true})} style={{...S.btnAccent,padding:"9px 14px",marginTop:8,background:C.ok,color:"#fff"}}>✓ Approva extra sconto</button>
+                  ) : (
+                    <div style={{fontSize:12,color:"#8a6418",marginTop:6}}>In attesa di approvazione da un responsabile o admin.</div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
           {selezionato.stato==="Inviato" && (
             <SezioneConferma record={selezionato} editable={true} onAggiorna={patch=>aggiorna(selezionato.id, patch)}/>
           )}
-          {selezionato.stato==="Inviato" && (
-            <button onClick={()=>convertiInOrdine(selezionato)} disabled={!selezionato.firma_cliente && !selezionato.conferma_alt_nome} style={{...S.btnAccent,padding:"13px",background:(selezionato.firma_cliente||selezionato.conferma_alt_nome)?C.ink:"#c8c8c8",color:"#fff",fontSize:14,cursor:(selezionato.firma_cliente||selezionato.conferma_alt_nome)?"pointer":"default"}}>
-              ⬡ Converti in ordine{(!selezionato.firma_cliente && !selezionato.conferma_alt_nome) ? " (serve la firma o una conferma)" : ""}
-            </button>
-          )}
+          {selezionato.stato==="Inviato" && (() => {
+            const scontoDaApprovare = selezionato.extra_sconto_euro>0 && !selezionato.extra_sconto_approvato;
+            const bloccato = (!selezionato.firma_cliente && !selezionato.conferma_alt_nome) || scontoDaApprovare;
+            return (
+              <button onClick={()=>convertiInOrdine(selezionato)} disabled={bloccato} style={{...S.btnAccent,padding:"13px",background:bloccato?"#c8c8c8":C.ink,color:"#fff",fontSize:14,cursor:bloccato?"default":"pointer"}}>
+                ⬡ Converti in ordine{(!selezionato.firma_cliente && !selezionato.conferma_alt_nome) ? " (serve la firma o una conferma)" : scontoDaApprovare ? " (extra sconto da approvare)" : ""}
+              </button>
+            );
+          })()}
           {selezionato.stato==="Convertito in ordine" && (
             <button onClick={()=>setArea("ordini")} style={{...S.btnP,padding:"12px"}}>Vedi l'ordine →</button>
           )}
@@ -5864,6 +5947,8 @@ function SezioneConferma({ record, editable, onAggiorna }){
   const [altNome, setAltNome] = useState(record.conferma_alt_nome || "");
   const [altTipo, setAltTipo] = useState(record.conferma_alt_tipo || "telefonica");
   const [altData, setAltData] = useState(record.conferma_alt_data || new Date().toISOString().slice(0,10));
+  const [mostraNote, setMostraNote] = useState(!!record.conferma_note);
+  const [noteTesto, setNoteTesto] = useState(record.conferma_note || "");
 
   const haFirma = !!record.firma_cliente;
   const haAlt = !!record.conferma_alt_nome;
@@ -5957,6 +6042,32 @@ function SezioneConferma({ record, editable, onAggiorna }){
             >Salva conferma</button>
             {haAlt && <button onClick={()=>setMostraAlt(false)} style={S.btnS}>Annulla</button>}
           </div>
+        </div>
+      )}
+
+      {(haFirma || haAlt) && (
+        <div style={{marginTop:12,paddingTop:12,borderTop:`1px solid ${C.paperLine}`}}>
+          {record.conferma_note && !mostraNote ? (
+            <div>
+              <div style={{fontSize:11,fontFamily:F_MONO,color:"#9AA3AB",textTransform:"uppercase",letterSpacing:"0.05em",marginBottom:4}}>Note</div>
+              <div style={{fontSize:12.5,whiteSpace:"pre-wrap"}}>{record.conferma_note}</div>
+              {editable && <button onClick={()=>{setNoteTesto(record.conferma_note);setMostraNote(true);}} style={{background:"none",border:"none",color:C.steel,fontSize:11.5,cursor:"pointer",textDecoration:"underline",marginTop:4}}>Modifica</button>}
+            </div>
+          ) : editable ? (
+            <>
+              <div style={{fontSize:12.5,color:C.steel,marginBottom:8}}>Aggiungere note alla conferma?</div>
+              <div style={{display:"flex",gap:6,marginBottom:mostraNote?8:0}}>
+                <button onClick={()=>setMostraNote(true)} style={pillStile(mostraNote)}>Sì</button>
+                <button onClick={()=>{setMostraNote(false);setNoteTesto("");if(record.conferma_note)onAggiorna({conferma_note:null});}} style={pillStile(!mostraNote)}>No</button>
+              </div>
+              {mostraNote && (
+                <>
+                  <textarea value={noteTesto} onChange={e=>setNoteTesto(e.target.value)} placeholder="Note…" style={{...S.inp,minHeight:70,marginBottom:8,fontFamily:"inherit"}}/>
+                  <button disabled={!noteTesto.trim()} onClick={()=>onAggiorna({conferma_note:noteTesto.trim()})} style={{...S.btnAccent,padding:"8px 14px",opacity:noteTesto.trim()?1:0.5}}>Salva nota</button>
+                </>
+              )}
+            </>
+          ) : null}
         </div>
       )}
     </div>
