@@ -366,61 +366,86 @@ export function affinaRicerca(query, elenco, estraiCampi){
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// SELEZIONE CLIENTE — ricerca server-side su tutti i campi (debounce 300ms,
-// min 2 caratteri, limite 25) via REST `or=(col.ilike.*term*,...)`.
-// Versione "prima maniera": ripristinata dopo che i tentativi di ricerca
-// più sofisticata (multi-parola, pulsante Cerca, ecc.) hanno coinciso con
-// un peggioramento dell'affidabilità in produzione — vedi anche i log
-// Postgres del 20/07 che mostrano un picco di scrittura causato da indici
-// aggiunti nel frattempo (poi rimossi). Non è escluso al 100% che la causa
-// fosse solo quella, ma si torna a questa versione più semplice, che prima
-// non aveva mai dato problemi.
+// SELEZIONE CLIENTE — ricerca a 4 criteri combinabili: codice cliente,
+// ragione sociale (ignora doppi spazi e punteggiatura), località e
+// provincia (entrambe a tendina, valorizzate dai valori realmente presenti
+// in anagrafica). Ricerca avviata dal pulsante "Cerca" (o invio), non ad
+// ogni carattere digitato.
 // Mostra la card del cliente selezionato con pulsante "Cambia".
 // onSeleziona(cliente|null) e clienteSelezionato passati dal padre.
 // ═══════════════════════════════════════════════════════════════════════════
-const CAMPI_RICERCA = [
-  "codice","ragione_sociale","rag_sociale_agg","localita","provincia",
-  "partita_iva","codice_fiscale","mail","telefono",
-];
+
+// Toglie punteggiatura e collassa spazi doppi/multipli — NON tocca gli
+// accenti (a differenza di normalizzaTesto) perché qui il risultato serve
+// per un ilike lato server, che deve continuare a corrispondere ai valori
+// accentati salvati in anagrafica.
+export function normalizzaRagioneSociale(s){
+  return (s||"").toString()
+    .replace(/[.,;:&/\\()"'`_-]/g," ")
+    .replace(/\s+/g," ")
+    .trim();
+}
 
 export function SelezioneCliente({ onSeleziona, clienteSelezionato, sessione }){
   const accessToken = trovaAccessToken(sessione);
-  const [q, setQ] = useState("");
+  const [codice, setCodice] = useState("");
+  const [ragioneSociale, setRagioneSociale] = useState("");
+  const [localita, setLocalita] = useState("");
+  const [provincia, setProvincia] = useState("");
+  const [localitaOpzioni, setLocalitaOpzioni] = useState([]);
+  const [provinciaOpzioni, setProvinciaOpzioni] = useState([]);
   const [risultati, setRisultati] = useState([]);
   const [caricando, setCaricando] = useState(false);
   const [errore, setErrore] = useState("");
-  const timer = useRef(null);
+  const [cercato, setCercato] = useState(false);
 
+  // Popola le tendine con i valori realmente presenti in anagrafica —
+  // richiesta leggera (solo due colonne), fatta una volta sola all'apertura.
   useEffect(()=>{
-    if(clienteSelezionato) return; // non cercare mentre uno è selezionato
-    const term = q.trim();
-    if(term.length < 2){ setRisultati([]); setErrore(""); return; }
+    if(clienteSelezionato) return;
+    sbGetAuth("clienti", "select=localita,provincia&limit=5000", accessToken)
+      .then(dati=>{
+        const loc = new Set(), prov = new Set();
+        (dati||[]).forEach(c=>{ if(c.localita) loc.add(c.localita); if(c.provincia) prov.add(c.provincia); });
+        setLocalitaOpzioni([...loc].sort((a,b)=>a.localeCompare(b)));
+        setProvinciaOpzioni([...prov].sort((a,b)=>a.localeCompare(b)));
+      })
+      .catch(()=>{});
+  },[clienteSelezionato]);
 
-    if(timer.current) clearTimeout(timer.current);
-    timer.current = setTimeout(async ()=>{
-      setCaricando(true); setErrore("");
-      try{
-        // escape: rimuovi caratteri che romperebbero il filtro or=(...)
-        const safe = term.replace(/[,*()]/g, " ").trim();
-        // encoda il termine (spazi, accenti, ecc.) ma lascia gli asterischi
-        // letterali: sono i wildcard che PostgREST usa per ilike.
-        const pattern = "*" + encodeURIComponent(safe) + "*";
-        const orExpr = CAMPI_RICERCA.map(c => `${c}.ilike.${pattern}`).join(",");
-        const params =
-          `select=codice,ragione_sociale,rag_sociale_agg,indirizzo,localita,provincia,cap,partita_iva,codice_fiscale,telefono,mail,filiale` +
-          `&or=(${orExpr})&limit=25&order=ragione_sociale`;
-        const dati = await sbGetAuth("clienti", params, accessToken);
-        setRisultati(dati || []);
-      }catch(err){
-        setErrore("Ricerca non disponibile: " + err.message);
-        setRisultati([]);
-      }finally{
-        setCaricando(false);
-      }
-    }, 300);
+  async function esegui(){
+    const codiceOk = codice.trim();
+    const ragioneOk = normalizzaRagioneSociale(ragioneSociale);
+    if(!codiceOk && !ragioneOk && !localita && !provincia){
+      setErrore("Inserisci almeno un criterio di ricerca.");
+      return;
+    }
+    setCaricando(true); setErrore(""); setCercato(true);
+    try{
+      // Filtri su colonne diverse: PostgREST li combina in AND di default,
+      // senza bisogno di or=/and=() — un parametro per colonna.
+      const filtri = [];
+      if(codiceOk) filtri.push(`codice=ilike.*${encodeURIComponent(codiceOk)}*`);
+      if(ragioneOk) filtri.push(`ragione_sociale=ilike.*${encodeURIComponent(ragioneOk)}*`);
+      if(localita) filtri.push(`localita=eq.${encodeURIComponent(localita)}`);
+      if(provincia) filtri.push(`provincia=eq.${encodeURIComponent(provincia)}`);
+      const params =
+        `select=codice,ragione_sociale,rag_sociale_agg,indirizzo,localita,provincia,cap,partita_iva,codice_fiscale,telefono,mail,filiale` +
+        `&${filtri.join("&")}&limit=25&order=ragione_sociale`;
+      const dati = await sbGetAuth("clienti", params, accessToken);
+      setRisultati(dati || []);
+    }catch(err){
+      setErrore("Ricerca non riuscita: " + err.message + " — riprova.");
+      setRisultati([]);
+    }finally{
+      setCaricando(false);
+    }
+  }
 
-    return ()=>{ if(timer.current) clearTimeout(timer.current); };
-  }, [q, clienteSelezionato]);
+  function reset(){
+    setCodice(""); setRagioneSociale(""); setLocalita(""); setProvincia("");
+    setRisultati([]); setErrore(""); setCercato(false);
+  }
 
   // ── Cliente già selezionato: card + Cambia ──
   if(clienteSelezionato){
@@ -438,7 +463,7 @@ export function SelezioneCliente({ onSeleziona, clienteSelezionato, sessione }){
             </div>
             <div className="tnum" style={{fontSize:11,color:"#9AA3AB",fontFamily:F_MONO,marginTop:4}}>COD {c.codice}</div>
           </div>
-          <button onClick={()=>{ onSeleziona(null); setQ(""); setRisultati([]); }} style={{...S.btnS,flexShrink:0}}>
+          <button onClick={()=>{ onSeleziona(null); reset(); }} style={{...S.btnS,flexShrink:0}}>
             Cambia
           </button>
         </div>
@@ -449,22 +474,50 @@ export function SelezioneCliente({ onSeleziona, clienteSelezionato, sessione }){
   // ── Ricerca ──
   return (
     <div>
-      <div style={{...S.eyebrow}}>Seleziona cliente</div>
+      <div style={{...S.eyebrow,marginBottom:8}}>Seleziona cliente</div>
+
       <input
-        value={q}
-        onChange={e=>setQ(e.target.value)}
-        placeholder="Cerca per ragione sociale, P.IVA, località, codice…"
-        style={S.inp}
+        value={codice}
+        onChange={e=>setCodice(e.target.value)}
+        onKeyDown={e=>{ if(e.key==="Enter"){ e.preventDefault(); esegui(); } }}
+        placeholder="Codice cliente"
+        style={{...S.inp,marginBottom:8}}
+      />
+      <input
+        value={ragioneSociale}
+        onChange={e=>setRagioneSociale(e.target.value)}
+        onKeyDown={e=>{ if(e.key==="Enter"){ e.preventDefault(); esegui(); } }}
+        placeholder="Ragione sociale"
+        style={{...S.inp,marginBottom:8}}
         autoFocus
       />
+      <div style={{display:"flex",gap:8,marginBottom:10}}>
+        <select value={localita} onChange={e=>setLocalita(e.target.value)} style={{...S.inp,flex:1}}>
+          <option value="">Tutte le località</option>
+          {localitaOpzioni.map(l=>(<option key={l} value={l}>{l}</option>))}
+        </select>
+        <select value={provincia} onChange={e=>setProvincia(e.target.value)} style={{...S.inp,flex:1}}>
+          <option value="">Tutte le province</option>
+          {provinciaOpzioni.map(p=>(<option key={p} value={p}>{p}</option>))}
+        </select>
+      </div>
 
-      {caricando && (
-        <div style={{fontSize:11.5,fontFamily:F_MONO,color:C.steel,marginTop:10}}>… ricerca in corso</div>
-      )}
+      <div style={{display:"flex",gap:8}}>
+        <button onClick={esegui} disabled={caricando} style={{...S.btnAccent,flex:1,padding:"11px",opacity:caricando?0.6:1}}>
+          {caricando?"…":"🔍 Cerca"}
+        </button>
+        {(codice||ragioneSociale||localita||provincia) && (
+          <button onClick={reset} style={S.btnS}>Pulisci</button>
+        )}
+      </div>
+
       {errore && (
-        <div style={{fontSize:11.5,fontFamily:F_MONO,color:C.danger,marginTop:10}}>● {errore}</div>
+        <div style={{fontSize:11.5,fontFamily:F_MONO,color:C.danger,marginTop:10,display:"flex",alignItems:"center",gap:10}}>
+          <span>● {errore}</span>
+          <button onClick={esegui} style={{...S.btnS,padding:"4px 10px",fontSize:11}}>Riprova</button>
+        </div>
       )}
-      {!caricando && !errore && q.trim().length>=2 && risultati.length===0 && (
+      {!caricando && !errore && cercato && risultati.length===0 && (
         <div style={{fontSize:12,color:"#9AA3AB",marginTop:12}}>Nessun cliente trovato.</div>
       )}
 

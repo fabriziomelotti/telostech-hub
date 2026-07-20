@@ -1,7 +1,7 @@
 import { useState, useMemo, useEffect, useRef } from "react";
 import html2canvas from "html2canvas";
 import jsPDF from "jspdf";
-import { ImportClienti, SelezioneCliente, CreaProdotto, EditaProdotto, normalizzaTesto, tokenRicerca, corrispondeRicerca, filtroServerRicerca, affinaRicerca } from "./ClientiComponenti";
+import { ImportClienti, SelezioneCliente, CreaProdotto, EditaProdotto, normalizzaTesto, tokenRicerca, corrispondeRicerca, filtroServerRicerca, affinaRicerca, normalizzaRagioneSociale } from "./ClientiComponenti";
 import { useAuth, LoginReale } from "./Auth";
 
 // ─── SUPABASE REST (fetch diretto — nessuna libreria esterna) ────────────────
@@ -2205,17 +2205,20 @@ function SchedaProdotto({p, isIn, onToggleCart, onClose, ruolo, onModifica}){
 }
 
 // ─── CLIENTI ──────────────────────────────────────────────────────────────────
-// Stessa ricerca già usata in Preventivi (SelezioneCliente): wildcard OR su
-// più campi, con il token di sessione reale perché la RLS di "clienti"
-// richiede una sessione autenticata.
-const CAMPI_RICERCA_CLIENTI = ["codice","ragione_sociale","rag_sociale_agg","localita","provincia","partita_iva","codice_fiscale","mail","telefono","agente"];
-
+// Stessa ricerca a 4 criteri di SelezioneCliente (vedi ClientiComponenti.jsx):
+// codice, ragione sociale (normalizzata), località e provincia a tendina.
 function Clienti({sessione, preventivi, ordini, attrezzature, setAttrezzature, interventi, setInterventi, catalog, ruolo}){
   const accessToken = trovaAccessToken(sessione);
-  const [q,setQ] = useState("");
+  const [codice,setCodice] = useState("");
+  const [ragioneSociale,setRagioneSociale] = useState("");
+  const [localita,setLocalita] = useState("");
+  const [provincia,setProvincia] = useState("");
+  const [localitaOpzioni,setLocalitaOpzioni] = useState([]);
+  const [provinciaOpzioni,setProvinciaOpzioni] = useState([]);
   const [risultati,setRisultati] = useState([]);
   const [caricando,setCaricando] = useState(false);
   const [errore,setErrore] = useState("");
+  const [cercato,setCercato] = useState(false);
   const [selezionato,setSelezionato] = useState(null);
   const [tabInizialeCliente,setTabInizialeCliente] = useState("dati");
   const [qAttrezzatura,setQAttrezzatura] = useState("");
@@ -2225,32 +2228,50 @@ function Clienti({sessione, preventivi, ordini, attrezzature, setAttrezzature, i
   // font diversi tra loro, confuso su mobile) — ora si sceglie con un
   // pulsante grande e compare solo il campo pertinente.
   const [modalita,setModalita] = useState(null);
-  const timer = useRef(null);
 
   function selezionaModalita(m){
     setModalita(prev=>prev===m?null:m);
-    setQ(""); setQAttrezzatura(""); setRisultati([]); setErrore("");
+    setCodice(""); setRagioneSociale(""); setLocalita(""); setProvincia("");
+    setQAttrezzatura(""); setRisultati([]); setErrore(""); setCercato(false);
   }
 
+  // Popola le tendine località/provincia con i valori realmente presenti
+  // in anagrafica, una volta sola quando si entra in modalità "clienti".
   useEffect(()=>{
-    clearTimeout(timer.current);
-    if(!q.trim()){ setRisultati([]); setErrore(""); return; }
-    timer.current = setTimeout(async ()=>{
-      setCaricando(true); setErrore("");
-      try{
-        const safe = q.trim().replace(/[,()]/g,"");
-        const pattern = "*"+encodeURIComponent(safe)+"*"; // * non va MAI url-encodato
-        const orExpr = CAMPI_RICERCA_CLIENTI.map(c=>`${c}.ilike.${pattern}`).join(",");
-        const params = `select=codice,ragione_sociale,rag_sociale_agg,indirizzo,localita,provincia,cap,partita_iva,codice_fiscale,telefono,mail,filiale,agente&or=(${orExpr})&limit=30`;
-        const dati = await sbGetAuth("clienti", params, accessToken);
-        setRisultati(dati||[]);
-      }catch(err){
-        setErrore(err.message); setRisultati([]);
-      }
-      setCaricando(false);
-    }, 350);
-    return ()=>clearTimeout(timer.current);
-  },[q]);
+    if(modalita!=="clienti" || localitaOpzioni.length>0) return;
+    sbGetAuth("clienti", "select=localita,provincia&limit=5000", accessToken)
+      .then(dati=>{
+        const loc = new Set(), prov = new Set();
+        (dati||[]).forEach(c=>{ if(c.localita) loc.add(c.localita); if(c.provincia) prov.add(c.provincia); });
+        setLocalitaOpzioni([...loc].sort((a,b)=>a.localeCompare(b)));
+        setProvinciaOpzioni([...prov].sort((a,b)=>a.localeCompare(b)));
+      })
+      .catch(()=>{});
+  },[modalita]);
+
+  async function eseguiRicercaClienti(){
+    const codiceOk = codice.trim();
+    const ragioneOk = normalizzaRagioneSociale(ragioneSociale);
+    if(!codiceOk && !ragioneOk && !localita && !provincia){
+      setErrore("Inserisci almeno un criterio di ricerca.");
+      return;
+    }
+    setCaricando(true); setErrore(""); setCercato(true);
+    try{
+      const filtri = [];
+      if(codiceOk) filtri.push(`codice=ilike.*${encodeURIComponent(codiceOk)}*`);
+      if(ragioneOk) filtri.push(`ragione_sociale=ilike.*${encodeURIComponent(ragioneOk)}*`);
+      if(localita) filtri.push(`localita=eq.${encodeURIComponent(localita)}`);
+      if(provincia) filtri.push(`provincia=eq.${encodeURIComponent(provincia)}`);
+      const params = `select=codice,ragione_sociale,rag_sociale_agg,indirizzo,localita,provincia,cap,partita_iva,codice_fiscale,telefono,mail,filiale,agente&${filtri.join("&")}&limit=30`;
+      const dati = await sbGetAuth("clienti", params, accessToken);
+      setRisultati(dati||[]);
+    }catch(err){
+      setErrore("Ricerca non riuscita: "+err.message+" — riprova.");
+      setRisultati([]);
+    }
+    setCaricando(false);
+  }
 
   // Ricerca per attrezzatura: filtro lato client sull'elenco già caricato
   // (nome prodotto, numero di serie, marca).
@@ -2310,12 +2331,39 @@ function Clienti({sessione, preventivi, ordini, attrezzature, setAttrezzature, i
       </div>
 
       {modalita==="clienti" && (
-        <input
-          value={q} onChange={e=>setQ(e.target.value)}
-          placeholder="Cerca per ragione sociale, città, P.IVA, codice fiscale…"
-          style={{...S.inp,padding:"13px 16px",fontSize:14,marginBottom:14}}
-          autoFocus
-        />
+        <div style={{marginBottom:14}}>
+          <input
+            value={codice} onChange={e=>setCodice(e.target.value)}
+            onKeyDown={e=>{ if(e.key==="Enter"){ e.preventDefault(); eseguiRicercaClienti(); } }}
+            placeholder="Codice cliente"
+            style={{...S.inp,padding:"13px 16px",fontSize:14,marginBottom:8}}
+            autoFocus
+          />
+          <input
+            value={ragioneSociale} onChange={e=>setRagioneSociale(e.target.value)}
+            onKeyDown={e=>{ if(e.key==="Enter"){ e.preventDefault(); eseguiRicercaClienti(); } }}
+            placeholder="Ragione sociale"
+            style={{...S.inp,padding:"13px 16px",fontSize:14,marginBottom:8}}
+          />
+          <div style={{display:"flex",gap:8,marginBottom:10}}>
+            <select value={localita} onChange={e=>setLocalita(e.target.value)} style={{...S.inp,flex:1,padding:"13px 16px",fontSize:14}}>
+              <option value="">Tutte le località</option>
+              {localitaOpzioni.map(l=>(<option key={l} value={l}>{l}</option>))}
+            </select>
+            <select value={provincia} onChange={e=>setProvincia(e.target.value)} style={{...S.inp,flex:1,padding:"13px 16px",fontSize:14}}>
+              <option value="">Tutte le province</option>
+              {provinciaOpzioni.map(p=>(<option key={p} value={p}>{p}</option>))}
+            </select>
+          </div>
+          <div style={{display:"flex",gap:8}}>
+            <button onClick={eseguiRicercaClienti} disabled={caricando} style={{...S.btnAccent,flex:1,padding:"12px",opacity:caricando?0.6:1}}>
+              {caricando?"…":"🔍 Cerca"}
+            </button>
+            {(codice||ragioneSociale||localita||provincia) && (
+              <button onClick={()=>{ setCodice(""); setRagioneSociale(""); setLocalita(""); setProvincia(""); setRisultati([]); setErrore(""); setCercato(false); }} style={S.btnS}>Pulisci</button>
+            )}
+          </div>
+        </div>
       )}
       {modalita==="attrezzatura" && (
         <input
@@ -2326,7 +2374,12 @@ function Clienti({sessione, preventivi, ordini, attrezzature, setAttrezzature, i
         />
       )}
 
-      {errore && <div style={{fontSize:12,color:C.danger,background:"rgba(200,75,58,0.08)",borderRadius:6,padding:"9px 11px",marginBottom:14}}>⚠ {errore}</div>}
+      {errore && (
+        <div style={{fontSize:12,color:C.danger,background:"rgba(200,75,58,0.08)",borderRadius:6,padding:"9px 11px",marginBottom:14,display:"flex",alignItems:"center",gap:10}}>
+          <span>⚠ {errore}</span>
+          <button onClick={eseguiRicercaClienti} style={{...S.btnS,padding:"4px 10px",fontSize:11}}>Riprova</button>
+        </div>
+      )}
 
       {modalita===null && (
         <div style={{textAlign:"center",padding:"2.5rem 1rem",color:"#9AA3AB"}}>
@@ -2360,11 +2413,11 @@ function Clienti({sessione, preventivi, ordini, attrezzature, setAttrezzature, i
 
       {modalita==="clienti" && (<>
         {caricando && <div style={{fontSize:12.5,color:"#8A929A",padding:"8px 0"}}>Ricerca in corso…</div>}
-        {!caricando && q.trim() && !errore && risultati.length===0 && (
-          <div style={{textAlign:"center",padding:"2rem 1rem",color:"#9AA3AB",fontSize:13}}>Nessun cliente trovato per «{q}»</div>
+        {!caricando && cercato && !errore && risultati.length===0 && (
+          <div style={{textAlign:"center",padding:"2rem 1rem",color:"#9AA3AB",fontSize:13}}>Nessun cliente trovato.</div>
         )}
-        {!caricando && !q.trim() && (
-          <div style={{textAlign:"center",padding:"2rem 1rem",color:"#9AA3AB",fontSize:13}}>Digita per cercare un cliente</div>
+        {!caricando && !cercato && (
+          <div style={{textAlign:"center",padding:"2rem 1rem",color:"#9AA3AB",fontSize:13}}>Inserisci un criterio e premi "Cerca"</div>
         )}
         {risultati.length>0 && (
           <div style={{...S.eyebrow,marginBottom:8}}>Clienti ({risultati.length})</div>
@@ -5903,6 +5956,32 @@ function Ordini({ordini,setOrdini,preventivi,setPreventivi,setInterventi,catalog
   const [confermaSospendi,setConfermaSospendi]=useState(false);
   const [confermaRiattiva,setConfermaRiattiva]=useState(false);
   const [confermaEliminaOrdine,setConfermaEliminaOrdine]=useState(false);
+  // Ricerca tra gli ordini già creati — stesso principio delle altre
+  // ricerche cliente: codice + ragione sociale (ignora doppi spazi e
+  // punteggiatura), avviata dal pulsante "Cerca", non ad ogni carattere.
+  // Niente tendine località/provincia qui: l'ordine salva solo nome e
+  // codice del cliente, non la sua città.
+  const [ricercaCodiceOrdine,setRicercaCodiceOrdine]=useState("");
+  const [ricercaClienteOrdine,setRicercaClienteOrdine]=useState("");
+  const [terminiCercatiOrdine,setTerminiCercatiOrdine]=useState(null); // null = nessuna ricerca attiva
+  function eseguiRicercaOrdini(){
+    const codice = ricercaCodiceOrdine.trim();
+    const cliente = normalizzaRagioneSociale(ricercaClienteOrdine);
+    if(!codice && !cliente){ setTerminiCercatiOrdine(null); return; }
+    setTerminiCercatiOrdine({codice, cliente});
+  }
+  function pulisciRicercaOrdini(){
+    setRicercaCodiceOrdine(""); setRicercaClienteOrdine(""); setTerminiCercatiOrdine(null);
+  }
+  const ordiniFiltrati = useMemo(()=>{
+    if(!terminiCercatiOrdine) return ordini;
+    const {codice, cliente} = terminiCercatiOrdine;
+    return ordini.filter(o=>{
+      if(codice && !(o.cliente_codice||"").toLowerCase().includes(codice.toLowerCase())) return false;
+      if(cliente && !corrispondeRicerca(cliente, [o.cliente])) return false;
+      return true;
+    });
+  },[ordini, terminiCercatiOrdine]);
   const selezionato = ordini.find(o=>o.id===selId);
   const accessToken = trovaAccessToken(sessione);
   useEffect(()=>{ setConfermaSospendi(false); setConfermaRiattiva(false); setConfermaEliminaOrdine(false); setDocumentiFinSelezionati([]); },[selId]);
@@ -6927,6 +7006,27 @@ ${o.firma_cliente ? `
         </div>
       )}
 
+      {ordini.length>0 && (
+        <div style={{...S.card,cursor:"default",marginTop:14,marginBottom:14}}>
+          <div style={{display:"flex",gap:8,marginBottom:8,flexWrap:"wrap"}}>
+            <input
+              value={ricercaCodiceOrdine} onChange={e=>setRicercaCodiceOrdine(e.target.value)}
+              onKeyDown={e=>{ if(e.key==="Enter"){ e.preventDefault(); eseguiRicercaOrdini(); } }}
+              placeholder="Codice cliente" style={{...S.inp,flex:"1 1 140px"}}
+            />
+            <input
+              value={ricercaClienteOrdine} onChange={e=>setRicercaClienteOrdine(e.target.value)}
+              onKeyDown={e=>{ if(e.key==="Enter"){ e.preventDefault(); eseguiRicercaOrdini(); } }}
+              placeholder="Ragione sociale" style={{...S.inp,flex:"1 1 200px"}}
+            />
+          </div>
+          <div style={{display:"flex",gap:8}}>
+            <button onClick={eseguiRicercaOrdini} style={{...S.btnAccent,padding:"9px 16px",fontSize:12.5}}>🔍 Cerca</button>
+            {terminiCercatiOrdine && <button onClick={pulisciRicercaOrdini} style={{...S.btnS,padding:"9px 16px",fontSize:12.5}}>Pulisci</button>}
+          </div>
+        </div>
+      )}
+
       {ordini.length===0 && !creandoNuovo && (
         <div style={{textAlign:"center",padding:"2.5rem 1rem",color:"#9AA3AB"}}>
           <div style={{fontSize:28,marginBottom:8}}>⬡</div>
@@ -6934,7 +7034,10 @@ ${o.firma_cliente ? `
           <div style={{fontSize:11.5,marginTop:4}}>Gli ordini nascono dai preventivi confermati, o si creano da qui</div>
         </div>
       )}
-      {ordini.map(o=>(
+      {terminiCercatiOrdine && ordiniFiltrati.length===0 && (
+        <div style={{textAlign:"center",padding:"2rem 1rem",color:"#9AA3AB",fontSize:13}}>Nessun ordine trovato.</div>
+      )}
+      {ordiniFiltrati.map(o=>(
         <div key={o.id} onClick={()=>setSelId(o.id)} style={{...S.card,display:"flex",justifyContent:"space-between",alignItems:"center",gap:10}}>
           <div style={{minWidth:0}}>
             <div className="tnum" style={{fontSize:10.5,color:"#9AA3AB",fontFamily:F_MONO}}>{codiceOrdine(o)}</div>
