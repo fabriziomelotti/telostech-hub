@@ -3770,13 +3770,19 @@ async function generaPreventivoPDF(righe, total, meta={}){
     ${meta.finanziamento_tipo==="noleggio" && meta.finanziamento_riscatto!=null ? `<div class="finanziamento-nota">Riscatto finale (1% imponibile): €${meta.finanziamento_riscatto.toFixed(2)}</div>` : ""}
   ` : "";
 
+  // Le note valgono di solito per l'intero preventivo (tutte le soluzioni),
+  // non solo per quella principale: vanno quindi sempre sull'ULTIMA pagina
+  // di contenuto, qualunque essa sia — la soluzione principale se non ci
+  // sono alternative, altrimenti l'ultima soluzione alternativa.
+  const noteBoxHtml = meta.note ? `<div class="note-box"><div class="lbl">Note:</div><div class="testo">${meta.note}</div></div>` : "";
+
   const html = `<!DOCTYPE html><html><head><meta charset="utf-8"/><title>Preventivo ${codiceMostrato}</title>
 <style>
   @page{size:A4;margin:0}
   *{box-sizing:border-box;margin:0;padding:0}
   html,body{width:210mm}
   body{font-family:Arial,sans-serif;color:#232323;font-size:12.5px}
-  .pagina{width:210mm;min-height:297mm;padding:14mm 16mm;page-break-after:always;display:flex;flex-direction:column}
+  .pagina{width:210mm;min-height:297mm;padding:10mm 13mm;page-break-after:always;display:flex;flex-direction:column}
   .pagina:last-child{page-break-after:auto}
 
   /* ── Copertina ── */
@@ -3879,12 +3885,13 @@ ${paginaArticoliHtml("PROPOSTA ORDINE", righe, finanziariaFornitoreAttiva, `
         ${finanziamentoHtml}
       `}
     </div>
-    ${meta.note ? `<div class="note-box"><div class="lbl">Note:</div><div class="testo">${meta.note}</div></div>` : ""}
+    ${(meta.soluzioni||[]).length===0 ? noteBoxHtml : ""}
 `)}
 
-${(meta.soluzioni||[]).map(s =>
-  paginaArticoliHtml(`SOLUZIONE ALTERNATIVA — ${(s.nome||"Soluzione").toUpperCase()}`, s.righe||[], s.finanziaria_importo!=null, totaliBoxSoluzioneHtml(s))
-).join("\n")}
+${(meta.soluzioni||[]).map((s, idx, arr) => {
+  const ultima = idx === arr.length - 1;
+  return paginaArticoliHtml(`SOLUZIONE ALTERNATIVA — ${(s.nome||"Soluzione").toUpperCase()}`, s.righe||[], s.finanziaria_importo!=null, `${totaliBoxSoluzioneHtml(s)}${ultima ? noteBoxHtml : ""}`);
+}).join("\n")}
 
 <div class="pagina condizioni">
   <div class="corpo-contenuto">
@@ -3961,7 +3968,7 @@ async function generaPreventivoInterventoPDF(pv, meta={}){
   *{box-sizing:border-box;margin:0;padding:0}
   html,body{width:210mm}
   body{font-family:Arial,sans-serif;color:#232323;font-size:12.5px}
-  .pagina{width:210mm;min-height:297mm;padding:14mm 16mm;page-break-after:always;display:flex;flex-direction:column}
+  .pagina{width:210mm;min-height:297mm;padding:10mm 13mm;page-break-after:always;display:flex;flex-direction:column}
   .pagina:last-child{page-break-after:auto}
 
   .corpo-contenuto{flex:1}
@@ -4120,7 +4127,7 @@ async function generaRapportoInterventoPDF(i, meta={}){
   *{box-sizing:border-box;margin:0;padding:0}
   html,body{width:210mm}
   body{font-family:Arial,sans-serif;color:#232323;font-size:12.5px}
-  .pagina{width:210mm;min-height:297mm;padding:14mm 16mm;display:flex;flex-direction:column}
+  .pagina{width:210mm;min-height:297mm;padding:10mm 13mm;display:flex;flex-direction:column}
   .corpo-contenuto{flex:1}
   .hd-content{display:flex;align-items:center;justify-content:space-between;margin-bottom:18px;padding-bottom:14px;border-bottom:2px solid #162758}
   .hd-content .logo-telos-spa{height:46px}
