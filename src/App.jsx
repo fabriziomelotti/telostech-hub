@@ -3375,7 +3375,12 @@ async function generaPdfBlob(htmlContenuto){
   // sotto) continuavano a usare il valore stantio, finendo con margini
   // vistosamente diversi — da qui loghi e dati societari "sballati"
   // rispetto al resto della pagina, ORA sempre sincronizzati col CSS reale.
-  const paginaRif = corpo.querySelector(".pagina") || corpo;
+  // Nota: la copertina (".pagina.cover") ha un padding-top:0 tutto suo per
+  // centrare verticalmente il logo — non rappresentativo del margine delle
+  // pagine di contenuto. La escludiamo esplicitamente dalla misurazione,
+  // altrimenti se è la prima ".pagina" del documento (lo è sempre) il
+  // margine superiore letto sarebbe sistematicamente 0.
+  const paginaRif = corpo.querySelector(".pagina:not(.cover)") || corpo.querySelector(".pagina") || corpo;
   const stilePaginaRif = getComputedStyle(paginaRif);
   const PAD_LR_MM = (parseFloat(stilePaginaRif.paddingLeft)||0) / PX_PER_MM;
   const PAD_TOP_MM = (parseFloat(stilePaginaRif.paddingTop)||0) / PX_PER_MM;
