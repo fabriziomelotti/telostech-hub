@@ -3782,7 +3782,7 @@ async function generaPreventivoPDF(righe, total, meta={}){
   *{box-sizing:border-box;margin:0;padding:0}
   html,body{width:210mm}
   body{font-family:Arial,sans-serif;color:#232323;font-size:12.5px}
-  .pagina{width:210mm;min-height:297mm;padding:10mm 13mm;page-break-after:always;display:flex;flex-direction:column}
+  .pagina{width:210mm;min-height:297mm;padding:8mm 10mm;page-break-after:always;display:flex;flex-direction:column}
   .pagina:last-child{page-break-after:auto}
 
   /* ── Copertina ── */
@@ -3840,6 +3840,8 @@ async function generaPreventivoPDF(righe, total, meta={}){
   .note-box .lbl{font-weight:700;margin-bottom:4px}
   .note-box .testo{white-space:pre-line}
 
+  .soluzione-separatore{margin-top:26px;padding-top:14px;border-top:2px solid #162758;font-size:13px;font-weight:700;color:#162758;margin-bottom:10px}
+
   .footer-legale{font-size:9px;color:#9AA3AB;border-top:1px solid #E3E5EA;padding-top:8px;margin-top:16px}
   .footer-legale b{color:#5B6770}
 
@@ -3885,13 +3887,13 @@ ${paginaArticoliHtml("PROPOSTA ORDINE", righe, finanziariaFornitoreAttiva, `
         ${finanziamentoHtml}
       `}
     </div>
-    ${(meta.soluzioni||[]).length===0 ? noteBoxHtml : ""}
+    ${(meta.soluzioni||[]).map(s => `
+      <div class="soluzione-separatore">Soluzione alternativa — ${(s.nome||"Soluzione").toUpperCase()}</div>
+      ${tabellaArticoliHtml(s.righe||[], s.finanziaria_importo!=null)}
+      ${totaliBoxSoluzioneHtml(s)}
+    `).join("")}
+    ${noteBoxHtml}
 `)}
-
-${(meta.soluzioni||[]).map((s, idx, arr) => {
-  const ultima = idx === arr.length - 1;
-  return paginaArticoliHtml(`SOLUZIONE ALTERNATIVA — ${(s.nome||"Soluzione").toUpperCase()}`, s.righe||[], s.finanziaria_importo!=null, `${totaliBoxSoluzioneHtml(s)}${ultima ? noteBoxHtml : ""}`);
-}).join("\n")}
 
 <div class="pagina condizioni">
   <div class="corpo-contenuto">
@@ -3968,7 +3970,7 @@ async function generaPreventivoInterventoPDF(pv, meta={}){
   *{box-sizing:border-box;margin:0;padding:0}
   html,body{width:210mm}
   body{font-family:Arial,sans-serif;color:#232323;font-size:12.5px}
-  .pagina{width:210mm;min-height:297mm;padding:10mm 13mm;page-break-after:always;display:flex;flex-direction:column}
+  .pagina{width:210mm;min-height:297mm;padding:8mm 10mm;page-break-after:always;display:flex;flex-direction:column}
   .pagina:last-child{page-break-after:auto}
 
   .corpo-contenuto{flex:1}
@@ -4127,7 +4129,7 @@ async function generaRapportoInterventoPDF(i, meta={}){
   *{box-sizing:border-box;margin:0;padding:0}
   html,body{width:210mm}
   body{font-family:Arial,sans-serif;color:#232323;font-size:12.5px}
-  .pagina{width:210mm;min-height:297mm;padding:10mm 13mm;display:flex;flex-direction:column}
+  .pagina{width:210mm;min-height:297mm;padding:8mm 10mm;display:flex;flex-direction:column}
   .corpo-contenuto{flex:1}
   .hd-content{display:flex;align-items:center;justify-content:space-between;margin-bottom:18px;padding-bottom:14px;border-bottom:2px solid #162758}
   .hd-content .logo-telos-spa{height:46px}
