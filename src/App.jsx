@@ -3604,24 +3604,28 @@ function dispositivoTouchPrincipale(){
   return typeof window !== "undefined" && !!window.matchMedia && window.matchMedia("(pointer: coarse)").matches;
 }
 
-// Punto d'ingresso unico: su desktop apre la stampa nativa del browser
-// (comportamento invariato). Su mobile genera il PDF vero e prova a
-// condividerlo con le app native del dispositivo (mail, WhatsApp, stampa,
-// AirDrop…); se il browser non supporta la condivisione di file propone il
-// download diretto del PDF; se la generazione stessa fallisce per qualche
-// motivo, ripiega sulla stampa del browser così il documento resta comunque
-// ottenibile.
+// Punto d'ingresso unico: genera SEMPRE il PDF vero tramite generaPdfBlob
+// (l'unico percorso che sa ripetere correttamente header/footer e spezzare
+// le pagine troppo lunghe — vedi generaPdfBlob sopra). Prima, su desktop si
+// apriva la stampa nativa del browser (window.print()): più veloce, ma
+// window.print() non sa nulla della logica di ".header-ripetuto"/
+// ".footer-legale"/ripiego — su un preventivo lungo l'intestazione e il
+// piè di pagina comparivano solo sulla prima pagina fisica, poi il
+// contenuto proseguiva "nudo". Su mobile prova a condividere il file con
+// le app native del dispositivo; se il browser non supporta la
+// condivisione di file (o siamo su desktop) propone il download diretto
+// del PDF. Solo se la generazione stessa fallisce per qualche motivo,
+// ripiega sulla stampa del browser così il documento resta comunque
+// ottenibile in qualche forma.
 async function condividiOStampaPdf(htmlContenuto, nomeFile, { titolo, testo } = {}){
-  if(!dispositivoTouchPrincipale()){
-    apriPerStampa(htmlContenuto);
-    return;
-  }
   try{
     const blob = await generaPdfBlob(htmlContenuto);
-    const file = new File([blob], nomeFile, { type: "application/pdf" });
-    if(navigator.canShare && navigator.canShare({ files: [file] })){
-      await navigator.share({ files: [file], title: titolo, text: testo });
-      return;
+    if(dispositivoTouchPrincipale()){
+      const file = new File([blob], nomeFile, { type: "application/pdf" });
+      if(navigator.canShare && navigator.canShare({ files: [file] })){
+        await navigator.share({ files: [file], title: titolo, text: testo });
+        return;
+      }
     }
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -3663,34 +3667,96 @@ async function generaPreventivoPDF(righe, total, meta={}){
   })();
   const referenteTelefono = meta.referente_telefono || "";
 
-  // Con la finanziaria fornitore attiva, il cliente vede/paga l'importo
-  // finanziato complessivo, non i prezzi dei singoli prodotti — colonne
-  // Listino/Netto/Totale nascoste dalla tabella, sostituite in evidenza
-  // dalla rata mensile (vedi totali-box più sotto).
-  const finanziariaFornitoreAttiva = meta.finanziaria_importo!=null;
+  // Genera la tabella completa (intestazione + righe, con foto/descrizione
+  // estesa) per un set di righe qualsiasi — riusata sia per la soluzione
+  // principale sia per ciascuna soluzione alternativa, così tutte compaiono
+  // con lo stesso identico livello di dettaglio (non più un riassunto
+  // compresso per le alternative).
+  function tabellaArticoliHtml(righeInput, finanziariaAttiva){
+    const righeHtml = (righeInput||[]).map((r,i) => {
+      const totRiga = r.netto * (r.qty||1);
+      const caratteristiche = (r.desc_prev||"").split(/\n|;/).map(x=>x.trim()).filter(Boolean);
+      return `
+      <tr class="riga-prodotto ${i%2===1?"riga-alt":""}">
+        <td class="cella-prodotto">
+          <div class="prodotto-tag"><span class="tag">${r.mar||""}</span></div>
+          <div class="prodotto-nome">${r.nome||""}</div>
+          <div class="prodotto-codice">${r.cod||""}</div>
+          ${r.img ? `<div class="prodotto-img"><img src="${r.img}" alt=""/></div>` : ""}
+        </td>
+        <td class="cella-descr">
+          ${r.desc ? `<div class="descr-testo">${r.desc}</div>` : ""}
+          ${caratteristiche.length ? `<div class="caratteristiche-testo">${caratteristiche.join("<br/>")}</div>` : ""}
+        </td>
+        <td class="cella-num">${r.qty||1}</td>
+        ${finanziariaAttiva ? "" : `
+        <td class="cella-num">€${(r.listino||0).toFixed(2)}</td>
+        <td class="cella-num">€${r.netto.toFixed(2)}</td>
+        <td class="cella-num cella-tot">€${totRiga.toFixed(2)}</td>`}
+      </tr>`;
+    }).join("");
+    return `<table class="articoli">
+      <thead><tr>
+        <th>Prodotto</th><th>Descrizione</th><th class="cella-num">Qtà</th>${finanziariaAttiva ? "" : `<th class="cella-num">Listino</th><th class="cella-num">Netto</th><th class="cella-num">Totale</th>`}
+      </tr></thead>
+      <tbody>${righeHtml}</tbody>
+    </table>`;
+  }
 
-  const righeHtml = righe.map((r,i) => {
-    const totRiga = r.netto * (r.qty||1);
-    const caratteristiche = (r.desc_prev||"").split(/\n|;/).map(x=>x.trim()).filter(Boolean);
+  // Blocco totali per una soluzione ALTERNATIVA (stesso stile del blocco
+  // totali della soluzione principale, calcolato sulle sue righe)
+  function totaliBoxSoluzioneHtml(s){
+    const totaleSoluzione = (s.righe||[]).reduce((acc,r)=>acc+r.netto*(r.qty||1),0);
+    const finAttiva = s.finanziaria_importo!=null;
+    return `<div class="totali-box">
+      ${finAttiva ? `
+        <div class="tot-imponibile-minore">Totale (IVA esclusa): €${totaleSoluzione.toFixed(2)}</div>
+        <div class="rata-evidenziata">€${(s.finanziaria_rata||0).toFixed(2)} <span class="mesi">al mese × ${s.finanziaria_mesi||0} mesi</span></div>
+        <div class="finanziamento-nota">Importo finanziato: €${(s.finanziaria_importo||0).toFixed(2)} (${s.finanziaria_iva_inclusa?"IVA inclusa":"IVA esclusa"})</div>
+      ` : `
+        <div class="tot-imponibile">Totale (IVA esclusa): €${totaleSoluzione.toFixed(2)}</div>
+      `}
+    </div>`;
+  }
+
+  // Una pagina "contenuto" completa (header ripetuto con loghi/numero/
+  // referente/cliente + tabella articoli + totali + footer legale) — usata
+  // sia per la soluzione principale (PROPOSTA ORDINE) sia per ciascuna
+  // soluzione alternativa, così ogni pagina aggiuntiva riparte identica a
+  // pag. 2, invece di un riassunto senza intestazione né piè di pagina.
+  function paginaArticoliHtml(titoloPagina, righeInput, finanziariaAttiva, corpoExtraHtml){
     return `
-    <tr class="riga-prodotto ${i%2===1?"riga-alt":""}">
-      <td class="cella-prodotto">
-        <div class="prodotto-tag"><span class="tag">${r.mar||""}</span></div>
-        <div class="prodotto-nome">${r.nome||""}</div>
-        <div class="prodotto-codice">${r.cod||""}</div>
-        ${r.img ? `<div class="prodotto-img"><img src="${r.img}" alt=""/></div>` : ""}
-      </td>
-      <td class="cella-descr">
-        ${r.desc ? `<div class="descr-testo">${r.desc}</div>` : ""}
-        ${caratteristiche.length ? `<div class="caratteristiche-testo">${caratteristiche.join("<br/>")}</div>` : ""}
-      </td>
-      <td class="cella-num">${r.qty||1}</td>
-      ${finanziariaFornitoreAttiva ? "" : `
-      <td class="cella-num">€${(r.listino||0).toFixed(2)}</td>
-      <td class="cella-num">€${r.netto.toFixed(2)}</td>
-      <td class="cella-num cella-tot">€${totRiga.toFixed(2)}</td>`}
-    </tr>`;
-  }).join("");
+<div class="pagina">
+  <div class="header-ripetuto">
+    <div class="hd-content">
+      <img class="logo-telos-spa" src="${LOGO_TELOS_SPA}" alt="Telos SPA"/>
+      <img class="badge-partner" src="${LOGO_BADGE_PARTNER}" alt=""/>
+    </div>
+    <div class="riga-titolo">
+      <div class="titolo-ordine">${titoloPagina}</div>
+      <div class="meta-box">
+        <div class="etichetta">Numero</div><div class="valore">${codiceMostrato}</div>
+        <div class="etichetta">Data</div><div class="valore">${oggi}</div>
+        <div class="etichetta">Scadenza</div><div class="valore">${scadenzaMostrata||"—"}</div>
+        <div class="etichetta">Pagamento</div><div class="valore">${pagamentoMostrato}</div>
+        ${referenteCognome ? `<div class="etichetta">Referente Telos</div><div class="valore">${referenteCognome}${referenteTelefono ? ` — ${referenteTelefono}` : ""}</div>` : ""}
+      </div>
+    </div>
+    <div class="cliente-box">
+      <div style="color:#7C879E;font-size:10px">Spett.le Cliente</div>
+      <div class="nome">${meta.cliente||""}</div>
+    </div>
+  </div>
+  <div class="corpo-contenuto">
+    ${tabellaArticoliHtml(righeInput, finanziariaAttiva)}
+    ${corpoExtraHtml||""}
+  </div>
+  <div class="footer-legale">
+    <b>TELOS S.P.A.</b> P.I./C.F. 00525920013 - capitale sociale € 3.586.191,18 i.v. - REA TO-457465 | www.telosspa.it<br/>
+    <b>SEDE Legale:</b> VENARIA (TO) - 10078 - Via Aosta 5 - Tel. 011.4242932 · <b>Amministrazione:</b> amministrazione.torino@telosgroup.it
+  </div>
+</div>`;
+  }
 
   const finanziamentoHtml = meta.finanziamento_tipo && meta.finanziamento_rata ? `
     <div class="finanziamento-riga">${meta.finanziamento_tipo==="noleggio"?"Noleggio":"Finanziamento"}: €${meta.finanziamento_rata.toFixed(2)} x ${meta.finanziamento_mesi} mesi</div>
@@ -3785,7 +3851,7 @@ ${meta.includi_copertina!==false ? `
   <div class="cover-spacer"></div>
   <div>
     <div class="cover-cliente">${(meta.cliente||"CLIENTE").toUpperCase()}</div>
-    ${referenteCognome ? `<div class="cover-referente">vs. referente: ${referenteCognome}${referenteTelefono ? `<span class="cover-referente-tel">Tel. ${referenteTelefono}</span>` : ""}</div>` : ""}
+    ${referenteCognome ? `<div class="cover-referente">vs. referente Telos: ${referenteCognome}${referenteTelefono ? `<span class="cover-referente-tel">Tel. ${referenteTelefono}</span>` : ""}</div>` : ""}
   </div>
   <div class="cover-spacer"></div>
   <img class="cover-chevron" src="${LOGO_CHEVRON}" alt=""/>
@@ -3796,35 +3862,7 @@ ${meta.includi_copertina!==false ? `
   <div class="cover-contatti">TELOS SPA - Reparto Telos Tech<span>Via Aosta, 5 - 10078 Venaria Reale (TO)</span><span>Tel. 0114242932 - E-Mail: attrezzatura@telosgroup.it</span></div>
 </div>
 ` : ""}
-<div class="pagina">
-  <div class="header-ripetuto">
-    <div class="hd-content">
-      <img class="logo-telos-spa" src="${LOGO_TELOS_SPA}" alt="Telos SPA"/>
-      <img class="badge-partner" src="${LOGO_BADGE_PARTNER}" alt=""/>
-    </div>
-    <div class="riga-titolo">
-      <div class="titolo-ordine">PROPOSTA ORDINE</div>
-      <div class="meta-box">
-        <div class="etichetta">Numero</div><div class="valore">${codiceMostrato}</div>
-        <div class="etichetta">Data</div><div class="valore">${oggi}</div>
-        <div class="etichetta">Scadenza</div><div class="valore">${scadenzaMostrata||"—"}</div>
-        <div class="etichetta">Pagamento</div><div class="valore">${pagamentoMostrato}</div>
-        ${referenteCognome ? `<div class="etichetta">Referente</div><div class="valore">${referenteCognome}${referenteTelefono ? ` — ${referenteTelefono}` : ""}</div>` : ""}
-      </div>
-    </div>
-    <div class="cliente-box">
-      <div style="color:#7C879E;font-size:10px">Spett.le Cliente</div>
-      <div class="nome">${meta.cliente||""}</div>
-    </div>
-  </div>
-  <div class="corpo-contenuto">
-    <table class="articoli">
-      <thead><tr>
-        <th>Prodotto</th><th>Descrizione</th><th class="cella-num">Qtà</th>${finanziariaFornitoreAttiva ? "" : `<th class="cella-num">Listino</th><th class="cella-num">Netto</th><th class="cella-num">Totale</th>`}
-      </tr></thead>
-      <tbody>${righeHtml}</tbody>
-    </table>
-
+${paginaArticoliHtml("PROPOSTA ORDINE", righe, finanziariaFornitoreAttiva, `
     <div class="totali-box">
       ${finanziariaFornitoreAttiva ? `
         <div class="tot-imponibile-minore">Totale (IVA esclusa): €${total.toFixed(2)}</div>
@@ -3835,29 +3873,12 @@ ${meta.includi_copertina!==false ? `
         ${finanziamentoHtml}
       `}
     </div>
-
     ${meta.note ? `<div class="note-box"><div class="lbl">Note:</div><div class="testo">${meta.note}</div></div>` : ""}
+`)}
 
-    ${(meta.soluzioni||[]).length>0 ? `
-    <div style="margin-top:24px;padding-top:16px;border-top:2px solid #162758">
-      <div style="font-size:13px;font-weight:700;color:#162758;margin-bottom:12px">Soluzioni alternative</div>
-      ${meta.soluzioni.map(s=>`
-        <div style="border:1px solid #E3E5EA;border-radius:6px;padding:12px 14px;margin-bottom:10px">
-          <div style="font-size:12px;font-weight:700;color:#162758;margin-bottom:6px">${s.nome||"Soluzione"}</div>
-          ${(s.righe||[]).map(r=>`<div style="font-size:11px;color:#3A4248;padding:2px 0">${r.mar||""} ${r.nome||""} × ${r.qty||1}${s.finanziaria_importo==null?` — €${(r.netto*(r.qty||1)).toFixed(2)}`:""}</div>`).join("")}
-          <div style="font-size:13px;font-weight:700;color:#162758;margin-top:8px;text-align:right">
-            ${s.finanziaria_importo!=null ? `€${(s.finanziaria_rata||0).toFixed(2)}/mese × ${s.finanziaria_mesi||0} mesi` : `Totale (IVA esclusa): €${(s.val||0).toFixed(2)}`}
-          </div>
-        </div>
-      `).join("")}
-    </div>` : ""}
-  </div>
-
-  <div class="footer-legale">
-    <b>TELOS S.P.A.</b> P.I./C.F. 00525920013 - capitale sociale € 3.586.191,18 i.v. - REA TO-457465 | www.telosspa.it<br/>
-    <b>SEDE Legale:</b> VENARIA (TO) - 10078 - Via Aosta 5 - Tel. 011.4242932 · <b>Amministrazione:</b> amministrazione.torino@telosgroup.it
-  </div>
-</div>
+${(meta.soluzioni||[]).map(s =>
+  paginaArticoliHtml(`SOLUZIONE ALTERNATIVA — ${(s.nome||"Soluzione").toUpperCase()}`, s.righe||[], s.finanziaria_importo!=null, totaliBoxSoluzioneHtml(s))
+).join("\n")}
 
 <div class="pagina condizioni">
   <div class="corpo-contenuto">
@@ -5791,6 +5812,18 @@ function Preventivi({cart,setCart,preventivi,setPreventivi,setOrdini,setArea,ruo
                 const prodottoCatalogo = (catalog||[]).find(p=>p.cod===r.cod);
                 return { ...r, img: prodottoCatalogo?.img, desc: prodottoCatalogo?.desc, desc_prev: prodottoCatalogo?.desc_prev };
               });
+              // Le righe delle soluzioni alternative (BloccoSoluzioneVendita)
+              // salvano solo {cod,nome,mar,netto,qty}: niente immagine,
+              // descrizione estesa o listino — vanno arricchite dal catalogo
+              // qui, esattamente come per la soluzione principale sopra,
+              // altrimenti nel PDF comparirebbero senza foto/descrizione.
+              const soluzioniArricchite = (selezionato.soluzioni||[]).map(s => ({
+                ...s,
+                righe: (s.righe||[]).map(r=>{
+                  const prodottoCatalogo = (catalog||[]).find(p=>p.cod===r.cod);
+                  return { ...r, img: prodottoCatalogo?.img, desc: prodottoCatalogo?.desc, desc_prev: prodottoCatalogo?.desc_prev, listino: prodottoCatalogo?.listino };
+                }),
+              }));
               // Incrocio il referente salvato sul preventivo ("Nome Cognome")
               // con l'elenco utenti Telos, se già caricato (solo per
               // responsabile/admin — vedi useEffect su utentiTelos), per
@@ -5825,7 +5858,7 @@ function Preventivi({cart,setCart,preventivi,setPreventivi,setOrdini,setArea,ruo
                 conferma_alt_nome: selezionato.conferma_alt_nome,
                 conferma_alt_tipo: selezionato.conferma_alt_tipo,
                 conferma_alt_data: selezionato.conferma_alt_data,
-                soluzioni: selezionato.soluzioni,
+                soluzioni: soluzioniArricchite,
               });
             } finally { setGenerandoPdf(false); }
           }} style={{...S.btnAccent,padding:"14px",fontSize:14,fontWeight:700,background:C.cyan,color:C.inkDeep,opacity:generandoPdf?0.6:1}}>
