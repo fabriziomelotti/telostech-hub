@@ -3667,6 +3667,12 @@ async function generaPreventivoPDF(righe, total, meta={}){
   })();
   const referenteTelefono = meta.referente_telefono || "";
 
+  // Con la finanziaria fornitore attiva, il cliente vede/paga l'importo
+  // finanziato complessivo, non i prezzi dei singoli prodotti — colonne
+  // Listino/Netto/Totale nascoste dalla tabella, sostituite in evidenza
+  // dalla rata mensile (vedi totali-box più sotto).
+  const finanziariaFornitoreAttiva = meta.finanziaria_importo!=null;
+
   // Genera la tabella completa (intestazione + righe, con foto/descrizione
   // estesa) per un set di righe qualsiasi — riusata sia per la soluzione
   // principale sia per ciascuna soluzione alternativa, così tutte compaiono
