@@ -3363,7 +3363,23 @@ async function generaPdfBlob(htmlContenuto){
 
   const A4_LARGHEZZA_MM = 210, A4_ALTEZZA_MM = 297;
   const FATTORE_FOOTER = 0.72; // dimensione dei dati societari in fondo pagina: fissa e uguale su ogni pagina del documento
-  const LARGHEZZA_CONTENUTO_MM = A4_LARGHEZZA_MM - 32; // corrisponde al padding orizzontale di 16mm per lato di ".pagina"
+  const PX_PER_MM = 96/25.4; // mappatura standard px↔mm usata dai browser per le unità fisiche in CSS
+
+  // Margini letti dal VERO CSS di ".pagina" applicato in questo momento,
+  // invece di un valore fisso in mm scritto qui a parte: quel valore fisso
+  // era rimasto agganciato al vecchio padding di 16mm/14mm anche dopo aver
+  // ristretto i margini più volte nel CSS — risultato: il corpo della
+  // pagina (che eredita il padding vero di ".pagina" perché viene
+  // catturato così com'è) si stringeva regolarmente, ma header e footer
+  // (staccati e catturati a parte in capsulaHeader/capsulaFooter, vedi
+  // sotto) continuavano a usare il valore stantio, finendo con margini
+  // vistosamente diversi — da qui loghi e dati societari "sballati"
+  // rispetto al resto della pagina, ORA sempre sincronizzati col CSS reale.
+  const paginaRif = corpo.querySelector(".pagina") || corpo;
+  const stilePaginaRif = getComputedStyle(paginaRif);
+  const PAD_LR_MM = (parseFloat(stilePaginaRif.paddingLeft)||0) / PX_PER_MM;
+  const PAD_TOP_MM = (parseFloat(stilePaginaRif.paddingTop)||0) / PX_PER_MM;
+  const LARGHEZZA_CONTENUTO_MM = A4_LARGHEZZA_MM - PAD_LR_MM*2;
 
   // Contenitore isolato e riutilizzabile per catturare il footer con i dati
   // societari sempre nello stesso identico modo, indipendentemente dalla
@@ -3404,7 +3420,6 @@ async function generaPdfBlob(htmlContenuto){
     const pagine = Array.from(corpo.querySelectorAll(".pagina"));
     const daCatturare = pagine.length ? pagine : [corpo];
 
-    const PX_PER_MM = 96/25.4; // mappatura standard px↔mm usata dai browser per le unità fisiche in CSS
     const FATTORE_MINIMO = 0.65; // non scendere sotto il 65% del carattere originale, per restare leggibile
     const TOLLERANZA_MM = 2; // margine per non scattare su pagine essenzialmente già a misura (es. la copertina, con arrotondamenti del layout flessibile)
     const OBIETTIVO_MM = A4_ALTEZZA_MM - 3; // puntiamo leggermente sotto i 297mm, per avere margine contro arrotondamenti nella cattura successiva
@@ -3464,8 +3479,8 @@ async function generaPdfBlob(htmlContenuto){
       // quella distribuzione (visto nel PDF di prova: copertina schiacciata).
       const styleOriginale = { width: pagina.style.width, transform: pagina.style.transform, transformOrigin: pagina.style.transformOrigin };
       let ridimensionata = false;
-      const obiettivoCorpoMm = Math.max(OBIETTIVO_MM - headerAltezzaMm, 40);
-      if(altezzaMm(pagina) + headerAltezzaMm > A4_ALTEZZA_MM + TOLLERANZA_MM){
+      const obiettivoCorpoMm = Math.max(OBIETTIVO_MM - PAD_TOP_MM - headerAltezzaMm, 40);
+      if(altezzaMm(pagina) + PAD_TOP_MM + headerAltezzaMm > A4_ALTEZZA_MM + TOLLERANZA_MM){
         ridimensionata = true;
         pagina.style.transformOrigin = "top left";
         let fattore = 1, altezza = altezzaMm(pagina), tentativi = 0;
@@ -3492,11 +3507,22 @@ async function generaPdfBlob(htmlContenuto){
 
       const pxPerMm = canvas.width / A4_LARGHEZZA_MM;
       const altezzaTotaleMm = canvas.height / pxPerMm;
+      // Y da cui parte il corpo: il margine superiore di pagina (PAD_TOP_MM,
+      // altrimenti l'header era incollato al bordo fisico del foglio senza
+      // alcun respiro) più l'altezza dell'header stesso.
+      const yCorpoMm = PAD_TOP_MM + headerAltezzaMm;
 
-      if(headerAltezzaMm + altezzaTotaleMm <= A4_ALTEZZA_MM + 0.5){
+      if(yCorpoMm + altezzaTotaleMm <= A4_ALTEZZA_MM + 0.5){
         if(primaPaginaCreata) pdf.addPage();
-        if(headerCanvas) pdf.addImage(headerCanvas.toDataURL("image/jpeg", 0.95), "JPEG", 0, 0, A4_LARGHEZZA_MM, headerAltezzaMm);
-        pdf.addImage(canvas.toDataURL("image/jpeg", 0.95), "JPEG", 0, headerAltezzaMm, A4_LARGHEZZA_MM, altezzaTotaleMm);
+        // Header e footer vanno incollati alla loro dimensione NATURALE
+        // (LARGHEZZA_CONTENUTO_MM, con lo stesso margine sinistro/destro del
+        // corpo) — non stirati sull'intera larghezza del foglio: prima
+        // venivano catturati senza alcun margine proprio e poi incollati a
+        // piena pagina (0→210mm), risultando praticamente a filo bordo e
+        // visibilmente più larghi/stirati del corpo sottostante, che invece
+        // il suo margine reale lo eredita per davvero da ".pagina".
+        if(headerCanvas) pdf.addImage(headerCanvas.toDataURL("image/jpeg", 0.95), "JPEG", PAD_LR_MM, PAD_TOP_MM, LARGHEZZA_CONTENUTO_MM, headerAltezzaMm);
+        pdf.addImage(canvas.toDataURL("image/jpeg", 0.95), "JPEG", 0, yCorpoMm, A4_LARGHEZZA_MM, altezzaTotaleMm);
         primaPaginaCreata = true;
       } else {
         // Ripiego residuo: anche al fattore minimo di riduzione il contenuto
@@ -3508,7 +3534,7 @@ async function generaPdfBlob(htmlContenuto){
         // qui che prima l'header spariva dalla seconda pagina in poi e il
         // contenuto "saliva" a occuparne il posto — ora resta fisso su ogni
         // pagina fisica generata da questo ".pagina", non solo sulla prima.
-        const altezzaPerPaginaCorpoMm = A4_ALTEZZA_MM - headerAltezzaMm;
+        const altezzaPerPaginaCorpoMm = A4_ALTEZZA_MM - yCorpoMm;
         const altezzaFettaPx = Math.round(altezzaPerPaginaCorpoMm * pxPerMm);
         let offset = 0;
         while(offset < canvas.height){
@@ -3521,8 +3547,8 @@ async function generaPdfBlob(htmlContenuto){
           ctx.fillRect(0, 0, fetta.width, fetta.height);
           ctx.drawImage(canvas, 0, offset, canvas.width, altezzaQuestaFettaPx, 0, 0, canvas.width, altezzaQuestaFettaPx);
           if(primaPaginaCreata) pdf.addPage();
-          if(headerCanvas) pdf.addImage(headerCanvas.toDataURL("image/jpeg", 0.95), "JPEG", 0, 0, A4_LARGHEZZA_MM, headerAltezzaMm);
-          pdf.addImage(fetta.toDataURL("image/jpeg", 0.95), "JPEG", 0, headerAltezzaMm, A4_LARGHEZZA_MM, altezzaQuestaFettaPx / pxPerMm);
+          if(headerCanvas) pdf.addImage(headerCanvas.toDataURL("image/jpeg", 0.95), "JPEG", PAD_LR_MM, PAD_TOP_MM, LARGHEZZA_CONTENUTO_MM, headerAltezzaMm);
+          pdf.addImage(fetta.toDataURL("image/jpeg", 0.95), "JPEG", 0, yCorpoMm, A4_LARGHEZZA_MM, altezzaQuestaFettaPx / pxPerMm);
           primaPaginaCreata = true;
           offset += altezzaQuestaFettaPx;
         }
@@ -3536,7 +3562,7 @@ async function generaPdfBlob(htmlContenuto){
         const footerPxPerMm = footerCanvas.width / LARGHEZZA_CONTENUTO_MM;
         const footerAltezzaMm = footerCanvas.height / footerPxPerMm;
         const yFooterMm = A4_ALTEZZA_MM - footerAltezzaMm - MARGINE_INFERIORE_FOOTER_MM;
-        pdf.addImage(footerCanvas.toDataURL("image/jpeg", 0.95), "JPEG", 16, yFooterMm, LARGHEZZA_CONTENUTO_MM, footerAltezzaMm);
+        pdf.addImage(footerCanvas.toDataURL("image/jpeg", 0.95), "JPEG", PAD_LR_MM, yFooterMm, LARGHEZZA_CONTENUTO_MM, footerAltezzaMm);
       }
     }
 
