@@ -9238,13 +9238,14 @@ function GestioneUtenti({ ruolo, sessione }) {
 
   function apriModifica(u) {
     setEditId(u.id);
-    setEditBuf({ nome: u.nome, cognome: u.cognome, ruolo: u.ruolo || "commerciale" });
+    setEditBuf({ nome: u.nome, cognome: u.cognome, ruolo: u.ruolo || "commerciale", telefono: u.telefono || "" });
   }
 
   async function salvaModifica(id) {
     try {
       await chiamaAdminUsers("update", {
         id, nome: editBuf.nome.trim(), cognome: editBuf.cognome.trim(), ruolo: editBuf.ruolo,
+        telefono: editBuf.telefono.trim() || null,
       }, accessToken);
       setEditId(null);
       caricaUtenti();
@@ -9385,6 +9386,7 @@ function GestioneUtenti({ ruolo, sessione }) {
               <div style={{ fontSize: 12, color: C.steel, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{u.email}</div>
               <div style={{ fontSize: 11, fontFamily: F_MONO, color: "#9AA3AB", marginTop: 3 }}>
                 {u.ruolo ? RUOLI[u.ruolo]?.label || u.ruolo : "— nessun ruolo —"}
+                {u.telefono ? ` · ${u.telefono}` : " · nessun telefono"}
                 {u.ultimoAccesso ? ` · ultimo accesso ${new Date(u.ultimoAccesso).toLocaleDateString("it-IT")}` : " · mai acceduto"}
               </div>
             </div>
@@ -9401,6 +9403,7 @@ function GestioneUtenti({ ruolo, sessione }) {
                 <div style={{ flex: 1 }}>{campo("Nome", <input value={editBuf.nome} onChange={e => setEditBuf({ ...editBuf, nome: e.target.value })} style={S.inp} />)}</div>
                 <div style={{ flex: 1 }}>{campo("Cognome", <input value={editBuf.cognome} onChange={e => setEditBuf({ ...editBuf, cognome: e.target.value })} style={S.inp} />)}</div>
               </div>
+              {campo("Telefono", <input value={editBuf.telefono} onChange={e => setEditBuf({ ...editBuf, telefono: e.target.value })} placeholder="es. 335 1234567" style={S.inp} />)}
               {campo("Ruolo", ruoliBtn(editBuf.ruolo, v => setEditBuf({ ...editBuf, ruolo: v })))}
 
               <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
