@@ -3376,6 +3376,18 @@ async function generaPdfBlob(htmlContenuto){
   capsulaFooter.style.cssText = `width:${LARGHEZZA_CONTENUTO_MM/FATTORE_FOOTER}mm;transform:scale(${FATTORE_FOOTER});transform-origin:top left;background:#fff;`;
   contenitore.appendChild(capsulaFooter);
 
+  // Stessa idea del capsulaFooter, ma per il blocco "header-ripetuto"
+  // (loghi + numero/data/scadenza/pagamento/referente + cliente): quando un
+  // documento è troppo lungo per una pagina fisica e va tagliato a fette
+  // (vedi ripiego più sotto), questo blocco va ridisegnato in cima a OGNI
+  // fetta invece di comparire solo sulla prima — altrimenti sulle pagine
+  // successive sparisce e il corpo del documento "sale" a occupare lo
+  // spazio che gli competeva. Nessuna riduzione di scala: resta identico e
+  // leggibile su ogni pagina.
+  const capsulaHeader = document.createElement("div");
+  capsulaHeader.style.cssText = `width:${LARGHEZZA_CONTENUTO_MM}mm;background:#fff;`;
+  contenitore.appendChild(capsulaHeader);
+
   try{
     const imgs = Array.from(contenitore.querySelectorAll("img"));
     await Promise.all(imgs.map(im => im.complete ? Promise.resolve() : new Promise(res=>{
@@ -3405,6 +3417,23 @@ async function generaPdfBlob(htmlContenuto){
     for(let i=0; i<daCatturare.length; i++){
       const pagina = daCatturare[i];
 
+      // Header ripetibile (vedi capsulaHeader sopra) — se presente, va
+      // staccato PRIMA di misurare/rimpicciolire la pagina, esattamente
+      // come il footer: sia per catturarlo isolato e riusarlo identico su
+      // ogni pagina fisica generata da questo ".pagina", sia perché la sua
+      // altezza non deve entrare nel calcolo di quanto rimpicciolire il
+      // resto (il corpo si restringe se serve, l'header no: resta sempre
+      // leggibile e nella stessa posizione).
+      const header = pagina.querySelector(":scope > .header-ripetuto");
+      let headerCanvas = null;
+      if(header){
+        capsulaHeader.appendChild(header);
+        headerCanvas = await html2canvas(capsulaHeader, {
+          scale: 2, useCORS: true, backgroundColor: "#ffffff", logging: false,
+        });
+      }
+      const headerAltezzaMm = headerCanvas ? headerCanvas.height / (headerCanvas.width / LARGHEZZA_CONTENUTO_MM) : 0;
+
       // Il footer va staccato PRIMA di misurare/rimpicciolire la pagina, sia
       // perché va catturato isolato (vedi sopra), sia perché la sua altezza
       // non deve contribuire al calcolo di quanto rimpicciolire il resto.
@@ -3418,10 +3447,14 @@ async function generaPdfBlob(htmlContenuto){
       }
 
       // Un ".pagina" ha solo min-height:297mm, non un limite massimo: se il
-      // contenuto (tipicamente il testo delle condizioni) è più lungo di una
-      // pagina fisica, rimpiccioliamo uniformemente tutto il contenuto
-      // (font compreso, come uno zoom-out) finché non ci sta in un'unica
-      // pagina, invece di spezzarlo su più fogli.
+      // contenuto (tipicamente il testo delle condizioni, o un preventivo
+      // con moltissime righe prodotto) è più lungo di una pagina fisica,
+      // rimpiccioliamo uniformemente il corpo (font compreso, come uno
+      // zoom-out) finché non ci sta in un'unica pagina, invece di
+      // spezzarlo su più fogli. Il target di rimpicciolimento tiene conto
+      // dello spazio già riservato all'header ripetibile (che non si
+      // rimpicciolisce mai), così il calcolo resta corretto anche quando
+      // l'header è presente.
       //
       // IMPORTANTE: agiamo con transform+width direttamente sull'elemento
       // ".pagina" stesso, senza spostarne i figli dentro un wrapper — pagine
@@ -3431,12 +3464,13 @@ async function generaPdfBlob(htmlContenuto){
       // quella distribuzione (visto nel PDF di prova: copertina schiacciata).
       const styleOriginale = { width: pagina.style.width, transform: pagina.style.transform, transformOrigin: pagina.style.transformOrigin };
       let ridimensionata = false;
-      if(altezzaMm(pagina) > A4_ALTEZZA_MM + TOLLERANZA_MM){
+      const obiettivoCorpoMm = Math.max(OBIETTIVO_MM - headerAltezzaMm, 40);
+      if(altezzaMm(pagina) + headerAltezzaMm > A4_ALTEZZA_MM + TOLLERANZA_MM){
         ridimensionata = true;
         pagina.style.transformOrigin = "top left";
         let fattore = 1, altezza = altezzaMm(pagina), tentativi = 0;
-        while(altezza > OBIETTIVO_MM && fattore > FATTORE_MINIMO && tentativi < 8){
-          fattore = Math.max(fattore * (OBIETTIVO_MM/altezza) * 0.98, FATTORE_MINIMO);
+        while(altezza > obiettivoCorpoMm && fattore > FATTORE_MINIMO && tentativi < 8){
+          fattore = Math.max(fattore * (obiettivoCorpoMm/altezza) * 0.98, FATTORE_MINIMO);
           pagina.style.width = `${A4_LARGHEZZA_MM/fattore}mm`;
           pagina.style.transform = `scale(${fattore})`;
           altezza = altezzaMm(pagina);
@@ -3453,21 +3487,29 @@ async function generaPdfBlob(htmlContenuto){
         pagina.style.transform = styleOriginale.transform;
         pagina.style.transformOrigin = styleOriginale.transformOrigin;
       }
+      if(header) pagina.insertBefore(header, pagina.firstChild); // ripristina la struttura originale (header-ripetuto è sempre il primo figlio)
       if(footer) pagina.appendChild(footer); // ripristina la struttura originale
 
       const pxPerMm = canvas.width / A4_LARGHEZZA_MM;
       const altezzaTotaleMm = canvas.height / pxPerMm;
 
-      if(altezzaTotaleMm <= A4_ALTEZZA_MM + 0.5){
+      if(headerAltezzaMm + altezzaTotaleMm <= A4_ALTEZZA_MM + 0.5){
         if(primaPaginaCreata) pdf.addPage();
-        pdf.addImage(canvas.toDataURL("image/jpeg", 0.95), "JPEG", 0, 0, A4_LARGHEZZA_MM, altezzaTotaleMm);
+        if(headerCanvas) pdf.addImage(headerCanvas.toDataURL("image/jpeg", 0.95), "JPEG", 0, 0, A4_LARGHEZZA_MM, headerAltezzaMm);
+        pdf.addImage(canvas.toDataURL("image/jpeg", 0.95), "JPEG", 0, headerAltezzaMm, A4_LARGHEZZA_MM, altezzaTotaleMm);
         primaPaginaCreata = true;
       } else {
         // Ripiego residuo: anche al fattore minimo di riduzione il contenuto
         // non ci sta in una pagina (es. un preventivo con moltissime righe
         // prodotto) — tagliamo il canvas sorgente in fette verticali, una per
         // ogni pagina fisica, piuttosto che comprimerlo in modo illeggibile.
-        const altezzaFettaPx = Math.round(A4_ALTEZZA_MM * pxPerMm);
+        // Su OGNI fetta ridisegniamo l'header ripetibile in cima (se
+        // presente) e riserviamo il suo spazio nell'altezza della fetta: è
+        // qui che prima l'header spariva dalla seconda pagina in poi e il
+        // contenuto "saliva" a occuparne il posto — ora resta fisso su ogni
+        // pagina fisica generata da questo ".pagina", non solo sulla prima.
+        const altezzaPerPaginaCorpoMm = A4_ALTEZZA_MM - headerAltezzaMm;
+        const altezzaFettaPx = Math.round(altezzaPerPaginaCorpoMm * pxPerMm);
         let offset = 0;
         while(offset < canvas.height){
           const altezzaQuestaFettaPx = Math.min(altezzaFettaPx, canvas.height - offset);
@@ -3479,7 +3521,8 @@ async function generaPdfBlob(htmlContenuto){
           ctx.fillRect(0, 0, fetta.width, fetta.height);
           ctx.drawImage(canvas, 0, offset, canvas.width, altezzaQuestaFettaPx, 0, 0, canvas.width, altezzaQuestaFettaPx);
           if(primaPaginaCreata) pdf.addPage();
-          pdf.addImage(fetta.toDataURL("image/jpeg", 0.95), "JPEG", 0, 0, A4_LARGHEZZA_MM, altezzaQuestaFettaPx / pxPerMm);
+          if(headerCanvas) pdf.addImage(headerCanvas.toDataURL("image/jpeg", 0.95), "JPEG", 0, 0, A4_LARGHEZZA_MM, headerAltezzaMm);
+          pdf.addImage(fetta.toDataURL("image/jpeg", 0.95), "JPEG", 0, headerAltezzaMm, A4_LARGHEZZA_MM, altezzaQuestaFettaPx / pxPerMm);
           primaPaginaCreata = true;
           offset += altezzaQuestaFettaPx;
         }
@@ -3609,6 +3652,16 @@ async function generaPreventivoPDF(righe, total, meta={}){
     ? `${meta.pagamento_modalita}${meta.pagamento_dettagli?` — ${meta.pagamento_dettagli}`:""}`
     : "Da concordare";
   const referente = meta.referente_telos || "";
+  // Cognome mostrato in copertina e in cima a ogni pagina: se il chiamante
+  // passa esplicitamente meta.referente_cognome (calcolato a monte
+  // incrociando l'elenco utenti Telos) lo usiamo, altrimenti euristica sul
+  // nome completo salvato sul preventivo ("Nome Cognome" → tutto tranne la
+  // prima parola, per reggere anche cognomi composti).
+  const referenteCognome = meta.referente_cognome || (() => {
+    const parti = referente.trim().split(/\s+/).filter(Boolean);
+    return parti.length > 1 ? parti.slice(1).join(" ") : referente;
+  })();
+  const referenteTelefono = meta.referente_telefono || "";
 
   // Con la finanziaria fornitore attiva, il cliente vede/paga l'importo
   // finanziato complessivo, non i prezzi dei singoli prodotti — colonne
@@ -3659,7 +3712,8 @@ async function generaPreventivoPDF(righe, total, meta={}){
   .cover-spacer{flex:1}
   .cover-logo{width:58mm;margin-top:4mm;position:relative;left:-3mm}
   .cover-cliente{font-size:28px;font-weight:700;margin-bottom:8px}
-  .cover-referente{font-size:15px;font-style:italic;color:#3A4248}
+  .cover-referente{font-size:22px;font-weight:700;color:#162758}
+  .cover-referente .cover-referente-tel{display:block;font-size:13px;font-weight:400;font-style:italic;color:#3A4248;margin-top:2px}
   .cover-chevron{width:52mm}
   .cover-titolo{font-size:25px;font-weight:700}
   .cover-strip{width:calc(100% + 20mm);margin-left:-10mm;margin-right:-10mm;margin-bottom:9mm}
@@ -3731,7 +3785,7 @@ ${meta.includi_copertina!==false ? `
   <div class="cover-spacer"></div>
   <div>
     <div class="cover-cliente">${(meta.cliente||"CLIENTE").toUpperCase()}</div>
-    ${referente ? `<div class="cover-referente">vs. referente: ${referente}</div>` : ""}
+    ${referenteCognome ? `<div class="cover-referente">vs. referente: ${referenteCognome}${referenteTelefono ? `<span class="cover-referente-tel">Tel. ${referenteTelefono}</span>` : ""}</div>` : ""}
   </div>
   <div class="cover-spacer"></div>
   <img class="cover-chevron" src="${LOGO_CHEVRON}" alt=""/>
@@ -3743,7 +3797,7 @@ ${meta.includi_copertina!==false ? `
 </div>
 ` : ""}
 <div class="pagina">
-  <div class="corpo-contenuto">
+  <div class="header-ripetuto">
     <div class="hd-content">
       <img class="logo-telos-spa" src="${LOGO_TELOS_SPA}" alt="Telos SPA"/>
       <img class="badge-partner" src="${LOGO_BADGE_PARTNER}" alt=""/>
@@ -3755,13 +3809,15 @@ ${meta.includi_copertina!==false ? `
         <div class="etichetta">Data</div><div class="valore">${oggi}</div>
         <div class="etichetta">Scadenza</div><div class="valore">${scadenzaMostrata||"—"}</div>
         <div class="etichetta">Pagamento</div><div class="valore">${pagamentoMostrato}</div>
+        ${referenteCognome ? `<div class="etichetta">Referente</div><div class="valore">${referenteCognome}${referenteTelefono ? ` — ${referenteTelefono}` : ""}</div>` : ""}
       </div>
     </div>
     <div class="cliente-box">
       <div style="color:#7C879E;font-size:10px">Spett.le Cliente</div>
       <div class="nome">${meta.cliente||""}</div>
     </div>
-
+  </div>
+  <div class="corpo-contenuto">
     <table class="articoli">
       <thead><tr>
         <th>Prodotto</th><th>Descrizione</th><th class="cella-num">Qtà</th>${finanziariaFornitoreAttiva ? "" : `<th class="cella-num">Listino</th><th class="cella-num">Netto</th><th class="cella-num">Totale</th>`}
@@ -5380,7 +5436,7 @@ function Preventivi({cart,setCart,preventivi,setPreventivi,setOrdini,setArea,ruo
               <div style={{fontSize:11,fontFamily:F_MONO,color:"#9AA3AB",textTransform:"uppercase",letterSpacing:"0.05em",marginBottom:4}}>Modalità di pagamento</div>
               <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
                 <select value={bozza.pagamento_modalita} onChange={e=>setBozza(b=>({...b,pagamento_modalita:e.target.value}))} style={{...S.inp,flex:"1 1 180px"}}>
-                  {["USUALE CODIFICATA","RI.BA.","RIMESSA DIRETTA","RID","FINANZIAMENTO","NOLEGGIO","DA CONCORDARE"].map(o=>(<option key={o} value={o}>{o}</option>))}
+                  {["USUALE CODIFICATA","RI.BA.","RIMESSA DIRETTA","RID","FINANZIAMENTO","NOLEGGIO","LEASING","DA CONCORDARE"].map(o=>(<option key={o} value={o}>{o}</option>))}
                 </select>
                 <input value={bozza.pagamento_dettagli} onChange={e=>setBozza(b=>({...b,pagamento_dettagli:e.target.value}))} placeholder="Dettagli (es. 60gg fine mese, al 15 del mese…)" style={{...S.inp,flex:"2 1 240px"}}/>
               </div>
@@ -5735,6 +5791,14 @@ function Preventivi({cart,setCart,preventivi,setPreventivi,setOrdini,setArea,ruo
                 const prodottoCatalogo = (catalog||[]).find(p=>p.cod===r.cod);
                 return { ...r, img: prodottoCatalogo?.img, desc: prodottoCatalogo?.desc, desc_prev: prodottoCatalogo?.desc_prev };
               });
+              // Incrocio il referente salvato sul preventivo ("Nome Cognome")
+              // con l'elenco utenti Telos, se già caricato (solo per
+              // responsabile/admin — vedi useEffect su utentiTelos), per
+              // avere cognome e telefono corretti invece di un'euristica sul
+              // testo. Se la corrispondenza non si trova (o l'elenco non è
+              // disponibile per il ruolo corrente), generaPreventivoPDF
+              // ricade comunque sull'euristica interna.
+              const referenteUtente = (utentiTelos||[]).find(u=>[u.nome,u.cognome].filter(Boolean).join(" ")===selezionato.referente_telos);
               await generaPreventivoPDF(righeArricchite, selezionato.val, {
                 codice: codicePreventivo(selezionato),
                 cliente: selezionato.cliente,
@@ -5742,6 +5806,8 @@ function Preventivi({cart,setCart,preventivi,setPreventivi,setOrdini,setArea,ruo
                 pagamento_modalita: selezionato.pagamento_modalita,
                 pagamento_dettagli: selezionato.pagamento_dettagli,
                 referente_telos: selezionato.referente_telos,
+                referente_cognome: referenteUtente?.cognome || null,
+                referente_telefono: referenteUtente?.telefono || null,
                 note: selezionato.note,
                 finanziamento_tipo: selezionato.finanziamento_tipo,
                 finanziamento_mesi: selezionato.finanziamento_mesi,
