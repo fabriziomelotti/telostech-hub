@@ -3782,7 +3782,7 @@ async function generaPreventivoPDF(righe, total, meta={}){
   *{box-sizing:border-box;margin:0;padding:0}
   html,body{width:210mm}
   body{font-family:Arial,sans-serif;color:#232323;font-size:12.5px}
-  .pagina{width:210mm;min-height:297mm;padding:8mm 10mm;page-break-after:always;display:flex;flex-direction:column}
+  .pagina{width:210mm;min-height:297mm;padding:6mm 9mm;page-break-after:always;display:flex;flex-direction:column}
   .pagina:last-child{page-break-after:auto}
 
   /* ── Copertina ── */
@@ -3800,15 +3800,15 @@ async function generaPreventivoPDF(righe, total, meta={}){
 
   /* ── Pagina contenuto ── */
   .corpo-contenuto{flex:1}
-  .hd-content{display:flex;align-items:center;justify-content:space-between;margin-bottom:18px;padding-bottom:14px;border-bottom:2px solid #162758}
-  .hd-content .logo-telos-spa{height:46px}
-  .hd-content .badge-partner{height:36px}
-  .riga-titolo{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;margin-bottom:18px}
+  .hd-content{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;padding-bottom:6px;border-bottom:2px solid #162758}
+  .hd-content .logo-telos-spa{height:34px}
+  .hd-content .badge-partner{height:26px}
+  .riga-titolo{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;margin-bottom:8px}
   .titolo-ordine{font-size:21px;font-weight:700;color:#162758;white-space:nowrap}
   .meta-box{display:grid;grid-template-columns:auto auto;column-gap:10px;row-gap:3px;font-size:11px;justify-content:end;flex-shrink:0}
   .meta-box .etichetta{color:#7C879E;text-align:right}
   .meta-box .valore{text-align:left;font-weight:600;white-space:nowrap}
-  .cliente-box{font-size:12.5px;margin-bottom:20px}
+  .cliente-box{font-size:12.5px;margin-bottom:10px}
   .cliente-box .nome{font-weight:700;font-size:14px}
 
   table.articoli{width:100%;border-collapse:collapse;margin-bottom:18px;table-layout:fixed}
@@ -3842,7 +3842,7 @@ async function generaPreventivoPDF(righe, total, meta={}){
 
   .soluzione-separatore{margin-top:26px;padding-top:14px;border-top:2px solid #162758;font-size:13px;font-weight:700;color:#162758;margin-bottom:10px}
 
-  .footer-legale{font-size:9px;color:#9AA3AB;border-top:1px solid #E3E5EA;padding-top:8px;margin-top:16px}
+  .footer-legale{font-size:9px;color:#9AA3AB;border-top:1px solid #E3E5EA;padding-top:5px;margin-top:8px}
   .footer-legale b{color:#5B6770}
 
   /* ── Pagina condizioni ── */
@@ -3970,19 +3970,19 @@ async function generaPreventivoInterventoPDF(pv, meta={}){
   *{box-sizing:border-box;margin:0;padding:0}
   html,body{width:210mm}
   body{font-family:Arial,sans-serif;color:#232323;font-size:12.5px}
-  .pagina{width:210mm;min-height:297mm;padding:8mm 10mm;page-break-after:always;display:flex;flex-direction:column}
+  .pagina{width:210mm;min-height:297mm;padding:6mm 9mm;page-break-after:always;display:flex;flex-direction:column}
   .pagina:last-child{page-break-after:auto}
 
   .corpo-contenuto{flex:1}
-  .hd-content{display:flex;align-items:center;justify-content:space-between;margin-bottom:18px;padding-bottom:14px;border-bottom:2px solid #162758}
-  .hd-content .logo-telos-spa{height:46px}
-  .hd-content .badge-partner{height:36px}
-  .riga-titolo{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;margin-bottom:18px}
+  .hd-content{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;padding-bottom:6px;border-bottom:2px solid #162758}
+  .hd-content .logo-telos-spa{height:34px}
+  .hd-content .badge-partner{height:26px}
+  .riga-titolo{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;margin-bottom:8px}
   .titolo-ordine{font-size:19px;font-weight:700;color:#162758}
   .meta-box{display:grid;grid-template-columns:auto auto;column-gap:10px;row-gap:3px;font-size:11px;justify-content:end;flex-shrink:0}
   .meta-box .etichetta{color:#7C879E;text-align:right}
   .meta-box .valore{text-align:left;font-weight:600;white-space:nowrap}
-  .cliente-box{font-size:12.5px;margin-bottom:16px}
+  .cliente-box{font-size:12.5px;margin-bottom:10px}
   .cliente-box .nome{font-weight:700;font-size:14px}
 
   .info-box{margin-bottom:16px}
@@ -4005,7 +4005,7 @@ async function generaPreventivoInterventoPDF(pv, meta={}){
   .note-box .lbl{font-weight:700;margin-bottom:4px}
   .note-box .testo{white-space:pre-line}
 
-  .footer-legale{font-size:9px;color:#9AA3AB;border-top:1px solid #E3E5EA;padding-top:8px;margin-top:16px}
+  .footer-legale{font-size:9px;color:#9AA3AB;border-top:1px solid #E3E5EA;padding-top:5px;margin-top:8px}
   .footer-legale b{color:#5B6770}
 
   .condizioni h2{font-size:17px;color:#162758;margin-bottom:14px}
@@ -4129,24 +4129,24 @@ async function generaRapportoInterventoPDF(i, meta={}){
   *{box-sizing:border-box;margin:0;padding:0}
   html,body{width:210mm}
   body{font-family:Arial,sans-serif;color:#232323;font-size:12.5px}
-  .pagina{width:210mm;min-height:297mm;padding:8mm 10mm;display:flex;flex-direction:column}
+  .pagina{width:210mm;min-height:297mm;padding:6mm 9mm;display:flex;flex-direction:column}
   .corpo-contenuto{flex:1}
-  .hd-content{display:flex;align-items:center;justify-content:space-between;margin-bottom:18px;padding-bottom:14px;border-bottom:2px solid #162758}
-  .hd-content .logo-telos-spa{height:46px}
-  .hd-content .badge-partner{height:36px}
-  .riga-titolo{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;margin-bottom:18px}
+  .hd-content{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;padding-bottom:6px;border-bottom:2px solid #162758}
+  .hd-content .logo-telos-spa{height:34px}
+  .hd-content .badge-partner{height:26px}
+  .riga-titolo{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;margin-bottom:8px}
   .titolo-ordine{font-size:19px;font-weight:700;color:#162758}
   .meta-box{display:grid;grid-template-columns:auto auto;column-gap:10px;row-gap:3px;font-size:11px;justify-content:end;flex-shrink:0}
   .meta-box .etichetta{color:#7C879E;text-align:right}
   .meta-box .valore{text-align:left;font-weight:600;white-space:nowrap}
-  .cliente-box{font-size:12.5px;margin-bottom:16px}
+  .cliente-box{font-size:12.5px;margin-bottom:10px}
   .cliente-box .nome{font-weight:700;font-size:14px}
   .info-box{margin-bottom:16px}
   .info-box .lbl{font-size:10px;color:#7C879E;text-transform:uppercase;letter-spacing:.03em;margin-bottom:2px}
   .info-box .val{font-size:12px;color:#232323;white-space:pre-line;line-height:1.5}
   .checklist-voce{font-size:11.5px;padding:6px 0;border-bottom:1px solid #E3E5EA;display:flex;gap:8px;align-items:center}
   .checklist-voce .spunta{width:14px;height:14px;border-radius:3px;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:10px;color:#fff}
-  .footer-legale{font-size:9px;color:#9AA3AB;border-top:1px solid #E3E5EA;padding-top:8px;margin-top:16px}
+  .footer-legale{font-size:9px;color:#9AA3AB;border-top:1px solid #E3E5EA;padding-top:5px;margin-top:8px}
   .footer-legale b{color:#5B6770}
   .firma-box{margin-top:24px;border:1px solid #162758;border-radius:6px;padding:16px}
   .firma-box .titolo{font-weight:700;font-size:12px;margin-bottom:6px}
