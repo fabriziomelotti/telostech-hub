@@ -436,7 +436,7 @@ const S = {
 };
 
 export default function App(){
-  const { sessione, caricando: authLoading, errore: authErrore, login: authLogin, logout: authLogout } = useAuth();
+  const { sessione, caricando: authLoading, errore: authErrore, mfaStep, login: authLogin, completaMFA: authCompletaMFA, annullaMFA: authAnnullaMFA, logout: authLogout } = useAuth();
   const role = sessione?.ruolo || null;
   const [area, setArea] = useState("home");
   const [showMore, setShowMore] = useState(false);
@@ -592,7 +592,7 @@ export default function App(){
       <style>{G}</style>Caricamento…
     </div>
   );
-  if(!role) return <LoginReale onLogin={login} errore={authErrore} Logo={Logo} G={G} C={C} S={S} F_BODY={F_BODY} F_MONO={F_MONO}/>;
+  if(!role) return <LoginReale onLogin={login} errore={authErrore} mfaStep={mfaStep} onCompletaMFA={authCompletaMFA} onAnnullaMFA={authAnnullaMFA} Logo={Logo} G={G} C={C} S={S} F_BODY={F_BODY} F_MONO={F_MONO}/>;
 
   const navList = isMobile ? navMobile(r.nav) : r.nav;
 
@@ -9283,6 +9283,21 @@ function GestioneUtenti({ ruolo, sessione }) {
     }
   }
 
+  // Recovery per chi ha perso il telefono con l'app authenticator: rimuove
+  // il secondo fattore registrato, così al prossimo accesso l'utente
+  // ripassa dalla schermata di enrollment con un QR nuovo (vedi Auth.jsx).
+  async function resetMFA(u) {
+    if (!window.confirm(`Rimuovere il secondo fattore (authenticator) di ${u.email}? Al prossimo accesso dovrà registrarne uno nuovo da zero.`)) return;
+    try {
+      const { rimossi } = await chiamaAdminUsers("mfaReset", { id: u.id }, accessToken);
+      setMsgGlobale(rimossi > 0
+        ? `Secondo fattore rimosso per ${u.email}. Al prossimo login gli verrà chiesto un nuovo QR.`
+        : `${u.email} non aveva nessun secondo fattore registrato.`);
+    } catch (err) {
+      setMsgGlobale("Errore nel reset MFA: " + err.message);
+    }
+  }
+
   const lbl = { fontSize: 11, fontFamily: F_MONO, color: "#9AA3AB", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 4, display: "block" };
   const campo = (etichetta, node) => (
     <div style={{ marginBottom: 11 }}>
@@ -9399,6 +9414,9 @@ function GestioneUtenti({ ruolo, sessione }) {
                 </button>
                 <button onClick={() => { setPwResetId(pwResetId === u.id ? null : u.id); setPwResetVal(generaPassword()); }} style={S.btnS}>
                   Reimposta password
+                </button>
+                <button onClick={() => resetMFA(u)} style={S.btnS}>
+                  Reset MFA
                 </button>
                 <button onClick={() => eliminaUtente(u)} style={{ ...S.btnS, color: C.danger }}>Elimina utente</button>
               </div>
