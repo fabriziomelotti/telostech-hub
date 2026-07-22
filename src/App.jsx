@@ -142,14 +142,14 @@ const RUOLI = {
   tecnico: {label:"Tecnico", initials:"LR", nome:"Luca Rossi",
     nav:["home","ai","interventi","rapporti","clienti","promemoria","prodotti"]},
   responsabile: {label:"Responsabile", initials:"GF", nome:"Giovanni Ferri",
-    nav:["home","ai","prodotti","clienti","promemoria","preventivi","ordini","interventi","rapporti","analytics","gestione"]},
+    nav:["home","ai","prodotti","clienti","promemoria","preventivi","ordini","interventi","rapporti","gestione"]},
   admin: {label:"Admin", initials:"AM", nome:"Amministratore",
-    nav:["home","ai","prodotti","clienti","promemoria","preventivi","ordini","interventi","rapporti","analytics","gestione","admin"]},
+    nav:["home","ai","prodotti","clienti","promemoria","preventivi","ordini","interventi","rapporti","gestione","admin"]},
 };
 const NAV_META = {
   home:{icon:"⌂",label:"Dashboard"}, ai:{icon:"✦",label:"Assistente"}, prodotti:{icon:"▣",label:"Catalogo"},
   clienti:{icon:"◉",label:"Clienti"}, promemoria:{icon:"⚑",label:"Promemoria"}, preventivi:{icon:"▤",label:"Preventivi"}, ordini:{icon:"⬡",label:"Ordini"},
-  interventi:{icon:"⚒",label:"Assistenza"}, rapporti:{icon:"☑",label:"Rapporto"}, analytics:{icon:"◈",label:"Condizioni"},
+  interventi:{icon:"⚒",label:"Assistenza"}, rapporti:{icon:"☑",label:"Rapporto"},
   admin:{icon:"⚙",label:"Admin"}, gestione:{icon:"🛠",label:"Gestione"},
 };
 function navMobile(nav){ return nav.slice(0,4).concat(nav.length>4?["more"]:[]); }
@@ -727,15 +727,6 @@ export default function App(){
           {area==="ordini" && <Ordini ordini={ordini} setOrdini={setOrdini} preventivi={preventivi} setPreventivi={setPreventivi} setInterventi={setInterventi} catalog={catalog} sessione={sessione} ruolo={role} precodici={precodici}/>}
           {area==="interventi" && <Interventi interventi={interventi} setInterventi={setInterventi} attrezzature={attrezzature} sessione={sessione} setArea={setArea} setInterventoDaCompletare={setInterventoDaCompletare} catalog={catalog} ruolo={role}/>}
           {area==="rapporti" && <RapportoDemo sessione={sessione} interventi={interventi} setInterventi={setInterventi} interventoDaCompletare={interventoDaCompletare} setInterventoDaCompletare={setInterventoDaCompletare}/>}
-          {area==="analytics" && RUOLI_APPROVATORI.includes(role) && (
-            <div style={{maxWidth:420,margin:"40px auto",textAlign:"center"}}>
-              <div style={{fontSize:14,color:C.steel,marginBottom:14,lineHeight:1.6}}>
-                Le condizioni di acquisto e vendita si trovano ora in GESTIONE.
-              </div>
-              <button onClick={()=>setArea("gestione")} style={{...S.btnAccent,padding:"11px 20px"}}>Vai a GESTIONE →</button>
-            </div>
-          )}
-          {area==="analytics" && !RUOLI_APPROVATORI.includes(role) && <Placeholder area={area} setArea={setArea}/>}
           {area==="admin" && <PannelloAdmin ruolo={role} sessione={sessione}/>}
           {area==="gestione" && <PannelloGestione setCatalog={setCatalog} ruolo={role} sessione={sessione} catalog={catalog}/>}
         </div>
