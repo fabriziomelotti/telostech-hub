@@ -3821,6 +3821,8 @@ async function generaPreventivoPDF(righe, total, meta={}){
       <img class="logo-telos-spa" src="${LOGO_TELOS_SPA}" alt="Telos SPA"/>
       <img class="badge-partner" src="${LOGO_BADGE_PARTNER}" alt=""/>
     </div>
+  </div>
+  <div class="corpo-contenuto">
     <div class="riga-titolo">
       <div class="titolo-ordine">${titoloPagina}</div>
       <div class="meta-box">
@@ -3832,11 +3834,9 @@ async function generaPreventivoPDF(righe, total, meta={}){
       </div>
     </div>
     <div class="cliente-box">
-      <div style="color:#7C879E;font-size:10px">Spett.le Cliente</div>
+      <div style="color:#7C879E;font-size:12px">Spett.le Cliente</div>
       <div class="nome">${meta.cliente||""}</div>
     </div>
-  </div>
-  <div class="corpo-contenuto">
     ${tabellaArticoliHtml(righeInput, finanziariaAttiva)}
     ${corpoExtraHtml||""}
   </div>
@@ -3899,28 +3899,28 @@ async function generaPreventivoPDF(righe, total, meta={}){
   table.articoli thead th.cella-num{text-align:right}
   .riga-prodotto td{border-bottom:1px solid #E3E5EA;padding:14px 12px;vertical-align:top;font-size:14px}
   .riga-alt td{background:#F3F6FB}
-  .cella-prodotto{width:22%}
+  .cella-prodotto{width:15%}
   .tag{display:inline-block;font-size:11px;font-weight:600;text-transform:uppercase;background:#EEF0F4;color:#5B6770;padding:3px 8px;border-radius:3px;margin-bottom:4px}
   .prodotto-nome{font-weight:600;font-size:15.5px}
   .prodotto-codice{font-family:monospace;font-size:11.5px;color:#9AA3AB;margin-top:3px}
-  .cella-descr{width:40%}
-  .prodotto-img{width:100%;max-width:190px;height:140px;border-radius:6px;display:flex;align-items:center;justify-content:center;overflow:hidden;margin-top:10px}
+  .cella-descr{width:49%}
+  .prodotto-img{width:100%;max-width:230px;height:175px;border-radius:6px;display:flex;align-items:center;justify-content:center;overflow:hidden;margin-top:10px}
   .prodotto-img img{max-width:100%;max-height:100%;object-fit:contain}
-  .caratteristiche-testo{font-size:12px;color:#7C879E;line-height:1.55;margin-top:7px}
-  .descr-testo{font-size:13px;color:#5B6770;line-height:1.55}
-  .cella-num{text-align:right;white-space:nowrap;width:9.5%}
-  .cella-tot{font-weight:700;color:#162758}
+  .caratteristiche-testo{font-size:13px;color:#7C879E;line-height:1.6;margin-top:8px}
+  .descr-testo{font-size:14px;color:#5B6770;line-height:1.6}
+  .cella-num{text-align:right;white-space:nowrap;width:9%;font-size:15px}
+  .cella-tot{font-weight:700;color:#162758;font-size:16.5px}
 
   .totali-box{text-align:right;margin-top:10px}
-  .tot-imponibile{font-size:21px;font-weight:700;color:#162758}
+  .tot-imponibile{font-size:24px;font-weight:700;color:#162758}
   .tot-imponibile-minore{font-size:14px;font-weight:400;color:#9AA3AB;margin-bottom:7px}
   .rata-evidenziata{font-size:28px;font-weight:700;color:#162758}
   .rata-evidenziata .mesi{font-size:16px;font-weight:400;color:#5B6770}
   .finanziamento-riga{font-size:14px;color:#162758;font-weight:600;margin-top:5px}
   .finanziamento-nota{font-size:12px;color:#7C879E}
 
-  .note-box{margin-top:24px;font-size:13.5px;color:#3A4248}
-  .note-box .lbl{font-weight:700;margin-bottom:5px}
+  .note-box{margin-top:24px;font-size:16px;color:#3A4248}
+  .note-box .lbl{font-weight:700;margin-bottom:6px;font-size:16px}
   .note-box .testo{white-space:pre-line}
 
   .soluzione-separatore{margin-top:28px;padding-top:16px;border-top:2px solid #162758;font-size:16px;font-weight:700;color:#162758;margin-bottom:12px}
