@@ -98,7 +98,7 @@ async function caricaCatalogo(catalogoDemo) {
   try {
     const PAGE = 1000;
     let tutti = [], offset = 0;
-    const cols = "cod,nome,descrizione,desc_prev,categoria,marchio,tipologia,um,listino,sconto,netto,tipo_prezzo,note,img,settori,schede_tecniche,video_url";
+    const cols = "cod,nome,descrizione,desc_prev,categoria,marchio,tipologia,um,listino,sconto,netto,tipo_prezzo,note,img,settori,schede_tecniche,video_url,margine_minimo_override";
     while (true) {
       const dati = await sbGet("prodotti",
         `select=${cols}&attivo=eq.true&order=categoria&limit=${PAGE}&offset=${offset}`);
@@ -116,6 +116,7 @@ async function caricaCatalogo(catalogoDemo) {
       note: p.note, img: p.img, settori: p.settori || "",
       schede: p.schede_tecniche || [],
       video: p.video_url || "",
+      margine_minimo_override: p.margine_minimo_override ?? null,
     }));
   } catch (err) {
     console.warn("Supabase non raggiungibile, uso catalogo demo:", err.message);
@@ -572,6 +573,28 @@ export default function App(){
         setPrecodici(mappa);
       })
       .catch(err => console.warn("Precodici marchio non raggiungibili:", err.message));
+    // Condizioni di acquisto/vendita per marchio + margine minimo per
+    // categoria: dati letti in diretta via REST (RLS: lettura aperta a
+    // chiunque sia autenticato) e messi negli oggetti condivisi che le
+    // funzioni di calcolo margine (getCostoAcquisto, getSogliaMargineMinimo)
+    // leggono direttamente — stesso meccanismo di "precodici" sopra, non
+    // servono stato React né prop passate in giro: qualunque punto
+    // dell'app che calcola un margine vede sempre i valori più recenti.
+    sbGetAuth("condizioni_acquisto_marchio", "select=marchio,sconto_pct,extra_sconto_pct", accessToken)
+      .then(righe => {
+        for(const r of (righe||[])) CONDIZIONI_ACQUISTO_MARCHIO[r.marchio] = { sconto: r.sconto_pct, extra: r.extra_sconto_pct||0 };
+      })
+      .catch(err => console.warn("Condizioni di acquisto non raggiungibili:", err.message));
+    sbGetAuth("condizioni_vendita_marchio", "select=marchio,margine_minimo_pct", accessToken)
+      .then(righe => {
+        for(const r of (righe||[])) if(r.margine_minimo_pct!=null) MARGINE_MINIMO_MARCHIO[r.marchio] = r.margine_minimo_pct;
+      })
+      .catch(err => console.warn("Condizioni di vendita non raggiungibili:", err.message));
+    sbGetAuth("margine_minimo_categoria", "select=categoria,margine_minimo_pct", accessToken)
+      .then(righe => {
+        for(const r of (righe||[])) MARGINE_MINIMO_CATEGORIA[r.categoria] = r.margine_minimo_pct;
+      })
+      .catch(err => console.warn("Margini per categoria non raggiungibili:", err.message));
   },[role]);
 
   // permessi/nav dal ruolo, ma nome reale dalla sessione
@@ -704,7 +727,14 @@ export default function App(){
           {area==="ordini" && <Ordini ordini={ordini} setOrdini={setOrdini} preventivi={preventivi} setPreventivi={setPreventivi} setInterventi={setInterventi} catalog={catalog} sessione={sessione} ruolo={role} precodici={precodici}/>}
           {area==="interventi" && <Interventi interventi={interventi} setInterventi={setInterventi} attrezzature={attrezzature} sessione={sessione} setArea={setArea} setInterventoDaCompletare={setInterventoDaCompletare} catalog={catalog} ruolo={role}/>}
           {area==="rapporti" && <RapportoDemo sessione={sessione} interventi={interventi} setInterventi={setInterventi} interventoDaCompletare={interventoDaCompletare} setInterventoDaCompletare={setInterventoDaCompletare}/>}
-          {area==="analytics" && RUOLI_APPROVATORI.includes(role) && <CondizioniAcquisto/>}
+          {area==="analytics" && RUOLI_APPROVATORI.includes(role) && (
+            <div style={{maxWidth:420,margin:"40px auto",textAlign:"center"}}>
+              <div style={{fontSize:14,color:C.steel,marginBottom:14,lineHeight:1.6}}>
+                Le condizioni di acquisto e vendita si trovano ora in GESTIONE.
+              </div>
+              <button onClick={()=>setArea("gestione")} style={{...S.btnAccent,padding:"11px 20px"}}>Vai a GESTIONE →</button>
+            </div>
+          )}
           {area==="analytics" && !RUOLI_APPROVATORI.includes(role) && <Placeholder area={area} setArea={setArea}/>}
           {area==="admin" && <PannelloAdmin ruolo={role} sessione={sessione}/>}
           {area==="gestione" && <PannelloGestione setCatalog={setCatalog} ruolo={role} sessione={sessione} catalog={catalog}/>}
@@ -1003,42 +1033,24 @@ function radice(parola){
   return p;
 }
 
-// ─── CONDIZIONI DI ACQUISTO (demo — in produzione: tabella condizioni_acquisto_marchio) ───
+// ─── CONDIZIONI DI ACQUISTO — tabella condizioni_acquisto_marchio ──────────
 // Condizioni standard per marchio: sconto % sul listino come costo di acquisto.
-// Derivate dal catalogo reale, da aggiornare con i contratti fornitori effettivi.
 // Condizioni: { sconto: % sul listino, extra: % aggiuntivo a cascata }
 // Costo = listino × (1 - sconto/100) × (1 - extra/100)
 // Es. 50% + extra 5%: costo = listino × 0.50 × 0.95 = listino × 0.475 (non 55%)
-const CONDIZIONI_ACQUISTO_MARCHIO = {
-  "AUTEL":       {sconto:9.5,  extra:0},
-  "BEISSBARTH":  {sconto:34,   extra:0},
-  "BETA":        {sconto:35.5, extra:0},
-  "BIO CIRCLE":  {sconto:19,   extra:0},
-  "BOSCH":       {sconto:14.5, extra:0},
-  "COMET":       {sconto:41,   extra:0},
-  "FASANO":      {sconto:41.5, extra:0},
-  "FILCAR":      {sconto:54.5, extra:0},
-  "FINI":        {sconto:50.5, extra:0},
-  "GEATEK":      {sconto:20.5, extra:0},
-  "GENERICO":    {sconto:34.5, extra:0},
-  "GOVONI":      {sconto:34,   extra:0},
-  "GYS":         {sconto:15.5, extra:0},
-  "MAGIDO":      {sconto:22,   extra:0},
-  "MAHLE Brain Bee":{sconto:5, extra:0},
-  "MARELLI":     {sconto:14.5, extra:0},
-  "MECLUBE":     {sconto:35,   extra:0},
-  "MMB SOFTWARE":{sconto:10,   extra:0},
-  "OMCN":        {sconto:39,   extra:0},
-  "RAVAGLIOLI":  {sconto:41.5, extra:0},
-  "SICAM":       {sconto:32,   extra:0},
-  "SNAPON":      {sconto:40.5, extra:0},
-  "SPIN":        {sconto:24.5, extra:0},
-  "TELWIN":      {sconto:36.5, extra:0},
-  "TEXA":        {sconto:22,   extra:0},
-  "TREDLAB":     {sconto:0,    extra:0},
-  "WORKY":       {sconto:13.5, extra:0},
-  "ZECA":        {sconto:43,   extra:0},
-};
+// Popolato dal database al login (vedi App(), fetch di condizioniAcquisto) —
+// prima era un oggetto scritto a mano che il pannello "modificava" solo in
+// memoria, senza mai salvare nulla: da qui il bug per cui le modifiche non
+// restavano dopo un ricarico della pagina.
+let CONDIZIONI_ACQUISTO_MARCHIO = {};
+
+// ─── MARGINE MINIMO CONSIGLIATO — a cascata: prodotto > categoria > marchio >
+// default globale (MARGINE_MINIMO_PERC, più sotto) ──────────────────────────
+// Popolati dal database al login (tabelle condizioni_vendita_marchio e
+// margine_minimo_categoria). Il livello "prodotto" non passa da qui: vive
+// direttamente sulla riga/prodotto come campo margine_minimo_override.
+let MARGINE_MINIMO_MARCHIO = {};   // { TEXA: 12, ... }
+let MARGINE_MINIMO_CATEGORIA = {}; // { "PONTI SOLLEVATORI": 18, ... }
 
 function scontoEffettivo(sconto, extra){
   // Sconto a cascata: applico prima lo sconto base, poi l'extra sul residuo
@@ -1064,7 +1076,7 @@ function getCostoAcquisto(p){
 }
 
 // ─── REGOLE DI MARGINE PER LA MODIFICA PREZZO IN PREVENTIVO ──────────────────
-const MARGINE_MINIMO_PERC = 15; // sotto questa percentuale -> richiede approvazione
+const MARGINE_MINIMO_PERC = 15; // default globale, sotto questa percentuale -> richiede approvazione (a meno di un override più specifico, vedi sotto)
 const RUOLI_APPROVATORI = ["responsabile","admin"];
 // Sentinella per "Conferma del cliente": distingue "il cliente ha scelto
 // esplicitamente la soluzione principale" da "non ancora scelta" quando ci
@@ -1082,9 +1094,22 @@ function calcolaMarginePerProdotto(p, nettoOverride){
   if(!costoInfo) return null;
   return calcolaMargine(netto, costoInfo.costo);
 }
+// Soglia di margine minimo effettiva per una riga/prodotto, a cascata:
+// override sul singolo prodotto (margine_minimo_override) > override sulla
+// sua categoria (MARGINE_MINIMO_CATEGORIA) > override sul suo marchio
+// (MARGINE_MINIMO_MARCHIO) > default globale (MARGINE_MINIMO_PERC). Funziona
+// sia su un prodotto di catalogo (cat/mar) sia su una riga già in un
+// preventivo (stessi nomi di campo, salvati alla creazione della riga — vedi
+// i punti in cui viene chiamata rigaSottoMargine).
+function getSogliaMargineMinimo(x){
+  if(x?.margine_minimo_override!=null) return x.margine_minimo_override;
+  if(x?.cat && MARGINE_MINIMO_CATEGORIA[x.cat]!=null) return MARGINE_MINIMO_CATEGORIA[x.cat];
+  if(x?.mar && MARGINE_MINIMO_MARCHIO[x.mar]!=null) return MARGINE_MINIMO_MARCHIO[x.mar];
+  return MARGINE_MINIMO_PERC;
+}
 function rigaSottoMargine(riga){
   const m = calcolaMargine(riga.netto, riga.costo);
-  return m!==null && m < MARGINE_MINIMO_PERC;
+  return m!==null && m < getSogliaMargineMinimo(riga);
 }
 function puoModificarePrezzoLiberamente(ruolo){
   return RUOLI_APPROVATORI.includes(ruolo);
@@ -4560,7 +4585,8 @@ function SchedaProdottoSelezione({p, ruolo, giaPresente, onConferma, onClose}){
   const costoInfo = getCostoAcquisto({...p, netto: nettoUnitario});
   const costoCalcolato = costoEsclusivo ?? costoInfo?.costo;
   const margine = calcolaMargine(nettoUnitario, costoCalcolato);
-  const sottoMargine = margine!==null && margine < MARGINE_MINIMO_PERC;
+  const sogliaMargine = getSogliaMargineMinimo(p);
+  const sottoMargine = margine!==null && margine < sogliaMargine;
   const scontoApplicato = p.listino>0 ? ((1 - nettoUnitario/p.listino)*100) : 0;
   const totaleRiga = nettoUnitario * qty;
   const totaleRigaCosto = costoCalcolato ? costoCalcolato * qty : null;
@@ -4574,9 +4600,10 @@ function SchedaProdottoSelezione({p, ruolo, giaPresente, onConferma, onClose}){
 
   function conferma(){
     onConferma({
-      cod: p.cod, mar: p.mar, nome: p.nome||p.desc,
+      cod: p.cod, mar: p.mar, cat: p.cat, nome: p.nome||p.desc,
       listino: p.listino, netto: nettoUnitario, qty,
       costo: costoCalcolato,
+      margine_minimo_override: p.margine_minimo_override ?? null,
       sottoMargine: sottoMargine,
       notaProdotto: p.note || null,
     });
@@ -4697,7 +4724,7 @@ function SchedaProdottoSelezione({p, ruolo, giaPresente, onConferma, onClose}){
 
           {sottoMargine && (
             <div style={{fontSize:12,color:"#8a6418",background:"rgba(217,164,65,0.14)",borderRadius:6,padding:"9px 11px",marginBottom:14}}>
-              ⚠ Margine sotto la soglia minima ({MARGINE_MINIMO_PERC}%). {puoModificare ? "Come responsabile/admin puoi comunque procedere." : "Il preventivo verrà segnato come in attesa di approvazione."}
+              ⚠ Margine sotto la soglia minima ({sogliaMargine}%). {puoModificare ? "Come responsabile/admin puoi comunque procedere." : "Il preventivo verrà segnato come in attesa di approvazione."}
             </div>
           )}
 
@@ -5146,9 +5173,10 @@ function Preventivi({cart,setCart,preventivi,setPreventivi,setOrdini,setArea,ruo
       if(!prod){ mancanti.push(comp.cod); continue; }
       const costoInfo = getCostoAcquisto(prod);
       const rigaNuova = {
-        cod: prod.cod, mar: prod.mar, nome: prod.nome || prod.desc,
+        cod: prod.cod, mar: prod.mar, cat: prod.cat, nome: prod.nome || prod.desc,
         listino: prod.listino, netto: prod.netto, qty: comp.qty || 1,
         costo: costoInfo?.costo,
+        margine_minimo_override: prod.margine_minimo_override ?? null,
         pacchetto_nome: pacchetto.nome,
       };
       rigaNuova.sottoMargine = rigaSottoMargine(rigaNuova);
@@ -5504,7 +5532,7 @@ function Preventivi({cart,setCart,preventivi,setPreventivi,setOrdini,setArea,ruo
 
         {inAttesaApprovazione && (
           <div style={{fontSize:12,color:"#8a6418",background:"rgba(217,164,65,0.14)",borderRadius:6,padding:"9px 11px",marginBottom:14}}>
-            ⚠ Uno o più articoli hanno un margine sotto la soglia minima ({MARGINE_MINIMO_PERC}%). {puoApprovare ? "Puoi approvarlo qui sotto." : "In attesa di approvazione da un responsabile o admin."}
+            ⚠ Uno o più articoli hanno un margine sotto la soglia minima consigliata. {puoApprovare ? "Puoi approvarlo qui sotto." : "In attesa di approvazione da un responsabile o admin."}
           </div>
         )}
 
@@ -6669,9 +6697,10 @@ function Ordini({ordini,setOrdini,preventivi,setPreventivi,setInterventi,catalog
         if(!prod){ mancanti.push(comp.cod); continue; }
         const costoInfo = getCostoAcquisto(prod);
         const rigaNuova = {
-          cod: prod.cod, mar: prod.mar, nome: prod.nome || prod.desc,
+          cod: prod.cod, mar: prod.mar, cat: prod.cat, nome: prod.nome || prod.desc,
           listino: prod.listino, netto: prod.netto, qty: comp.qty || 1,
           costo: costoInfo?.costo,
+          margine_minimo_override: prod.margine_minimo_override ?? null,
           pacchetto_nome: pacchetto.nome,
         };
         rigaNuova.sottoMargine = rigaSottoMargine(rigaNuova);
@@ -9124,19 +9153,53 @@ function RapportoDemo({sessione, interventi, setInterventi, interventoDaCompleta
   );
 }
 
-// ─── CONDIZIONI ACQUISTO — pannello responsabile/admin ────────────────────────
-function CondizioniAcquisto(){
-  const [condizioni,setCondizioni]=useState(
-    Object.entries(CONDIZIONI_ACQUISTO_MARCHIO).map(([mar,cond])=>({
-      mar,
-      sconto: cond.sconto,
-      extra: cond.extra||0,
-      edit: false,
-      valSconto: cond.sconto,
-      valExtra: cond.extra||0,
-    }))
+// ─── CONDIZIONI — pannello unificato acquisto/vendita/margine per categoria,
+// dentro GESTIONE (responsabile/admin) ──────────────────────────────────────
+function pillCondizioni(on){
+  return {
+    border:`1px solid ${on?C.ink:C.paperLine}`, borderRadius:7, padding:"8px 14px",
+    fontSize:12.5, cursor:"pointer", fontWeight:on?700:500,
+    background:on?C.ink:"#fff", color:on?"#fff":"#5B6770",
+  };
+}
+
+function PannelloCondizioni({ sessione, marchi, categorie }){
+  const [sub, setSub] = useState("acquisto");
+  return (
+    <div>
+      <div style={{display:"flex",gap:6,marginBottom:18,flexWrap:"wrap"}}>
+        <button onClick={()=>setSub("acquisto")} style={pillCondizioni(sub==="acquisto")}>Acquisto</button>
+        <button onClick={()=>setSub("vendita")} style={pillCondizioni(sub==="vendita")}>Vendita — margine minimo</button>
+        <button onClick={()=>setSub("categoria")} style={pillCondizioni(sub==="categoria")}>Margine minimo per categoria</button>
+      </div>
+      {sub==="acquisto" && <CondizioniAcquistoMarchio sessione={sessione} marchi={marchi}/>}
+      {sub==="vendita" && <CondizioniVenditaMarchio sessione={sessione} marchi={marchi}/>}
+      {sub==="categoria" && <MarginePerCategoria sessione={sessione} categorie={categorie}/>}
+    </div>
   );
+}
+
+// Condizioni di ACQUISTO per marchio: sconto base + extra a cascata, usati
+// per calcolare il costo (vedi getCostoAcquisto). Ora scritti davvero su
+// condizioni_acquisto_marchio tramite catalog-admin — prima il pulsante
+// "Salva" modificava solo un oggetto JS in memoria, che si perdeva ad ogni
+// ricarico della pagina: da qui il bug segnalato.
+function CondizioniAcquistoMarchio({ sessione, marchi }){
+  const accessToken = trovaAccessToken(sessione);
+  const [condizioni,setCondizioni]=useState(null); // null = ancora in caricamento
   const [saved,setSaved]=useState(null);
+  const [errore,setErrore]=useState(null);
+
+  useEffect(()=>{
+    chiamaCatalogAdmin("condizioniAcquisto", {}, accessToken).then(d=>{
+      const salvate = new Map((d?.condizioni||[]).map(r=>[r.marchio, r]));
+      setCondizioni((marchi||[]).map(mar=>{
+        const s = salvate.get(mar);
+        const sconto = s?.sconto_pct ?? 0, extra = s?.extra_sconto_pct ?? 0;
+        return { mar, sconto, extra, edit:false, valSconto:sconto, valExtra:extra };
+      }));
+    }).catch(()=>setCondizioni([]));
+  },[]);
 
   function setField(mar, field, v){
     setCondizioni(c=>c.map(r=>r.mar===mar?{...r,[field]:parseFloat(v)||0}:r));
@@ -9144,23 +9207,31 @@ function CondizioniAcquisto(){
   function setEdit(mar, v){
     setCondizioni(c=>c.map(r=>r.mar===mar?{...r,edit:v,valSconto:r.sconto,valExtra:r.extra}:r));
   }
-  function salva(mar){
+  async function salva(mar){
     const riga = condizioni.find(r=>r.mar===mar);
-    CONDIZIONI_ACQUISTO_MARCHIO[mar] = { sconto: riga.valSconto, extra: riga.valExtra };
-    setCondizioni(c=>c.map(r=>r.mar===mar?{...r,sconto:riga.valSconto,extra:riga.valExtra,edit:false}:r));
-    setSaved(mar);
-    setTimeout(()=>setSaved(null),2000);
+    setErrore(null);
+    try{
+      await chiamaCatalogAdmin("impostaCondizioneAcquisto", { marchio: mar, sconto_pct: riga.valSconto, extra_sconto_pct: riga.valExtra }, accessToken);
+      CONDIZIONI_ACQUISTO_MARCHIO[mar] = { sconto: riga.valSconto, extra: riga.valExtra }; // effetto immediato su tutti i calcoli margine, senza dover ricaricare la pagina
+      setCondizioni(c=>c.map(r=>r.mar===mar?{...r,sconto:riga.valSconto,extra:riga.valExtra,edit:false}:r));
+      setSaved(mar);
+      setTimeout(()=>setSaved(null),2000);
+    }catch(err){
+      setErrore(mar+": "+err.message);
+    }
   }
+
+  if(condizioni===null) return <div style={{fontSize:13,color:C.steel}}>Caricamento condizioni di acquisto…</div>;
 
   return (
     <div>
-      <div style={{fontFamily:F_DISPLAY,fontSize:18,fontWeight:600,marginBottom:4}}>CONDIZIONI DI ACQUISTO</div>
       <div style={{fontSize:12.5,color:"#8A929A",marginBottom:8,lineHeight:1.6}}>
-        Condizioni standard per marchio. Per costi esclusivi su singoli articoli, apri la scheda prodotto nel preventivo.
+        Condizioni standard per marchio, usate per calcolare il costo di acquisto. Per costi esclusivi su singoli articoli, apri la scheda prodotto nel preventivo.
       </div>
       <div style={{fontSize:12,color:"#9AA3AB",background:C.paper,borderRadius:6,padding:"8px 10px",marginBottom:18}}>
         💡 L'extra sconto si applica a cascata: 50% + 5% extra = costo al 47,5% del listino, non 45%.
       </div>
+      {errore && <div style={{fontSize:12,color:C.danger,marginBottom:12}}>{errore}</div>}
 
       {condizioni.map(r=>{
         const eff = scontoEffettivo(r.sconto, r.extra);
@@ -9250,6 +9321,176 @@ function CondizioniAcquisto(){
           </div>
         );
       })}
+    </div>
+  );
+}
+
+// Condizioni di VENDITA per marchio: margine minimo consigliato, sotto il
+// quale il preventivo richiede approvazione — override del default globale
+// (15%). Vuoto = nessun override, resta il default (o quello di categoria/
+// prodotto se impostati, vedi getSogliaMargineMinimo).
+function CondizioniVenditaMarchio({ sessione, marchi }){
+  const accessToken = trovaAccessToken(sessione);
+  const [condizioni,setCondizioni]=useState(null);
+  const [saved,setSaved]=useState(null);
+  const [errore,setErrore]=useState(null);
+
+  useEffect(()=>{
+    chiamaCatalogAdmin("condizioniVendita", {}, accessToken).then(d=>{
+      const salvate = new Map((d?.condizioni||[]).map(r=>[r.marchio, r]));
+      setCondizioni((marchi||[]).map(mar=>{
+        const s = salvate.get(mar);
+        const valore = s?.margine_minimo_pct ?? "";
+        return { mar, margine: valore, edit:false, val: valore };
+      }));
+    }).catch(()=>setCondizioni([]));
+  },[]);
+
+  function setEdit(mar, v){
+    setCondizioni(c=>c.map(r=>r.mar===mar?{...r,edit:v,val:r.margine}:r));
+  }
+  async function salva(mar){
+    const riga = condizioni.find(r=>r.mar===mar);
+    const valoreNumerico = riga.val===""||riga.val==null ? null : parseFloat(riga.val);
+    setErrore(null);
+    try{
+      await chiamaCatalogAdmin("impostaCondizioneVendita", { marchio: mar, margine_minimo_pct: valoreNumerico }, accessToken);
+      if(valoreNumerico==null) delete MARGINE_MINIMO_MARCHIO[mar];
+      else MARGINE_MINIMO_MARCHIO[mar] = valoreNumerico;
+      setCondizioni(c=>c.map(r=>r.mar===mar?{...r,margine:valoreNumerico??"",edit:false}:r));
+      setSaved(mar);
+      setTimeout(()=>setSaved(null),2000);
+    }catch(err){
+      setErrore(mar+": "+err.message);
+    }
+  }
+
+  if(condizioni===null) return <div style={{fontSize:13,color:C.steel}}>Caricamento condizioni di vendita…</div>;
+
+  return (
+    <div>
+      <div style={{fontSize:12.5,color:"#8A929A",marginBottom:18,lineHeight:1.6}}>
+        Margine minimo consigliato per marchio: sotto questa soglia il preventivo richiede approvazione di un responsabile/admin, in sostituzione del default globale ({MARGINE_MINIMO_PERC}%). Lascia vuoto per non impostare un override — vale il default (o quello di categoria/prodotto, se impostati).
+      </div>
+      {errore && <div style={{fontSize:12,color:C.danger,marginBottom:12}}>{errore}</div>}
+
+      {condizioni.map(r=>(
+        <div key={r.mar} style={{...S.card,cursor:"default",display:"flex",alignItems:"center",gap:12}}>
+          <div style={{flex:1,minWidth:0}}>
+            <div style={{fontWeight:600,fontSize:13}}>{r.mar}</div>
+            {!r.edit && (
+              <div style={{display:"flex",gap:8,alignItems:"center",marginTop:3}}>
+                <span className="tnum" style={{fontSize:12,color:r.margine===""?"#9AA3AB":C.ink,fontFamily:F_MONO,fontWeight:r.margine===""?400:700}}>
+                  {r.margine===""?`Default (${MARGINE_MINIMO_PERC}%)`:`${r.margine}%`}
+                </span>
+                {saved===r.mar && <span style={{color:C.ok,fontSize:11}}>✓ Salvato</span>}
+              </div>
+            )}
+          </div>
+          {!r.edit ? (
+            <button onClick={()=>setEdit(r.mar,true)} style={S.btnS}>Modifica</button>
+          ) : (
+            <>
+              <input type="number" step="0.5" min="0" max="100"
+                value={r.val}
+                placeholder="Default"
+                onChange={e=>setCondizioni(c=>c.map(x=>x.mar===r.mar?{...x,val:e.target.value}:x))}
+                className="tnum"
+                style={{...S.inp,width:90,fontFamily:F_MONO,fontWeight:700,padding:"8px 10px"}}
+              />
+              <button onClick={()=>salva(r.mar)} style={{...S.btnAccent,padding:"8px 14px"}}>✓ Salva</button>
+              <button onClick={()=>setEdit(r.mar,false)} style={S.btnS}>Annulla</button>
+            </>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// Margine minimo per CATEGORIA prodotto (es. "PONTI SOLLEVATORI") — prevale
+// sulla condizione di marchio quando entrambe si applicano allo stesso
+// prodotto (vedi getSogliaMargineMinimo: prodotto > categoria > marchio >
+// default globale).
+function MarginePerCategoria({ sessione, categorie }){
+  const accessToken = trovaAccessToken(sessione);
+  const [righe,setRighe]=useState(null);
+  const [saved,setSaved]=useState(null);
+  const [errore,setErrore]=useState(null);
+  const [filtro,setFiltro]=useState("");
+
+  useEffect(()=>{
+    chiamaCatalogAdmin("marginiCategoria", {}, accessToken).then(d=>{
+      const salvate = new Map((d?.margini||[]).map(r=>[r.categoria, r.margine_minimo_pct]));
+      setRighe((categorie||[]).map(c=>{
+        const cat = c.categoria || c;
+        const valore = salvate.has(cat) ? salvate.get(cat) : "";
+        return { cat, margine: valore, edit:false, val: valore };
+      }));
+    }).catch(()=>setRighe([]));
+  },[]);
+
+  function setEdit(cat, v){
+    setRighe(c=>c.map(r=>r.cat===cat?{...r,edit:v,val:r.margine}:r));
+  }
+  async function salva(cat){
+    const riga = righe.find(r=>r.cat===cat);
+    const valoreNumerico = riga.val===""||riga.val==null ? null : parseFloat(riga.val);
+    setErrore(null);
+    try{
+      await chiamaCatalogAdmin("impostaMargineCategoria", { categoria: cat, margine_minimo_pct: valoreNumerico }, accessToken);
+      if(valoreNumerico==null) delete MARGINE_MINIMO_CATEGORIA[cat];
+      else MARGINE_MINIMO_CATEGORIA[cat] = valoreNumerico;
+      setRighe(c=>c.map(r=>r.cat===cat?{...r,margine:valoreNumerico??"",edit:false}:r));
+      setSaved(cat);
+      setTimeout(()=>setSaved(null),2000);
+    }catch(err){
+      setErrore(cat+": "+err.message);
+    }
+  }
+
+  if(righe===null) return <div style={{fontSize:13,color:C.steel}}>Caricamento margini per categoria…</div>;
+  const righeFiltrate = righe.filter(r=>!filtro.trim()||r.cat.toLowerCase().includes(filtro.trim().toLowerCase()));
+
+  return (
+    <div>
+      <div style={{fontSize:12.5,color:"#8A929A",marginBottom:14,lineHeight:1.6}}>
+        Margine minimo consigliato per categoria (es. PONTI SOLLEVATORI): prevale sull'eventuale condizione impostata per il marchio dello stesso prodotto. Lascia vuoto per non impostare un override.
+      </div>
+      {errore && <div style={{fontSize:12,color:C.danger,marginBottom:12}}>{errore}</div>}
+      <input value={filtro} onChange={e=>setFiltro(e.target.value)} placeholder="Cerca categoria…" style={{...S.inp,marginBottom:14}}/>
+
+      {righeFiltrate.map(r=>(
+        <div key={r.cat} style={{...S.card,cursor:"default",display:"flex",alignItems:"center",gap:12}}>
+          <div style={{flex:1,minWidth:0}}>
+            <div style={{fontWeight:600,fontSize:13}}>{r.cat}</div>
+            {!r.edit && (
+              <div style={{display:"flex",gap:8,alignItems:"center",marginTop:3}}>
+                <span className="tnum" style={{fontSize:12,color:r.margine===""?"#9AA3AB":C.ink,fontFamily:F_MONO,fontWeight:r.margine===""?400:700}}>
+                  {r.margine===""?`Default (${MARGINE_MINIMO_PERC}%)`:`${r.margine}%`}
+                </span>
+                {saved===r.cat && <span style={{color:C.ok,fontSize:11}}>✓ Salvato</span>}
+              </div>
+            )}
+          </div>
+          {!r.edit ? (
+            <button onClick={()=>setEdit(r.cat,true)} style={S.btnS}>Modifica</button>
+          ) : (
+            <>
+              <input type="number" step="0.5" min="0" max="100"
+                value={r.val}
+                placeholder="Default"
+                onChange={e=>setRighe(c=>c.map(x=>x.cat===r.cat?{...x,val:e.target.value}:x))}
+                className="tnum"
+                style={{...S.inp,width:90,fontFamily:F_MONO,fontWeight:700,padding:"8px 10px"}}
+              />
+              <button onClick={()=>salva(r.cat)} style={{...S.btnAccent,padding:"8px 14px"}}>✓ Salva</button>
+              <button onClick={()=>setEdit(r.cat,false)} style={S.btnS}>Annulla</button>
+            </>
+          )}
+        </div>
+      ))}
+      {righeFiltrate.length===0 && <div style={{fontSize:12.5,color:"#9AA3AB"}}>Nessuna categoria trovata.</div>}
     </div>
   );
 }
@@ -11491,6 +11732,7 @@ function PannelloGestione({ setCatalog, ruolo, sessione, catalog }) {
             ["export","⬇ Esporta catalogo","Scarica il catalogo completo in CSV"],
             ["categorie","▤ Categorie","Rinomina o unisci categorie duplicate"],
             ["marchi","🏷 Marchi","Precodice a 3 lettere per marchio (gestionale)"],
+            ["condizioni","💶 Condizioni","Acquisto, margine minimo di vendita per marchio e per categoria"],
             ["prezzi","💶 Prezzi","Aggiorna i prezzi da un listino fornitore"],
             ["listino","🧾 Listino","Importa un listino fornitore completo"],
             ["logistica","⚑ Logistica","Ordini sospesi e in gestione"],
@@ -11516,6 +11758,7 @@ function PannelloGestione({ setCatalog, ruolo, sessione, catalog }) {
 
           {tab==="categorie" && <GestioneCategorie sessione={sessione} ruolo={ruolo} categorie={categorie} tipologie={tipologie} marchi={marchi} ricarica={()=>{ ricaricaCategorie(); ricaricaTipologieMarchi(); caricaCatalogo(CATALOG).then(d=>setCatalog(d)); }}/>}
           {tab==="marchi" && <GestioneMarchi sessione={sessione}/>}
+          {tab==="condizioni" && <PannelloCondizioni sessione={sessione} marchi={marchi} categorie={categorie}/>}
 
           {tab==="logistica" && <GestioneLogisticaOrdini sessione={sessione} categorie={categorie}/>}
 

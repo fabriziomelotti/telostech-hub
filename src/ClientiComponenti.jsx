@@ -430,7 +430,7 @@ export function SelezioneCliente({ onSeleziona, clienteSelezionato, sessione }){
       if(localita) filtri.push(`localita=eq.${encodeURIComponent(localita)}`);
       if(provincia) filtri.push(`provincia=eq.${encodeURIComponent(provincia)}`);
       const params =
-        `select=codice,ragione_sociale,rag_sociale_agg,indirizzo,localita,provincia,cap,partita_iva,codice_fiscale,telefono,mail,filiale` +
+        `select=codice,ragione_sociale,rag_sociale_agg,indirizzo,localita,provincia,cap,partita_iva,codice_fiscale,telefono,mail,filiale,agente` +
         `&${filtri.join("&")}&limit=25&order=ragione_sociale`;
       const dati = await sbGetAuth("clienti", params, accessToken);
       setRisultati(dati || []);
@@ -880,6 +880,7 @@ export function EditaProdotto({ ruolo, p, categorieEsistenti, tipologieEsistenti
     descrizione: p.desc||"", desc_prev: p.desc_prev||"", um: p.um||"pz",
     listino: p.listino ?? "", sconto: p.sconto ?? "", netto: p.netto ?? "",
     tipo_prezzo: p.tipo_prezzo||"listino", note: p.note||"", img: p.img||"", video: p.video||"",
+    margine_minimo_override: p.margine_minimo_override ?? "",
   });
   const [settori, setSettori] = useState(settoriIniziali);
   const [stato, setStato] = useState("idle"); // idle | salvo | fatto | errore
@@ -989,6 +990,7 @@ export function EditaProdotto({ ruolo, p, categorieEsistenti, tipologieEsistenti
       video_url: f.video.trim() || null,
       schede_tecniche: schede,
       attivo: true,
+      margine_minimo_override: f.margine_minimo_override!=="" ? parseFloat(f.margine_minimo_override) : null,
     };
 
     try{
@@ -1080,6 +1082,8 @@ export function EditaProdotto({ ruolo, p, categorieEsistenti, tipologieEsistenti
           {f.netto==="" && nettoAuto!==null && (
             <div style={{fontSize:11,fontFamily:F_MONO,color:C.steel,marginTop:-4,marginBottom:11}}>Netto calcolato: € {nettoAuto}</div>
           )}
+
+          {campo("Margine minimo override % (vuoto = usa categoria/marchio/default)", <input type="number" step="0.5" min="0" max="100" value={f.margine_minimo_override} onChange={e=>set("margine_minimo_override",e.target.value)} placeholder="Default" style={S.inp}/>)}
 
           {campo("Tipo prezzo",
             <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
