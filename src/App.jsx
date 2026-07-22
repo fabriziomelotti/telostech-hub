@@ -3864,7 +3864,7 @@ async function generaPreventivoPDF(righe, total, meta={}){
   @page{size:A4;margin:0}
   *{box-sizing:border-box;margin:0;padding:0}
   html,body{width:210mm}
-  body{font-family:Arial,sans-serif;color:#232323;font-size:12.5px}
+  body{font-family:Arial,sans-serif;color:#232323;font-size:15px}
   .pagina{width:210mm;min-height:297mm;padding:6mm 9mm;page-break-after:always;display:flex;flex-direction:column}
   .pagina:last-child{page-break-after:auto}
 
@@ -3872,60 +3872,60 @@ async function generaPreventivoPDF(righe, total, meta={}){
   .cover{text-align:center;align-items:center;padding-top:0}
   .cover-spacer{flex:1}
   .cover-logo{width:58mm;margin-top:4mm;position:relative;left:-3mm}
-  .cover-cliente{font-size:28px;font-weight:700;margin-bottom:8px}
-  .cover-referente{font-size:22px;font-weight:700;color:#162758}
-  .cover-referente .cover-referente-tel{display:block;font-size:13px;font-weight:400;font-style:italic;color:#3A4248;margin-top:2px}
+  .cover-cliente{font-size:32px;font-weight:700;margin-bottom:8px}
+  .cover-referente{font-size:25px;font-weight:700;color:#162758}
+  .cover-referente .cover-referente-tel{display:block;font-size:15px;font-weight:400;font-style:italic;color:#3A4248;margin-top:2px}
   .cover-chevron{width:52mm}
-  .cover-titolo{font-size:25px;font-weight:700}
+  .cover-titolo{font-size:28px;font-weight:700}
   .cover-strip{width:calc(100% + 20mm);margin-left:-10mm;margin-right:-10mm;margin-bottom:9mm}
-  .cover-contatti{font-size:11.5px;color:#162758;font-weight:700;line-height:1.8}
+  .cover-contatti{font-size:13px;color:#162758;font-weight:700;line-height:1.8}
   .cover-contatti span{display:block;font-weight:400;color:#5B6770}
 
   /* ── Pagina contenuto ── */
   .corpo-contenuto{flex:1}
-  .hd-content{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;padding-bottom:6px;border-bottom:2px solid #162758}
-  .hd-content .logo-telos-spa{height:34px}
-  .hd-content .badge-partner{height:26px}
-  .riga-titolo{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;margin-bottom:8px}
-  .titolo-ordine{font-size:21px;font-weight:700;color:#162758;white-space:nowrap}
-  .meta-box{display:grid;grid-template-columns:auto auto;column-gap:10px;row-gap:3px;font-size:11px;justify-content:end;flex-shrink:0}
+  .hd-content{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;padding-bottom:8px;border-bottom:2px solid #162758}
+  .hd-content .logo-telos-spa{height:48px}
+  .hd-content .badge-partner{height:38px}
+  .riga-titolo{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;margin-bottom:10px}
+  .titolo-ordine{font-size:26px;font-weight:700;color:#162758;white-space:nowrap}
+  .meta-box{display:grid;grid-template-columns:auto auto;column-gap:12px;row-gap:4px;font-size:13px;justify-content:end;flex-shrink:0}
   .meta-box .etichetta{color:#7C879E;text-align:right}
   .meta-box .valore{text-align:left;font-weight:600;white-space:nowrap}
-  .cliente-box{font-size:12.5px;margin-bottom:10px}
-  .cliente-box .nome{font-weight:700;font-size:14px}
+  .cliente-box{font-size:15px;margin-bottom:12px}
+  .cliente-box .nome{font-weight:700;font-size:17px}
 
-  table.articoli{width:100%;border-collapse:collapse;margin-bottom:18px;table-layout:fixed}
-  table.articoli thead th{background:#162758;color:#fff;padding:9px 10px;font-size:10.5px;text-align:left}
+  table.articoli{width:100%;border-collapse:collapse;margin-bottom:20px;table-layout:fixed}
+  table.articoli thead th{background:#162758;color:#fff;padding:11px 12px;font-size:13px;text-align:left}
   table.articoli thead th.cella-num{text-align:right}
-  .riga-prodotto td{border-bottom:1px solid #E3E5EA;padding:12px 10px;vertical-align:top;font-size:11.5px}
+  .riga-prodotto td{border-bottom:1px solid #E3E5EA;padding:14px 12px;vertical-align:top;font-size:14px}
   .riga-alt td{background:#F3F6FB}
   .cella-prodotto{width:22%}
-  .tag{display:inline-block;font-size:9px;font-weight:600;text-transform:uppercase;background:#EEF0F4;color:#5B6770;padding:2px 7px;border-radius:3px;margin-bottom:3px}
-  .prodotto-nome{font-weight:600}
-  .prodotto-codice{font-family:monospace;font-size:9.5px;color:#9AA3AB;margin-top:2px}
+  .tag{display:inline-block;font-size:11px;font-weight:600;text-transform:uppercase;background:#EEF0F4;color:#5B6770;padding:3px 8px;border-radius:3px;margin-bottom:4px}
+  .prodotto-nome{font-weight:600;font-size:15.5px}
+  .prodotto-codice{font-family:monospace;font-size:11.5px;color:#9AA3AB;margin-top:3px}
   .cella-descr{width:40%}
-  .prodotto-img{width:100%;max-width:140px;height:100px;border-radius:6px;display:flex;align-items:center;justify-content:center;overflow:hidden;margin-top:8px}
+  .prodotto-img{width:100%;max-width:190px;height:140px;border-radius:6px;display:flex;align-items:center;justify-content:center;overflow:hidden;margin-top:10px}
   .prodotto-img img{max-width:100%;max-height:100%;object-fit:contain}
-  .caratteristiche-testo{font-size:9.5px;color:#7C879E;line-height:1.5;margin-top:6px}
-  .descr-testo{font-size:10.5px;color:#5B6770;line-height:1.5}
+  .caratteristiche-testo{font-size:12px;color:#7C879E;line-height:1.55;margin-top:7px}
+  .descr-testo{font-size:13px;color:#5B6770;line-height:1.55}
   .cella-num{text-align:right;white-space:nowrap;width:9.5%}
   .cella-tot{font-weight:700;color:#162758}
 
-  .totali-box{text-align:right;margin-top:8px}
-  .tot-imponibile{font-size:17px;font-weight:700;color:#162758}
-  .tot-imponibile-minore{font-size:12px;font-weight:400;color:#9AA3AB;margin-bottom:6px}
-  .rata-evidenziata{font-size:24px;font-weight:700;color:#162758}
-  .rata-evidenziata .mesi{font-size:14px;font-weight:400;color:#5B6770}
-  .finanziamento-riga{font-size:12px;color:#162758;font-weight:600;margin-top:4px}
-  .finanziamento-nota{font-size:10px;color:#7C879E}
+  .totali-box{text-align:right;margin-top:10px}
+  .tot-imponibile{font-size:21px;font-weight:700;color:#162758}
+  .tot-imponibile-minore{font-size:14px;font-weight:400;color:#9AA3AB;margin-bottom:7px}
+  .rata-evidenziata{font-size:28px;font-weight:700;color:#162758}
+  .rata-evidenziata .mesi{font-size:16px;font-weight:400;color:#5B6770}
+  .finanziamento-riga{font-size:14px;color:#162758;font-weight:600;margin-top:5px}
+  .finanziamento-nota{font-size:12px;color:#7C879E}
 
-  .note-box{margin-top:22px;font-size:11px;color:#3A4248}
-  .note-box .lbl{font-weight:700;margin-bottom:4px}
+  .note-box{margin-top:24px;font-size:13.5px;color:#3A4248}
+  .note-box .lbl{font-weight:700;margin-bottom:5px}
   .note-box .testo{white-space:pre-line}
 
-  .soluzione-separatore{margin-top:26px;padding-top:14px;border-top:2px solid #162758;font-size:13px;font-weight:700;color:#162758;margin-bottom:10px}
+  .soluzione-separatore{margin-top:28px;padding-top:16px;border-top:2px solid #162758;font-size:16px;font-weight:700;color:#162758;margin-bottom:12px}
 
-  .footer-legale{font-size:9px;color:#9AA3AB;border-top:1px solid #E3E5EA;padding-top:5px;margin-top:8px}
+  .footer-legale{font-size:11px;color:#9AA3AB;border-top:1px solid #E3E5EA;padding-top:6px;margin-top:10px}
   .footer-legale b{color:#5B6770}
 
   /* ── Pagina condizioni ── */
