@@ -208,9 +208,15 @@ const MOTIVI_SALTO = {
 // preventivi condivisi su Supabase, un contatore locale che riparte da 100 ad
 // ogni ricarica di pagina creerebbe ID duplicati tra utenti diversi) — arriva
 // dal campo "progressivo" assegnato dal database (bigserial, sempre univoco).
+// Il campo "versione" (0 = originale) si incrementa quando un preventivo già
+// "Inviato" viene riaperto per modifiche (vedi "Riapri per modifiche"): il
+// codice mostrato guadagna un ".N" per far capire che è la stessa trattativa,
+// ma una versione successiva alla precedente.
 function codicePreventivo(p){
   if(p?.id==="__nuovo__") return "Nuovo (non salvato)";
-  return p?.progressivo ? `PRV-${String(p.progressivo).padStart(4,"0")}` : (p?.id || "—");
+  if(!p?.progressivo) return p?.id || "—";
+  const base = `PRV-${String(p.progressivo).padStart(4,"0")}`;
+  return p.versione>0 ? `${base}.${p.versione}` : base;
 }
 function codiceOrdine(p){
   return p?.progressivo ? `ORD-${String(p.progressivo).padStart(4,"0")}` : (p?.id || "—");
@@ -1035,6 +1041,11 @@ function getCostoAcquisto(p){
 // ─── REGOLE DI MARGINE PER LA MODIFICA PREZZO IN PREVENTIVO ──────────────────
 const MARGINE_MINIMO_PERC = 15; // sotto questa percentuale -> richiede approvazione
 const RUOLI_APPROVATORI = ["responsabile","admin"];
+// Sentinella per "Conferma del cliente": distingue "il cliente ha scelto
+// esplicitamente la soluzione principale" da "non ancora scelta" quando ci
+// sono soluzioni alternative attive (soluzione_confermata è altrimenti il
+// nome testuale della soluzione alternativa scelta).
+const NOME_SOLUZIONE_PRINCIPALE = "__principale__";
 
 function calcolaMargine(netto, costo){
   if(!costo || costo<=0 || !netto || netto<=0) return null;
@@ -5154,7 +5165,17 @@ function Preventivi({cart,setCart,preventivi,setPreventivi,setOrdini,setArea,ruo
   async function convertiInOrdine(p){
     if(!p.firma_cliente && !p.conferma_alt_nome) return; // rete di sicurezza, il pulsante è già disabilitato senza firma né conferma
     if(p.extra_sconto_euro>0 && !p.extra_sconto_approvato) return; // rete di sicurezza, idem per extra sconto non approvato
+    const haSoluzioniAlternative = (p.soluzioni||[]).length>0;
+    if(haSoluzioniAlternative && !p.soluzione_confermata) return; // rete di sicurezza, idem per soluzione non ancora scelta
     setErroreSync("");
+    // Se il cliente ha scelto una soluzione ALTERNATIVA (non la principale),
+    // l'ordine va creato con le righe e il totale di QUELLA soluzione — non
+    // di quella principale, che è solo la prima proposta nel preventivo.
+    const soluzioneScelta = haSoluzioniAlternative && p.soluzione_confermata!==NOME_SOLUZIONE_PRINCIPALE
+      ? (p.soluzioni||[]).find(s => (s.nome||"") === p.soluzione_confermata)
+      : null;
+    const righeOrdine = soluzioneScelta ? soluzioneScelta.righe : p.righe;
+    const valBase = soluzioneScelta ? (soluzioneScelta.righe||[]).reduce((acc,r)=>acc+r.netto*(r.qty||1),0) : p.val;
     const nuovo = {
       preventivo_id: p.id,
       preventivo_progressivo: p.progressivo,
@@ -5170,8 +5191,9 @@ function Preventivi({cart,setCart,preventivi,setPreventivi,setOrdini,setArea,ruo
       cliente_email: p.cliente_email || null,
       pagamento_modalita: p.pagamento_modalita || null,
       pagamento_dettagli: p.pagamento_dettagli || null,
-      righe: p.righe,
-      val: p.extra_sconto_euro ? (p.val - p.extra_sconto_euro) : p.val,
+      righe: righeOrdine,
+      val: p.extra_sconto_euro ? (valBase - p.extra_sconto_euro) : valBase,
+      soluzione_confermata: p.soluzione_confermata || null,
       extra_sconto_euro: p.extra_sconto_euro || null,
       extra_sconto_approvato: p.extra_sconto_euro ? !!p.extra_sconto_approvato : null,
       conferma_note: p.conferma_note || null,
@@ -5940,15 +5962,35 @@ function Preventivi({cart,setCart,preventivi,setPreventivi,setOrdini,setArea,ruo
               )}
             </div>
           )}
+          {selezionato.stato==="Inviato" && RUOLI_APPROVATORI.includes(ruolo) && (
+            <button
+              onClick={()=>{
+                if(!window.confirm(`Riaprire ${codicePreventivo(selezionato)} per modifiche? Torna in Bozza come versione .${(selezionato.versione||0)+1} — firma/conferma già raccolte vengono cancellate e andranno rifatte dopo le modifiche, sulla nuova versione.`)) return;
+                aggiorna(selezionato.id, {
+                  stato:"Bozza", versione:(selezionato.versione||0)+1,
+                  firma_cliente:null, firma_data:null, firma_nome:null,
+                  conferma_alt_nome:null, conferma_alt_tipo:null, conferma_alt_data:null,
+                  conferma_note:null, soluzione_confermata:null,
+                });
+              }}
+              style={{...S.btnS,padding:"12px",fontWeight:600}}
+            >
+              ✎ Riapri per modifiche (diventa versione .{(selezionato.versione||0)+1})
+            </button>
+          )}
           {selezionato.stato==="Inviato" && (
             <SezioneConferma record={selezionato} editable={true} onAggiorna={patch=>aggiorna(selezionato.id, patch)}/>
           )}
           {selezionato.stato==="Inviato" && (() => {
             const scontoDaApprovare = selezionato.extra_sconto_euro>0 && !selezionato.extra_sconto_approvato;
-            const bloccato = (!selezionato.firma_cliente && !selezionato.conferma_alt_nome) || scontoDaApprovare;
+            const haPiuSoluzioni = (selezionato.soluzioni||[]).length>0;
+            const soluzioneDaScegliere = haPiuSoluzioni && !selezionato.soluzione_confermata;
+            const senzaConferma = !selezionato.firma_cliente && !selezionato.conferma_alt_nome;
+            const bloccato = senzaConferma || scontoDaApprovare || soluzioneDaScegliere;
+            const motivo = senzaConferma ? " (serve la firma o una conferma)" : soluzioneDaScegliere ? " (indica prima quale soluzione ha scelto il cliente)" : scontoDaApprovare ? " (extra sconto da approvare)" : "";
             return (
               <button onClick={()=>convertiInOrdine(selezionato)} disabled={bloccato} style={{...S.btnAccent,padding:"13px",background:bloccato?"#c8c8c8":C.ink,color:"#fff",fontSize:14,cursor:bloccato?"default":"pointer"}}>
-                ⬡ Converti in ordine{(!selezionato.firma_cliente && !selezionato.conferma_alt_nome) ? " (serve la firma o una conferma)" : scontoDaApprovare ? " (extra sconto da approvare)" : ""}
+                ⬡ Converti in ordine{motivo}
               </button>
             );
           })()}
@@ -6106,9 +6148,38 @@ function SezioneConferma({ record, editable, onAggiorna }){
     background:on?C.ink:"#fff", color:on?"#fff":"#5B6770",
   });
 
+  // Quando ci sono soluzioni alternative attive, prima di poter raccogliere
+  // firma/conferma va chiarito quale delle soluzioni ha scelto il cliente —
+  // altrimenti alla conversione in ordine non sapremmo quali articoli usare.
+  const soluzioniAlternative = record.soluzioni || [];
+  const haSoluzioniAlternative = soluzioniAlternative.length > 0;
+  const soluzioneScelta = record.soluzione_confermata || null;
+  const soluzioneDaScegliere = haSoluzioniAlternative && !soluzioneScelta;
+
   return (
     <div style={{...S.card,cursor:"default",marginBottom:16}}>
       <div style={{fontSize:13.5,fontWeight:700,marginBottom:4}}>Conferma del cliente</div>
+
+      {haSoluzioniAlternative && (
+        <div style={{marginBottom:14,paddingBottom:14,borderBottom:soluzioneDaScegliere?"none":`1px solid ${C.paperLine}`}}>
+          <div style={{fontSize:12.5,fontWeight:600,marginBottom:8}}>Quale soluzione ha scelto il cliente?</div>
+          {editable ? (
+            <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+              <button onClick={()=>onAggiorna({soluzione_confermata:NOME_SOLUZIONE_PRINCIPALE})} style={pillStile(soluzioneScelta===NOME_SOLUZIONE_PRINCIPALE)}>Soluzione principale</button>
+              {soluzioniAlternative.map((s,i)=>(
+                <button key={i} onClick={()=>onAggiorna({soluzione_confermata:s.nome||`Soluzione ${i+2}`})} style={pillStile(soluzioneScelta===(s.nome||`Soluzione ${i+2}`))}>{s.nome||`Soluzione ${i+2}`}</button>
+              ))}
+            </div>
+          ) : (
+            <div style={{fontSize:12.5,fontWeight:600,color:C.ok}}>✓ {soluzioneScelta===NOME_SOLUZIONE_PRINCIPALE?"Soluzione principale":soluzioneScelta}</div>
+          )}
+          {soluzioneDaScegliere && (
+            <div style={{fontSize:11.5,color:C.steel,marginTop:8}}>Seleziona una soluzione per poter procedere con la firma o la conferma.</div>
+          )}
+        </div>
+      )}
+
+      {(!haSoluzioniAlternative || !soluzioneDaScegliere) && <>
       {editable && !haFirma && !haAlt && (
         <div style={{fontSize:12,color:C.steel,marginBottom:12}}>
           La firma digitale è facoltativa — se non è possibile raccoglierla, indica comunque chi ha confermato e come.
@@ -6215,6 +6286,7 @@ function SezioneConferma({ record, editable, onAggiorna }){
           ) : null}
         </div>
       )}
+      </>}
     </div>
   );
 }
