@@ -3554,6 +3554,21 @@ async function generaPdfBlob(htmlContenuto){
         scale: 2, useCORS: true, backgroundColor: "#ffffff", logging: false,
       });
 
+      // Punti di taglio "sicuri" per l'eventuale ripiego più sotto: l'inizio
+      // di ogni riga prodotto o blocco non spezzabile (separatore di
+      // soluzione, note) — mai tagliare una riga a metà tra una pagina
+      // fisica e la successiva. Misurati ORA, mentre "pagina" corrisponde
+      // esattamente al canvas appena catturato (header/footer ancora
+      // staccati): dopo il ripristino qui sotto le coordinate cambierebbero.
+      // Espressi in px del canvas (non px CSS), per confrontarli
+      // direttamente con canvas.height nel ripiego.
+      const paginaRectPreRipristino = pagina.getBoundingClientRect();
+      const scalaCanvasPerCssPx = canvas.width / (paginaRectPreRipristino.width || 1);
+      const puntiTaglioPx = Array.from(pagina.querySelectorAll("tr.riga-prodotto, .soluzione-separatore, .note-box"))
+        .map(el => Math.round((el.getBoundingClientRect().top - paginaRectPreRipristino.top) * scalaCanvasPerCssPx))
+        .filter(y => y > 0 && y < canvas.height)
+        .sort((a,b)=>a-b);
+
       if(ridimensionata){
         pagina.style.width = styleOriginale.width;
         pagina.style.transform = styleOriginale.transform;
@@ -3595,7 +3610,20 @@ async function generaPdfBlob(htmlContenuto){
         const altezzaFettaPx = Math.round(altezzaPerPaginaCorpoMm * pxPerMm);
         let offset = 0;
         while(offset < canvas.height){
-          const altezzaQuestaFettaPx = Math.min(altezzaFettaPx, canvas.height - offset);
+          let limite = Math.min(offset + altezzaFettaPx, canvas.height);
+          if(limite < canvas.height){
+            // Il limite calcolato in base alla sola altezza cade quasi
+            // sempre dentro una riga: arretriamo al punto di taglio sicuro
+            // più vicino (inizio di quella riga o del blocco precedente),
+            // così la riga intera passa alla pagina successiva invece di
+            // spezzarsi a metà. Se non esiste un punto sicuro raggiungibile
+            // (una singola riga più alta di una pagina intera — caso limite
+            // che non dovrebbe mai capitare con righe prodotto normali),
+            // tagliamo comunque al limite calcolato per non restare bloccati.
+            const candidati = puntiTaglioPx.filter(y => y > offset && y <= limite);
+            if(candidati.length) limite = candidati[candidati.length - 1];
+          }
+          const altezzaQuestaFettaPx = limite - offset;
           const fetta = document.createElement("canvas");
           fetta.width = canvas.width;
           fetta.height = altezzaQuestaFettaPx;
@@ -3607,7 +3635,7 @@ async function generaPdfBlob(htmlContenuto){
           if(headerCanvas) pdf.addImage(headerCanvas.toDataURL("image/jpeg", 0.95), "JPEG", PAD_LR_MM, PAD_TOP_MM, LARGHEZZA_CONTENUTO_MM, headerAltezzaMm);
           pdf.addImage(fetta.toDataURL("image/jpeg", 0.95), "JPEG", 0, yCorpoMm, A4_LARGHEZZA_MM, altezzaQuestaFettaPx / pxPerMm);
           primaPaginaCreata = true;
-          offset += altezzaQuestaFettaPx;
+          offset = limite;
         }
       }
 
@@ -3899,17 +3927,17 @@ async function generaPreventivoPDF(righe, total, meta={}){
   table.articoli thead th.cella-num{text-align:right}
   .riga-prodotto td{border-bottom:1px solid #E3E5EA;padding:14px 12px;vertical-align:top;font-size:14px}
   .riga-alt td{background:#F3F6FB}
-  .cella-prodotto{width:15%}
+  .cella-prodotto{width:18%;padding-right:6px}
   .tag{display:inline-block;font-size:11px;font-weight:600;text-transform:uppercase;background:#EEF0F4;color:#5B6770;padding:3px 8px;border-radius:3px;margin-bottom:4px}
   .prodotto-nome{font-weight:600;font-size:15.5px}
   .prodotto-codice{font-family:monospace;font-size:11.5px;color:#9AA3AB;margin-top:3px}
-  .cella-descr{width:49%}
-  .prodotto-img{width:100%;max-width:230px;height:175px;border-radius:6px;display:flex;align-items:center;justify-content:center;overflow:hidden;margin-top:10px}
+  .cella-descr{width:46%;padding-left:6px}
+  .prodotto-img{width:100%;max-width:270px;height:210px;border-radius:6px;display:flex;align-items:center;justify-content:center;overflow:hidden;margin-top:10px}
   .prodotto-img img{max-width:100%;max-height:100%;object-fit:contain}
   .caratteristiche-testo{font-size:13px;color:#7C879E;line-height:1.6;margin-top:8px}
   .descr-testo{font-size:14px;color:#5B6770;line-height:1.6}
-  .cella-num{text-align:right;white-space:nowrap;width:9%;font-size:15px}
-  .cella-tot{font-weight:700;color:#162758;font-size:16.5px}
+  .cella-num{text-align:right;white-space:nowrap;width:9%;font-size:17px}
+  .cella-tot{font-weight:700;color:#162758;font-size:19.5px}
 
   .totali-box{text-align:right;margin-top:10px}
   .tot-imponibile{font-size:24px;font-weight:700;color:#162758}
@@ -3919,8 +3947,8 @@ async function generaPreventivoPDF(righe, total, meta={}){
   .finanziamento-riga{font-size:14px;color:#162758;font-weight:600;margin-top:5px}
   .finanziamento-nota{font-size:12px;color:#7C879E}
 
-  .note-box{margin-top:24px;font-size:16px;color:#3A4248}
-  .note-box .lbl{font-weight:700;margin-bottom:6px;font-size:16px}
+  .note-box{margin-top:24px;font-size:18px;color:#3A4248;padding-left:12px}
+  .note-box .lbl{font-weight:700;margin-bottom:6px;font-size:18px}
   .note-box .testo{white-space:pre-line}
 
   .soluzione-separatore{margin-top:28px;padding-top:16px;border-top:2px solid #162758;font-size:16px;font-weight:700;color:#162758;margin-bottom:12px}
