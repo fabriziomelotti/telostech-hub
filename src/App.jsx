@@ -3862,7 +3862,7 @@ async function generaPreventivoPDF(righe, total, meta={}){
       </div>
     </div>
     <div class="cliente-box">
-      <div style="color:#7C879E;font-size:12px">Spett.le Cliente</div>
+      <div style="color:#7C879E;font-size:14px">Spett.le Cliente</div>
       <div class="nome">${meta.cliente||""}</div>
     </div>
     ${tabellaArticoliHtml(righeInput, finanziariaAttiva)}
@@ -3915,12 +3915,12 @@ async function generaPreventivoPDF(righe, total, meta={}){
   .hd-content .logo-telos-spa{height:48px}
   .hd-content .badge-partner{height:38px}
   .riga-titolo{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;margin-bottom:10px}
-  .titolo-ordine{font-size:26px;font-weight:700;color:#162758;white-space:nowrap}
-  .meta-box{display:grid;grid-template-columns:auto auto;column-gap:12px;row-gap:4px;font-size:13px;justify-content:end;flex-shrink:0}
+  .titolo-ordine{font-size:30px;font-weight:700;color:#162758;white-space:nowrap}
+  .meta-box{display:grid;grid-template-columns:auto auto;column-gap:14px;row-gap:5px;font-size:15px;justify-content:end;flex-shrink:0}
   .meta-box .etichetta{color:#7C879E;text-align:right}
   .meta-box .valore{text-align:left;font-weight:600;white-space:nowrap}
-  .cliente-box{font-size:15px;margin-bottom:12px}
-  .cliente-box .nome{font-weight:700;font-size:17px}
+  .cliente-box{font-size:17px;margin-bottom:14px}
+  .cliente-box .nome{font-weight:700;font-size:20px}
 
   table.articoli{width:100%;border-collapse:collapse;margin-bottom:20px;table-layout:fixed}
   table.articoli thead th{background:#162758;color:#fff;padding:11px 12px;font-size:13px;text-align:left}
@@ -3935,9 +3935,9 @@ async function generaPreventivoPDF(righe, total, meta={}){
   .prodotto-img{width:100%;max-width:270px;height:210px;border-radius:6px;display:flex;align-items:center;justify-content:center;overflow:hidden;margin-top:10px}
   .prodotto-img img{max-width:100%;max-height:100%;object-fit:contain}
   .caratteristiche-testo{font-size:13px;color:#7C879E;line-height:1.6;margin-top:8px}
-  .descr-testo{font-size:14px;color:#5B6770;line-height:1.6}
+  .descr-testo{font-size:14px;font-weight:700;color:#3A4248;line-height:1.6}
   .cella-num{text-align:right;white-space:nowrap;width:9%;font-size:17px}
-  .cella-tot{font-weight:700;color:#162758;font-size:19.5px}
+  .cella-tot{font-weight:700;color:#162758;font-size:22px}
 
   .totali-box{text-align:right;margin-top:10px}
   .tot-imponibile{font-size:24px;font-weight:700;color:#162758}
