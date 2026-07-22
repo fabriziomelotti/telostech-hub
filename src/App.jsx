@@ -5850,28 +5850,30 @@ function Preventivi({cart,setCart,preventivi,setPreventivi,setOrdini,setArea,ruo
           )}
         </div>
 
-        {/* Azioni di stato */}
-        <div style={{display:"flex",flexDirection:"column",gap:8,marginTop:6}}>
+        {/* Azioni di stato — pulsanti compatti affiancati (non più a piena
+            larghezza uno sotto l'altro): colore diverso per il tipo di
+            azione, vanno a capo da soli sugli schermi stretti (mobile). */}
+        <div style={{display:"flex",flexWrap:"wrap",gap:8,marginTop:6,alignItems:"center"}}>
           {editable && (
-            <div style={{display:"flex",alignItems:"center",gap:12}}>
-              <button onClick={salvaBozza} disabled={!bozza} style={{...S.btnAccent,flex:1,padding:"12px",fontWeight:700,opacity:bozza?1:0.4,cursor:bozza?"pointer":"default"}}>
+            <>
+              <button onClick={salvaBozza} disabled={!bozza} style={{...S.btnAccent,padding:"10px 18px",fontWeight:700,background:C.ink,color:"#fff",opacity:bozza?1:0.4,cursor:bozza?"pointer":"default"}}>
                 💾 Salva
               </button>
-              {bozzaSalvata && <span style={{fontSize:12.5,color:C.ok,fontWeight:600,flexShrink:0}}>✓ Salvato</span>}
-            </div>
+              {bozzaSalvata && <span style={{fontSize:12.5,color:C.ok,fontWeight:600}}>✓ Salvato</span>}
+            </>
           )}
           {puoApprovare && (
-            <button onClick={()=>aggiorna(selezionato.id,{approvato:true})} style={{...S.btnAccent,padding:"12px",background:C.ok,color:"#fff"}}>
+            <button onClick={()=>aggiorna(selezionato.id,{approvato:true})} style={{...S.btnAccent,padding:"10px 16px",background:C.ok,color:"#fff"}}>
               ✓ Approva sconto e procedi
             </button>
           )}
           {selezionato.stato==="Bozza" && !inAttesaApprovazione && (
-            <button onClick={()=>aggiorna(selezionato.id,{stato:"Inviato"})} disabled={!selezionato.cliente||selezionato.righe.length===0} style={{...S.btnAccent,padding:"12px",opacity:(!selezionato.cliente||selezionato.righe.length===0)?0.4:1}}>
+            <button onClick={()=>aggiorna(selezionato.id,{stato:"Inviato"})} disabled={!selezionato.cliente||selezionato.righe.length===0} style={{...S.btnAccent,padding:"10px 16px",background:C.warn,color:"#fff",opacity:(!selezionato.cliente||selezionato.righe.length===0)?0.4:1}}>
               Segna come inviato al cliente
             </button>
           )}
           {selezionato.stato==="Bozza" && inAttesaApprovazione && !puoApprovare && (
-            <button disabled style={{...S.btnAccent,padding:"12px",opacity:0.4}}>In attesa di approvazione</button>
+            <button disabled style={{...S.btnAccent,padding:"10px 16px",opacity:0.4}}>In attesa di approvazione</button>
           )}
           <button disabled={generandoPdf} onClick={async ()=>{
             setGenerandoPdf(true);
@@ -5929,39 +5931,9 @@ function Preventivi({cart,setCart,preventivi,setPreventivi,setOrdini,setArea,ruo
                 soluzioni: soluzioniArricchite,
               });
             } finally { setGenerandoPdf(false); }
-          }} style={{...S.btnAccent,padding:"14px",fontSize:14,fontWeight:700,background:C.cyan,color:C.inkDeep,opacity:generandoPdf?0.6:1}}>
-            {generandoPdf ? "Generazione PDF…" : "📄 Genera preventivo PDF"}
+          }} style={{...S.btnAccent,padding:"10px 16px",fontSize:13,fontWeight:700,background:C.cyan,color:C.inkDeep,opacity:generandoPdf?0.6:1}}>
+            {generandoPdf ? "Generazione PDF…" : "📄 Genera PDF"}
           </button>
-          {selezionato.stato==="Inviato" && selezionato.finanziaria_importo==null && (
-            <div style={{...S.card,cursor:"default",marginBottom:16}}>
-              <div style={{fontSize:13.5,fontWeight:700,marginBottom:4}}>Correzione finale imponibile</div>
-              <div style={{fontSize:12,color:C.steel,marginBottom:10}}>
-                Extra sconto in € applicabile alla conferma del cliente — richiede l'approvazione di un responsabile/admin prima di convertire in ordine.
-              </div>
-              {editable ? (
-                <input type="number" min="0" step="0.01" value={selezionato.extra_sconto_euro ?? ""}
-                  onChange={e=>{
-                    const v = e.target.value ? parseFloat(e.target.value) : null;
-                    aggiorna(selezionato.id, { extra_sconto_euro: v, extra_sconto_approvato: false });
-                  }}
-                  placeholder="0.00" className="tnum" style={{...S.inp,width:140,fontFamily:F_MONO}}/>
-              ) : (
-                <div className="tnum" style={{fontSize:13,fontWeight:600,fontFamily:F_MONO}}>{selezionato.extra_sconto_euro ? `€${selezionato.extra_sconto_euro.toFixed(2)}` : "Nessuno"}</div>
-              )}
-              {selezionato.extra_sconto_euro>0 && (
-                <div style={{marginTop:10}}>
-                  <div className="tnum" style={{fontSize:12.5,fontWeight:600,fontFamily:F_MONO}}>Imponibile corretto: €{(selezionato.val-selezionato.extra_sconto_euro).toFixed(2)}</div>
-                  {selezionato.extra_sconto_approvato ? (
-                    <div style={{fontSize:12,color:C.ok,fontWeight:600,marginTop:6}}>✓ Extra sconto approvato</div>
-                  ) : puoModificarePrezzoLiberamente(ruolo) ? (
-                    <button onClick={()=>aggiorna(selezionato.id,{extra_sconto_approvato:true})} style={{...S.btnAccent,padding:"9px 14px",marginTop:8,background:C.ok,color:"#fff"}}>✓ Approva extra sconto</button>
-                  ) : (
-                    <div style={{fontSize:12,color:"#8a6418",marginTop:6}}>In attesa di approvazione da un responsabile o admin.</div>
-                  )}
-                </div>
-              )}
-            </div>
-          )}
           {selezionato.stato==="Inviato" && RUOLI_APPROVATORI.includes(ruolo) && (
             <button
               onClick={()=>{
@@ -5973,37 +5945,70 @@ function Preventivi({cart,setCart,preventivi,setPreventivi,setOrdini,setArea,ruo
                   conferma_note:null, soluzione_confermata:null,
                 });
               }}
-              style={{...S.btnS,padding:"12px",fontWeight:600}}
+              style={{...S.btnS,padding:"9px 14px",fontWeight:600,border:`1px solid ${C.warn}`,color:C.warn,background:"rgba(217,164,65,0.08)"}}
             >
-              ✎ Riapri per modifiche (diventa versione .{(selezionato.versione||0)+1})
+              ✎ Riapri per modifiche (v.{(selezionato.versione||0)+1})
             </button>
           )}
-          {selezionato.stato==="Inviato" && (
-            <SezioneConferma record={selezionato} editable={true} onAggiorna={patch=>aggiorna(selezionato.id, patch)}/>
-          )}
-          {selezionato.stato==="Inviato" && (() => {
-            const scontoDaApprovare = selezionato.extra_sconto_euro>0 && !selezionato.extra_sconto_approvato;
-            const haPiuSoluzioni = (selezionato.soluzioni||[]).length>0;
-            const soluzioneDaScegliere = haPiuSoluzioni && !selezionato.soluzione_confermata;
-            const senzaConferma = !selezionato.firma_cliente && !selezionato.conferma_alt_nome;
-            const bloccato = senzaConferma || scontoDaApprovare || soluzioneDaScegliere;
-            const motivo = senzaConferma ? " (serve la firma o una conferma)" : soluzioneDaScegliere ? " (indica prima quale soluzione ha scelto il cliente)" : scontoDaApprovare ? " (extra sconto da approvare)" : "";
-            return (
-              <button onClick={()=>convertiInOrdine(selezionato)} disabled={bloccato} style={{...S.btnAccent,padding:"13px",background:bloccato?"#c8c8c8":C.ink,color:"#fff",fontSize:14,cursor:bloccato?"default":"pointer"}}>
-                ⬡ Converti in ordine{motivo}
-              </button>
-            );
-          })()}
           {selezionato.stato==="Convertito in ordine" && (
-            <button onClick={()=>setArea("ordini")} style={{...S.btnP,padding:"12px"}}>Vedi l'ordine →</button>
-          )}
-          {selezionato.stato==="Saltato" && selezionato.motivo_saltato && (
-            <div style={{fontSize:12.5,color:C.steel,background:"rgba(200,75,58,0.06)",border:`1px solid ${C.paperLine}`,borderRadius:8,padding:"11px 13px"}}>
-              <div style={{fontWeight:600,color:C.danger,marginBottom:3}}>Trattativa saltata</div>
-              {selezionato.motivo_saltato}
-            </div>
+            <button onClick={()=>setArea("ordini")} style={{...S.btnP,padding:"10px 16px"}}>Vedi l'ordine →</button>
           )}
         </div>
+
+        {selezionato.stato==="Inviato" && selezionato.finanziaria_importo==null && (
+          <div style={{...S.card,cursor:"default",marginTop:12}}>
+            <div style={{fontSize:13.5,fontWeight:700,marginBottom:4}}>Correzione finale imponibile</div>
+            <div style={{fontSize:12,color:C.steel,marginBottom:10}}>
+              Extra sconto in € applicabile alla conferma del cliente — richiede l'approvazione di un responsabile/admin prima di convertire in ordine.
+            </div>
+            {editable ? (
+              <input type="number" min="0" step="0.01" value={selezionato.extra_sconto_euro ?? ""}
+                onChange={e=>{
+                  const v = e.target.value ? parseFloat(e.target.value) : null;
+                  aggiorna(selezionato.id, { extra_sconto_euro: v, extra_sconto_approvato: false });
+                }}
+                placeholder="0.00" className="tnum" style={{...S.inp,width:140,fontFamily:F_MONO}}/>
+            ) : (
+              <div className="tnum" style={{fontSize:13,fontWeight:600,fontFamily:F_MONO}}>{selezionato.extra_sconto_euro ? `€${selezionato.extra_sconto_euro.toFixed(2)}` : "Nessuno"}</div>
+            )}
+            {selezionato.extra_sconto_euro>0 && (
+              <div style={{marginTop:10}}>
+                <div className="tnum" style={{fontSize:12.5,fontWeight:600,fontFamily:F_MONO}}>Imponibile corretto: €{(selezionato.val-selezionato.extra_sconto_euro).toFixed(2)}</div>
+                {selezionato.extra_sconto_approvato ? (
+                  <div style={{fontSize:12,color:C.ok,fontWeight:600,marginTop:6}}>✓ Extra sconto approvato</div>
+                ) : puoModificarePrezzoLiberamente(ruolo) ? (
+                  <button onClick={()=>aggiorna(selezionato.id,{extra_sconto_approvato:true})} style={{...S.btnAccent,padding:"9px 14px",marginTop:8,background:C.ok,color:"#fff"}}>✓ Approva extra sconto</button>
+                ) : (
+                  <div style={{fontSize:12,color:"#8a6418",marginTop:6}}>In attesa di approvazione da un responsabile o admin.</div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+        {selezionato.stato==="Inviato" && (
+          <div style={{marginTop:12}}>
+            <SezioneConferma record={selezionato} editable={true} onAggiorna={patch=>aggiorna(selezionato.id, patch)}/>
+          </div>
+        )}
+        {selezionato.stato==="Inviato" && (() => {
+          const scontoDaApprovare = selezionato.extra_sconto_euro>0 && !selezionato.extra_sconto_approvato;
+          const haPiuSoluzioni = (selezionato.soluzioni||[]).length>0;
+          const soluzioneDaScegliere = haPiuSoluzioni && !selezionato.soluzione_confermata;
+          const senzaConferma = !selezionato.firma_cliente && !selezionato.conferma_alt_nome;
+          const bloccato = senzaConferma || scontoDaApprovare || soluzioneDaScegliere;
+          const motivo = senzaConferma ? " (serve la firma o una conferma)" : soluzioneDaScegliere ? " (indica prima quale soluzione ha scelto il cliente)" : scontoDaApprovare ? " (extra sconto da approvare)" : "";
+          return (
+            <button onClick={()=>convertiInOrdine(selezionato)} disabled={bloccato} style={{...S.btnAccent,marginTop:12,padding:"13px",background:bloccato?"#c8c8c8":C.ink,color:"#fff",fontSize:14,cursor:bloccato?"default":"pointer"}}>
+              ⬡ Converti in ordine{motivo}
+            </button>
+          );
+        })()}
+        {selezionato.stato==="Saltato" && selezionato.motivo_saltato && (
+          <div style={{marginTop:12,fontSize:12.5,color:C.steel,background:"rgba(200,75,58,0.06)",border:`1px solid ${C.paperLine}`,borderRadius:8,padding:"11px 13px"}}>
+            <div style={{fontWeight:600,color:C.danger,marginBottom:3}}>Trattativa saltata</div>
+            {selezionato.motivo_saltato}
+          </div>
+        )}
 
         {editable && (
           <div style={{marginTop:20}}>
