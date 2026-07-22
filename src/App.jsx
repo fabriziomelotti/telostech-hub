@@ -11194,6 +11194,32 @@ function GestionePacchetti({ sessione, catalog, ruolo }){
     }
   }
 
+  // Duplica un pacchetto esistente (nome, prodotti, condizioni finanziaria
+  // comprese) e apre subito la copia in modifica, così si parte da un
+  // pacchetto simile invece di ricostruirlo da zero.
+  async function duplicaPacchetto(pk){
+    setErrore("");
+    const payload = {
+      nome: `${pk.nome} (copia)`, descrizione: pk.descrizione || null,
+      tipo: pk.tipo || "telos", marca: pk.marca || null,
+      prodotti: pk.prodotti || [],
+      finanziaria_importo_senza_iva: pk.finanziaria_importo_senza_iva ?? null,
+      finanziaria_rata_senza_iva: pk.finanziaria_rata_senza_iva ?? null,
+      finanziaria_importo_con_iva: pk.finanziaria_importo_con_iva ?? null,
+      finanziaria_rata_con_iva: pk.finanziaria_rata_con_iva ?? null,
+      finanziaria_mesi: pk.finanziaria_mesi ?? null,
+      documenti_finanziaria: pk.documenti_finanziaria || null,
+      attivo: true,
+    };
+    try{
+      const [salvato] = await sbAuth("POST","pacchetti","",payload,accessToken);
+      ricarica();
+      setInModifica(salvato); // apre subito la copia, pronta per essere personalizzata
+    }catch(err){
+      setErrore("Duplicazione non riuscita: "+err.message);
+    }
+  }
+
   if(inLibreria){
     return <GestioneLibreriaDocumentiFinanziaria accessToken={accessToken} onIndietro={()=>setInLibreria(false)}/>;
   }
@@ -11239,6 +11265,7 @@ function GestionePacchetti({ sessione, catalog, ruolo }){
           </div>
           <div style={{display:"flex",gap:6,flexShrink:0}}>
             {isAdmin && <button onClick={()=>toggleAttivo(pk)} style={{...S.btnS,padding:"6px 10px",fontSize:11.5}}>{pk.attivo?"Disattiva":"Riattiva"}</button>}
+            {isAdmin && <button onClick={()=>duplicaPacchetto(pk)} style={{...S.btnS,padding:"6px 10px",fontSize:11.5}}>⧉ Duplica</button>}
             <button onClick={()=>setInModifica(pk)} style={{...S.btnS,padding:"6px 10px",fontSize:11.5}}>✎ {isAdmin?"Modifica":"Finanziaria"}</button>
             {isAdmin && (confermaElimina===pk.id ? (
               <button onClick={()=>eliminaPacchetto(pk.id)} style={{...S.btnS,padding:"6px 10px",fontSize:11.5,background:C.danger,color:"#fff",borderColor:C.danger}}>Confermi?</button>
