@@ -204,6 +204,18 @@ const MOTIVI_SALTO = {
   altro: "Altro",
 };
 
+// Antepone il precodice a 3 lettere del marchio (es. TEXA→TEX) al codice
+// prodotto per la visualizzazione — es. "TEX" + "Z20410" → "TEXZ20410".
+// Il codice reale salvato a database (colonna "cod" su prodotti/righe)
+// NON viene mai toccato: serve solo a evitare confusione tra marchi diversi
+// quando si gestisce l'ordine sul gestionale. Se il marchio non ha un
+// precodice impostato (mappa vuota o non ancora configurato), restituisce
+// il codice originale senza alterazioni.
+function codiceConPrecodice(precodici, marchio, cod){
+  const prefisso = (precodici && marchio) ? precodici[marchio] : null;
+  return prefisso ? `${prefisso}${cod||""}` : (cod||"");
+}
+
 // Il codice "PRV-0001" mostrato in giro non è più generato lato client (con
 // preventivi condivisi su Supabase, un contatore locale che riparte da 100 ad
 // ogni ricarica di pagina creerebbe ID duplicati tra utenti diversi) — arriva
@@ -461,6 +473,7 @@ export default function App(){
   const [catalogLoading, setCatalogLoading] = useState(false);
   const [dbOnline, setDbOnline] = useState(null); // null=non testato, true/false
   const [nuovaVersione, setNuovaVersione] = useState(false);
+  const [precodici, setPrecodici] = useState({}); // { TEXA: "TEX", GEATEK: "GEA", ... }
 
   useEffect(()=>{
     const check=()=>setIsMobile(window.innerWidth < 860);
@@ -547,6 +560,18 @@ export default function App(){
     sbGetAuth("promemoria", "select=*&order=scadenza.asc.nullslast,creato_il.desc&limit=500", accessToken)
       .then(dati => setPromemoria(dati || []))
       .catch(err => console.warn("Promemoria non raggiungibili:", err.message));
+    // Precodici marchio (3 lettere, es. TEXA→TEX) per mostrarli davanti al
+    // codice prodotto nel catalogo e in tutti i PDF generati — letti in
+    // diretta via REST (RLS: lettura aperta a chiunque sia autenticato),
+    // non tramite catalog-admin perché quella Edge Function è riservata a
+    // admin/responsabile e questo dato serve a tutti i ruoli.
+    sbGetAuth("marchi_config", "select=marchio,precodice", accessToken)
+      .then(righe => {
+        const mappa = {};
+        for(const r of (righe||[])) if(r.precodice) mappa[r.marchio] = r.precodice;
+        setPrecodici(mappa);
+      })
+      .catch(err => console.warn("Precodici marchio non raggiungibili:", err.message));
   },[role]);
 
   // permessi/nav dal ruolo, ma nome reale dalla sessione
@@ -672,11 +697,11 @@ export default function App(){
         <div style={S.content}>
           {area==="home" && <Home r={r} role={role} setArea={setArea} isMobile={isMobile} preventivi={preventivi} interventi={interventi} promemoria={promemoria} sessione={sessione}/>}
           {area==="ai" && <AIChat msgs={msgs} msgInput={msgInput} setMsgInput={setMsgInput} sendMsg={sendMsg} aiTyping={aiTyping}/>}
-          {area==="prodotti" && <Prodotti cart={cart} setCart={setCart} catalog={catalog} catalogLoading={catalogLoading} sessione={sessione} ruolo={role} setCatalog={setCatalog} setArea={setArea}/>}
+          {area==="prodotti" && <Prodotti cart={cart} setCart={setCart} catalog={catalog} catalogLoading={catalogLoading} sessione={sessione} ruolo={role} setCatalog={setCatalog} setArea={setArea} precodici={precodici}/>}
           {area==="clienti" && <Clienti sessione={sessione} preventivi={preventivi} ordini={ordini} attrezzature={attrezzature} setAttrezzature={setAttrezzature} interventi={interventi} setInterventi={setInterventi} catalog={catalog} ruolo={role}/>}
           {area==="promemoria" && <Promemoria sessione={sessione} ruolo={role} preventivi={preventivi} interventi={interventi} ordini={ordini} promemoria={promemoria} setPromemoria={setPromemoria} setArea={setArea}/>}
-          {area==="preventivi" && <Preventivi cart={cart} setCart={setCart} preventivi={preventivi} setPreventivi={setPreventivi} setOrdini={setOrdini} setArea={setArea} ruolo={role} catalog={catalog} sessione={sessione}/>}
-          {area==="ordini" && <Ordini ordini={ordini} setOrdini={setOrdini} preventivi={preventivi} setPreventivi={setPreventivi} setInterventi={setInterventi} catalog={catalog} sessione={sessione} ruolo={role}/>}
+          {area==="preventivi" && <Preventivi cart={cart} setCart={setCart} preventivi={preventivi} setPreventivi={setPreventivi} setOrdini={setOrdini} setArea={setArea} ruolo={role} catalog={catalog} sessione={sessione} precodici={precodici}/>}
+          {area==="ordini" && <Ordini ordini={ordini} setOrdini={setOrdini} preventivi={preventivi} setPreventivi={setPreventivi} setInterventi={setInterventi} catalog={catalog} sessione={sessione} ruolo={role} precodici={precodici}/>}
           {area==="interventi" && <Interventi interventi={interventi} setInterventi={setInterventi} attrezzature={attrezzature} sessione={sessione} setArea={setArea} setInterventoDaCompletare={setInterventoDaCompletare} catalog={catalog} ruolo={role}/>}
           {area==="rapporti" && <RapportoDemo sessione={sessione} interventi={interventi} setInterventi={setInterventi} interventoDaCompletare={interventoDaCompletare} setInterventoDaCompletare={setInterventoDaCompletare}/>}
           {area==="analytics" && RUOLI_APPROVATORI.includes(role) && <CondizioniAcquisto/>}
@@ -1196,7 +1221,7 @@ function campiProdottoMancanti(p){
 }
 const ETICHETTA_CAMPO = {cat:"Categoria", tip:"Tipologia", mar:"Marca", settori:"Settore", listino:"Listino"};
 
-function Prodotti({cart,setCart,catalog:catProp,catalogLoading,sessione,ruolo,setCatalog,setArea}){
+function Prodotti({cart,setCart,catalog:catProp,catalogLoading,sessione,ruolo,setCatalog,setArea,precodici}){
   const CATS = catProp || CATALOG;
   const accessToken = trovaAccessToken(sessione);
   const [q,setQ]=useState(""); const [detail,setDetail]=useState(null);
@@ -1346,7 +1371,7 @@ function Prodotti({cart,setCart,catalog:catProp,catalogLoading,sessione,ruolo,se
             <span style={{fontSize:10.5,color:"#9AA3AB",fontFamily:F_MONO}}>{p.cat}</span>
           </div>
           <div style={{fontWeight:600,fontSize:13.5,lineHeight:1.3}}>{p.nome||p.desc}</div>
-          <div className="tnum" style={{fontSize:10.5,color:"#9AA3AB",fontFamily:F_MONO,marginTop:3}}>{p.cod}</div>
+          <div className="tnum" style={{fontSize:10.5,color:"#9AA3AB",fontFamily:F_MONO,marginTop:3}}>{codiceConPrecodice(precodici,p.mar,p.cod)}</div>
         </div>
         <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:5,flexShrink:0}}>
           <div className="tnum" style={{fontSize:15,fontWeight:700,fontFamily:F_MONO,color:C.ink}}>€{p.netto.toFixed(2)}</div>
@@ -1519,7 +1544,7 @@ function Prodotti({cart,setCart,catalog:catProp,catalogLoading,sessione,ruolo,se
         </>)}
       </>)}
 
-      {detail&&<SchedaProdotto p={detail} isIn={inCart.has(detail.cod)} onToggleCart={e=>toggle(detail,e)} onClose={()=>setDetail(null)} ruolo={ruolo} onModifica={()=>setEditando(detail)}/>}
+      {detail&&<SchedaProdotto p={detail} isIn={inCart.has(detail.cod)} onToggleCart={e=>toggle(detail,e)} onClose={()=>setDetail(null)} ruolo={ruolo} onModifica={()=>setEditando(detail)} precodici={precodici}/>}
 
       {toastAggiunta && (
         <div style={{position:"fixed",left:"50%",bottom:24,transform:"translateX(-50%)",zIndex:80,display:"flex",alignItems:"center",gap:12,background:C.ink,color:"#fff",borderRadius:10,padding:"12px 16px",boxShadow:"0 8px 24px rgba(0,0,0,0.25)",maxWidth:"90vw"}}>
@@ -2090,7 +2115,7 @@ function CatalogoPacchetti({ pacchetti, catalog, ruolo, sessione, cart, setCart,
   );
 }
 
-function SchedaProdotto({p, isIn, onToggleCart, onClose, ruolo, onModifica}){
+function SchedaProdotto({p, isIn, onToggleCart, onClose, ruolo, onModifica, precodici}){
   const scontoPerc = p.listino>0 ? Math.round((1 - p.netto/p.listino)*100) : 0;
   // Spezza la descrizione preventivo in righe — ogni riga è una caratteristica
   const righeCaratteristiche = (p.desc_prev || p.desc || "").split(/\n|;/).map(r=>r.trim()).filter(Boolean);
@@ -2117,7 +2142,7 @@ function SchedaProdotto({p, isIn, onToggleCart, onClose, ruolo, onModifica}){
           </div>
           <div style={{display:"flex",gap:6,alignItems:"center",marginBottom:18,flexWrap:"wrap"}}>
             <Tag tone="primary">{p.mar}</Tag>
-            <span className="tnum" style={{fontSize:11.5,color:"#8A929A",fontFamily:F_MONO}}>{p.cod} · {p.mar} · {p.cat}</span>
+            <span className="tnum" style={{fontSize:11.5,color:"#8A929A",fontFamily:F_MONO}}>{codiceConPrecodice(precodici,p.mar,p.cod)} · {p.mar} · {p.cat}</span>
           </div>
 
           {/* Foto prodotto — cliccabile per ingrandire */}
@@ -4887,7 +4912,7 @@ function BloccoSoluzioneVendita({ soluzione, indice, onCambia, onRimuovi, catalo
   );
 }
 
-function Preventivi({cart,setCart,preventivi,setPreventivi,setOrdini,setArea,ruolo,catalog,sessione}){
+function Preventivi({cart,setCart,preventivi,setPreventivi,setOrdini,setArea,ruolo,catalog,sessione,precodici}){
   const [view,setView]=useState("home"); // home | cerca | da-gestire | in-ordine | bloccate | nuovo | dettaglio
   const [generandoPdf,setGenerandoPdf]=useState(false);
   const [mostraSelezionePacchetto,setMostraSelezionePacchetto]=useState(false);
@@ -5880,7 +5905,7 @@ function Preventivi({cart,setCart,preventivi,setPreventivi,setOrdini,setArea,ruo
             try{
               const righeArricchite = selezionato.righe.map(r=>{
                 const prodottoCatalogo = (catalog||[]).find(p=>p.cod===r.cod);
-                return { ...r, img: prodottoCatalogo?.img, desc: prodottoCatalogo?.desc, desc_prev: prodottoCatalogo?.desc_prev };
+                return { ...r, cod: codiceConPrecodice(precodici,r.mar,r.cod), img: prodottoCatalogo?.img, desc: prodottoCatalogo?.desc, desc_prev: prodottoCatalogo?.desc_prev };
               });
               // Le righe delle soluzioni alternative (BloccoSoluzioneVendita)
               // salvano solo {cod,nome,mar,netto,qty}: niente immagine,
@@ -5891,7 +5916,7 @@ function Preventivi({cart,setCart,preventivi,setPreventivi,setOrdini,setArea,ruo
                 ...s,
                 righe: (s.righe||[]).map(r=>{
                   const prodottoCatalogo = (catalog||[]).find(p=>p.cod===r.cod);
-                  return { ...r, img: prodottoCatalogo?.img, desc: prodottoCatalogo?.desc, desc_prev: prodottoCatalogo?.desc_prev, listino: prodottoCatalogo?.listino };
+                  return { ...r, cod: codiceConPrecodice(precodici,r.mar,r.cod), img: prodottoCatalogo?.img, desc: prodottoCatalogo?.desc, desc_prev: prodottoCatalogo?.desc_prev, listino: prodottoCatalogo?.listino };
                 }),
               }));
               // Incrocio il referente salvato sul preventivo ("Nome Cognome")
@@ -6556,7 +6581,7 @@ function PreventiviSaltati({preventivi}){
 }
 
 // ─── ORDINI ───────────────────────────────────────────────────────────────────
-function Ordini({ordini,setOrdini,preventivi,setPreventivi,setInterventi,catalog,sessione,ruolo}){
+function Ordini({ordini,setOrdini,preventivi,setPreventivi,setInterventi,catalog,sessione,ruolo,precodici}){
   const [selId,setSelId]=useState(null);
   const [generandoPdf,setGenerandoPdf]=useState(false);
   const [documentiFinSelezionati,setDocumentiFinSelezionati]=useState([]); // indici selezionati nell'ordine corrente
@@ -7107,7 +7132,7 @@ function Ordini({ordini,setOrdini,preventivi,setPreventivi,setInterventi,catalog
   async function generaOrdinePDF(o){
     const righe = o.righe.map(r => `
       <tr><td style="padding:8px 6px;border-bottom:1px solid #E3E5EA;font-size:12px">${r.mar} ${r.nome}</td>
-      <td style="padding:8px 6px;border-bottom:1px solid #E3E5EA;font-size:12px;font-family:monospace">${r.cod}</td>
+      <td style="padding:8px 6px;border-bottom:1px solid #E3E5EA;font-size:12px;font-family:monospace">${codiceConPrecodice(precodici,r.mar,r.cod)}</td>
       <td style="padding:8px 6px;border-bottom:1px solid #E3E5EA;font-size:12px;text-align:center">${r.qty||1}</td>
       <td style="padding:8px 6px;border-bottom:1px solid #E3E5EA;font-size:12px;text-align:right">€${(r.netto*(r.qty||1)).toFixed(2)}</td></tr>`).join("");
     const html = `<!DOCTYPE html><html><head><meta charset="utf-8"/><title>Ordine ${codiceOrdine(o)}</title>
@@ -9824,6 +9849,98 @@ function GestioneCategorie({ sessione, ruolo, categorie, tipologie, marchi, rica
 // categoria. Letto da Ordini al momento dell'invio; scritto solo qui.
 // Scrittura riservata all'admin via RLS-role-check (nessuna Edge Function,
 // stesso schema già usato per le eliminazioni per ruolo).
+// Precodice a 3 lettere per marchio (es. TEXA → TEX): compare davanti al
+// codice prodotto nel catalogo e in tutti i PDF generati, per non confondersi
+// tra marchi diversi quando si gestisce l'ordine sul gestionale. Salvato in
+// marchi_config tramite l'azione "impostaPrecodiceMarchio" di catalog-admin.
+function GestioneMarchi({ sessione }){
+  const accessToken = trovaAccessToken(sessione);
+  const [marchi, setMarchi] = useState(null); // null = ancora in caricamento
+  const [bozze, setBozze] = useState({}); // { [marchio]: valore in modifica, non ancora salvato }
+  const [statoRiga, setStatoRiga] = useState({}); // { [marchio]: "salvo"|"fatto"|"errore" }
+  const [erroreRiga, setErroreRiga] = useState({});
+  const [filtro, setFiltro] = useState("");
+
+  function carica(){
+    chiamaCatalogAdmin("marchiConfig", {}, accessToken)
+      .then(d => setMarchi(d?.marchi ?? []))
+      .catch(() => setMarchi([]));
+  }
+  useEffect(()=>{ carica(); },[]);
+
+  async function salva(marchio){
+    const valoreGrezzo = (bozze[marchio] ?? "").trim().toUpperCase();
+    if(valoreGrezzo && !/^[A-Z]{3}$/.test(valoreGrezzo)){
+      setErroreRiga(e=>({...e,[marchio]:"Deve essere di esattamente 3 lettere (A-Z)."}));
+      setStatoRiga(s=>({...s,[marchio]:"errore"}));
+      return;
+    }
+    setStatoRiga(s=>({...s,[marchio]:"salvo"})); setErroreRiga(e=>({...e,[marchio]:""}));
+    try{
+      await chiamaCatalogAdmin("impostaPrecodiceMarchio", { marchio, precodice: valoreGrezzo }, accessToken);
+      setMarchi(prev => prev.map(m => m.marchio===marchio ? {...m, precodice: valoreGrezzo || null} : m));
+      setBozze(b => { const n={...b}; delete n[marchio]; return n; });
+      setStatoRiga(s=>({...s,[marchio]:"fatto"}));
+      setTimeout(()=>setStatoRiga(s=>({...s,[marchio]:undefined})), 2000);
+    }catch(err){
+      setStatoRiga(s=>({...s,[marchio]:"errore"}));
+      setErroreRiga(e=>({...e,[marchio]:err.message}));
+    }
+  }
+
+  if(marchi===null) return <div style={{fontSize:13,color:C.steel}}>Caricamento marchi…</div>;
+
+  const marchiFiltrati = marchi.filter(m => !filtro.trim() || m.marchio.toLowerCase().includes(filtro.trim().toLowerCase()));
+  const conPrecodice = marchi.filter(m=>m.precodice).length;
+
+  return (
+    <div>
+      <div style={{fontSize:13,color:"#5B6770",marginBottom:16,lineHeight:1.6}}>
+        Il precodice (esattamente <strong>3 lettere</strong>) viene anteposto al codice prodotto — es. marchio TEXA con
+        precodice <span className="tnum" style={{fontFamily:F_MONO}}>TEX</span> e codice <span className="tnum" style={{fontFamily:F_MONO}}>Z20410</span> diventa{" "}
+        <span className="tnum" style={{fontFamily:F_MONO,fontWeight:700,color:C.ink}}>TEXZ20410</span> ovunque compare: catalogo, preventivi, ordini.
+        Il codice vero salvato a catalogo non viene mai modificato — è solo un prefisso di visualizzazione.
+      </div>
+
+      <div style={{fontSize:12,color:C.steel,marginBottom:14}}>
+        {conPrecodice} marchi su {marchi.length} hanno già un precodice impostato.
+      </div>
+
+      <input value={filtro} onChange={e=>setFiltro(e.target.value)} placeholder="Cerca marchio…" style={{...S.inp,marginBottom:14}}/>
+
+      <div style={{display:"flex",flexDirection:"column",gap:6}}>
+        {marchiFiltrati.map(m=>{
+          const valoreInput = bozze[m.marchio] ?? (m.precodice || "");
+          const modificato = bozze[m.marchio] !== undefined;
+          return (
+            <div key={m.marchio} style={{...S.card,cursor:"default",display:"flex",alignItems:"center",gap:10,padding:"10px 14px"}}>
+              <div style={{flex:1,minWidth:0,fontWeight:600,fontSize:13}}>{m.marchio}</div>
+              <input
+                value={valoreInput}
+                onChange={e=>setBozze(b=>({...b,[m.marchio]:e.target.value.toUpperCase().slice(0,3)}))}
+                onKeyDown={e=>{ if(e.key==="Enter") salva(m.marchio); }}
+                placeholder="—"
+                maxLength={3}
+                className="tnum"
+                style={{...S.inp,width:64,textAlign:"center",fontFamily:F_MONO,fontWeight:700,padding:"7px 6px"}}
+              />
+              {modificato && (
+                <button onClick={()=>salva(m.marchio)} disabled={statoRiga[m.marchio]==="salvo"} style={{...S.btnAccent,padding:"7px 12px",fontSize:12,opacity:statoRiga[m.marchio]==="salvo"?0.6:1}}>
+                  {statoRiga[m.marchio]==="salvo" ? "Salvo…" : "Salva"}
+                </button>
+              )}
+              {statoRiga[m.marchio]==="fatto" && <span style={{fontSize:12,color:C.ok,fontWeight:600,flexShrink:0}}>✓</span>}
+              {statoRiga[m.marchio]==="errore" && <span style={{fontSize:11,color:C.danger,flexShrink:0,maxWidth:160}}>{erroreRiga[m.marchio]}</span>}
+            </div>
+          );
+        })}
+        {marchiFiltrati.length===0 && <div style={{fontSize:12.5,color:"#9AA3AB"}}>Nessun marchio trovato.</div>}
+      </div>
+    </div>
+  );
+}
+
+
 function GestioneLogisticaOrdini({ sessione, categorie }){
   const accessToken = trovaAccessToken(sessione);
   const [config,setConfig] = useState({}); // {categoria: {rottamazione,...}}
@@ -11373,6 +11490,7 @@ function PannelloGestione({ setCatalog, ruolo, sessione, catalog }) {
             ["import","⬆ Importa catalogo","Carica un file CSV con i prodotti"],
             ["export","⬇ Esporta catalogo","Scarica il catalogo completo in CSV"],
             ["categorie","▤ Categorie","Rinomina o unisci categorie duplicate"],
+            ["marchi","🏷 Marchi","Precodice a 3 lettere per marchio (gestionale)"],
             ["prezzi","💶 Prezzi","Aggiorna i prezzi da un listino fornitore"],
             ["listino","🧾 Listino","Importa un listino fornitore completo"],
             ["logistica","⚑ Logistica","Ordini sospesi e in gestione"],
@@ -11397,6 +11515,7 @@ function PannelloGestione({ setCatalog, ruolo, sessione, catalog }) {
           )}
 
           {tab==="categorie" && <GestioneCategorie sessione={sessione} ruolo={ruolo} categorie={categorie} tipologie={tipologie} marchi={marchi} ricarica={()=>{ ricaricaCategorie(); ricaricaTipologieMarchi(); caricaCatalogo(CATALOG).then(d=>setCatalog(d)); }}/>}
+          {tab==="marchi" && <GestioneMarchi sessione={sessione}/>}
 
           {tab==="logistica" && <GestioneLogisticaOrdini sessione={sessione} categorie={categorie}/>}
 
