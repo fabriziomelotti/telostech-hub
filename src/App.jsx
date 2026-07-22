@@ -725,7 +725,7 @@ export default function App(){
           {area==="promemoria" && <Promemoria sessione={sessione} ruolo={role} preventivi={preventivi} interventi={interventi} ordini={ordini} promemoria={promemoria} setPromemoria={setPromemoria} setArea={setArea}/>}
           {area==="preventivi" && <Preventivi cart={cart} setCart={setCart} preventivi={preventivi} setPreventivi={setPreventivi} setOrdini={setOrdini} setArea={setArea} ruolo={role} catalog={catalog} sessione={sessione} precodici={precodici}/>}
           {area==="ordini" && <Ordini ordini={ordini} setOrdini={setOrdini} preventivi={preventivi} setPreventivi={setPreventivi} setInterventi={setInterventi} catalog={catalog} sessione={sessione} ruolo={role} precodici={precodici}/>}
-          {area==="interventi" && <Interventi interventi={interventi} setInterventi={setInterventi} attrezzature={attrezzature} sessione={sessione} setArea={setArea} setInterventoDaCompletare={setInterventoDaCompletare} catalog={catalog} ruolo={role}/>}
+          {area==="interventi" && <Interventi interventi={interventi} setInterventi={setInterventi} attrezzature={attrezzature} sessione={sessione} setArea={setArea} setInterventoDaCompletare={setInterventoDaCompletare} catalog={catalog} ruolo={role} precodici={precodici}/>}
           {area==="rapporti" && <RapportoDemo sessione={sessione} interventi={interventi} setInterventi={setInterventi} interventoDaCompletare={interventoDaCompletare} setInterventoDaCompletare={setInterventoDaCompletare}/>}
           {area==="admin" && <PannelloAdmin ruolo={role} sessione={sessione}/>}
           {area==="gestione" && <PannelloGestione setCatalog={setCatalog} ruolo={role} sessione={sessione} catalog={catalog}/>}
@@ -5263,6 +5263,7 @@ function Preventivi({cart,setCart,preventivi,setPreventivi,setOrdini,setArea,ruo
       cliente_email: p.cliente_email || null,
       pagamento_modalita: p.pagamento_modalita || null,
       pagamento_dettagli: p.pagamento_dettagli || null,
+      referente_telos: p.referente_telos || null,
       righe: righeOrdine,
       val: p.extra_sconto_euro ? (valBase - p.extra_sconto_euro) : valBase,
       soluzione_confermata: p.soluzione_confermata || null,
@@ -6686,6 +6687,7 @@ function Ordini({ordini,setOrdini,preventivi,setPreventivi,setInterventi,catalog
   // ── Nuovo ordine senza preventivo ───────────────────────────────────────
   const [creandoNuovo,setCreandoNuovo] = useState(false);
   const [clienteInfoNuovoOrdine,setClienteInfoNuovoOrdine] = useState({});
+  const [referenteTelosNuovoOrdine,setReferenteTelosNuovoOrdine] = useState(sessione?.nome || "");
   const [nuoveRighe,setNuoveRighe] = useState([]);
   const [nuovaFinanziaria,setNuovaFinanziaria] = useState(null); // { importo, rata, mesi, ivaInclusa, importoSenzaIva, rataSenzaIva, importoConIva, rataConIva, documenti }
   const [mostraSelezionePacchettoOrdine,setMostraSelezionePacchettoOrdine] = useState(false);
@@ -6696,6 +6698,7 @@ function Ordini({ordini,setOrdini,preventivi,setPreventivi,setInterventi,catalog
     setCreandoNuovo(false); setClienteInfoNuovoOrdine({});
     setNuoveRighe([]); setNuovaFinanziaria(null);
     setMostraSelezionePacchettoOrdine(false); setErroreNuovo("");
+    setReferenteTelosNuovoOrdine(sessione?.nome || "");
   }
   function aggiungiRigaNuovoOrdine(rigaNuova){
     setNuoveRighe(prev=>{
@@ -6763,6 +6766,7 @@ function Ordini({ordini,setOrdini,preventivi,setPreventivi,setInterventi,catalog
       cliente_referente: clienteInfoNuovoOrdine.cliente_referente || null,
       cliente_telefono: clienteInfoNuovoOrdine.cliente_telefono || null,
       cliente_email: clienteInfoNuovoOrdine.cliente_email || null,
+      referente_telos: referenteTelosNuovoOrdine || sessione?.nome || null,
       righe: nuoveRighe,
       val: ricalcolaVal(nuoveRighe),
       stato: "Inserito",
@@ -6876,9 +6880,31 @@ function Ordini({ordini,setOrdini,preventivi,setPreventivi,setInterventi,catalog
   // richiesta nello stadio "Richiesto" del flusso Assistenza (non più
   // direttamente "Pianificato" con tecnico assegnato: presa in carico,
   // assegnazione e data si decidono dopo, dentro Assistenza).
+  //
+  // Prima l'intervento portava solo una frase generica col numero ordine:
+  // chi lo prendeva in carico non vedeva COSA installare né le eventuali
+  // note lasciate in fase di conferma/logistica — doveva riaprire l'ordine
+  // a mano. Ora porta con sé l'elenco articoli (colonna "articoli", per la
+  // scheda dedicata in Assistenza), lo stesso elenco leggibile nelle note
+  // insieme a tutto ciò che serve per la verifica, e precompila il campo
+  // "Strumento" col nome dell'articolo così non resta "Non specificato".
   async function creaInterventoInstallazione(){
     if(!selezionato) return;
     setSalvandoGestione(true); setMsgGestione("");
+    const articoliOrdine = (selezionato.righe||[]).map(r=>({ cod:r.cod, mar:r.mar||null, nome:r.nome, qty:r.qty||1 }));
+    const elencoArticoliTesto = articoliOrdine
+      .map(r=>`• ${r.mar?r.mar+" ":""}${r.nome} (${codiceConPrecodice(precodici,r.mar,r.cod)}) × ${r.qty}`)
+      .join("\n");
+    const noteOrdine = [
+      `Installazione da ordine ${codiceOrdine(selezionato)}.`,
+      elencoArticoliTesto ? `Articoli da installare:\n${elencoArticoliTesto}` : "",
+      selezionato.conferma_note ? `Note della conferma cliente: ${selezionato.conferma_note}` : "",
+      selezionato.pagamento_modalita ? `Pagamento: ${selezionato.pagamento_modalita}${selezionato.pagamento_dettagli?` — ${selezionato.pagamento_dettagli}`:""}` : "",
+      selezionato.destinazione_diversa_attiva && selezionato.destinazione_diversa_testo ? `Destinazione diversa: ${selezionato.destinazione_diversa_testo}` : "",
+      selezionato.mezzi_movimentazione_attiva ? `Mezzi di movimentazione: ${selezionato.mezzi_movimentazione_disponibili?"disponibili presso il cliente":"da concordare"}` : "",
+      selezionato.rottamazione_attiva ? `Rottamazione: ${[selezionato.rottamazione_modello,selezionato.rottamazione_seriale].filter(Boolean).join(" / ")||"vedi ordine"}${selezionato.rottamazione_valore?` — valore riconosciuto €${(+selezionato.rottamazione_valore).toFixed(2)}`:""}` : "",
+      selezionato.gestito_da_nome ? `Ordine gestito/evaso da ${selezionato.gestito_da_nome}.` : "",
+    ].filter(Boolean).join("\n\n");
     const payload = {
       titolo: `Installazione — ${selezionato.cliente}`,
       tipo: "installazione",
@@ -6886,7 +6912,9 @@ function Ordini({ordini,setOrdini,preventivi,setPreventivi,setInterventi,catalog
       cliente_nome: selezionato.cliente,
       stato: "Richiesto",
       priorita: "media",
-      note: `Installazione da ordine ${codiceOrdine(selezionato)}`,
+      note: noteOrdine,
+      attrezzatura_testo: articoliOrdine.map(r=>r.nome).join(", ") || null,
+      articoli: articoliOrdine,
       ordine_id: selezionato.id,
       creato_da_nome: sessione?.nome || null,
     };
@@ -7185,9 +7213,13 @@ function Ordini({ordini,setOrdini,preventivi,setPreventivi,setInterventi,catalog
       <td style="padding:8px 6px;border-bottom:1px solid #E3E5EA;font-size:12px;text-align:right">€${(r.netto*(r.qty||1)).toFixed(2)}</td></tr>`).join("");
     const html = `<!DOCTYPE html><html><head><meta charset="utf-8"/><title>Ordine ${codiceOrdine(o)}</title>
 <style>
+  @page{size:A4;margin:0}
   *{box-sizing:border-box;margin:0;padding:0}
-  body{font-family:Arial,sans-serif;padding:36px 40px;color:#232323;font-size:13px}
-  .hd{display:flex;justify-content:space-between;margin-bottom:24px;padding-bottom:16px;border-bottom:2px solid #162758}
+  html,body{width:210mm}
+  body{font-family:Arial,sans-serif;color:#232323;font-size:13px}
+  .pagina{width:210mm;min-height:297mm;padding:6mm 9mm;page-break-after:always}
+  .pagina:last-child{page-break-after:auto}
+  .hd{display:flex;justify-content:space-between;margin-bottom:14px;padding-bottom:10px;border-bottom:2px solid #162758}
   .brand{font-size:22px;font-weight:700;color:#162758}
   .meta{text-align:right;font-size:11px;color:#7C879E;line-height:1.6}
   table{width:100%;border-collapse:collapse;margin-top:10px}
@@ -7202,6 +7234,7 @@ function Ordini({ordini,setOrdini,preventivi,setPreventivi,setInterventi,catalog
   .firma-nota{font-size:10px;color:#7C879E;margin-top:6px;font-style:italic}
   .footer{margin-top:32px;font-size:10px;color:#9AA3AB;border-top:1px solid #E3E5EA;padding-top:10px}
 </style></head><body>
+<div class="pagina">
 <div class="hd"><div><div class="brand">Telos Tech</div><div style="font-size:11px;color:#7C879E">Conferma d'ordine</div></div>
 <div class="meta"><div>N° ${codiceOrdine(o)}</div><div>Rif. preventivo ${codicePreventivoRif(o)}</div><div>Data: ${o.creato_il ? new Date(o.creato_il).toLocaleDateString("it-IT") : ""}</div></div></div>
 
@@ -7259,6 +7292,7 @@ ${o.firma_cliente ? `
 </div>
 ` : ""}
 <div class="footer">Telos Tech S.r.l. · Documento generato il ${new Date().toLocaleDateString("it-IT")}</div>
+</div>
 </body></html>`;
     await condividiOStampaPdf(html, `Ordine_${codiceOrdine(o)}.pdf`, { titolo: `Ordine ${codiceOrdine(o)}`, testo: o.cliente || "" });
   }
@@ -7290,6 +7324,23 @@ ${o.firma_cliente ? `
         {selezionato.gestito_da_nome && (
           <div style={{fontSize:11.5,color:"#8A929A",marginBottom:14}}>In gestione da <strong>{selezionato.gestito_da_nome}</strong></div>
         )}
+
+        <div style={{marginBottom:14}}>
+          <div style={{fontSize:11,fontFamily:F_MONO,color:"#9AA3AB",textTransform:"uppercase",letterSpacing:"0.05em",marginBottom:4}}>Referente Telos</div>
+          {RUOLI_APPROVATORI.includes(ruolo) ? (
+            <select value={selezionato.referente_telos||""} onChange={e=>aggiornaConfermaOrdine(selezionato.id,{referente_telos:e.target.value})} style={{...S.inp,maxWidth:280}}>
+              {selezionato.referente_telos && !(utentiTelos||[]).some(u=>u.nome===selezionato.referente_telos) && (
+                <option value={selezionato.referente_telos}>{selezionato.referente_telos}</option>
+              )}
+              {(utentiTelos||[]).map(u=>{
+                const nomeCompleto = [u.nome, u.cognome].filter(Boolean).join(" ");
+                return <option key={u.id} value={nomeCompleto}>{nomeCompleto}</option>;
+              })}
+            </select>
+          ) : (
+            <div style={{fontSize:13,fontWeight:600}}>{selezionato.referente_telos || "—"}</div>
+          )}
+        </div>
 
         <SezioneConferma record={selezionato} editable={true} onAggiorna={patch=>aggiornaConfermaOrdine(selezionato.id, patch)}/>
         <div style={S.eyebrow}>Articoli ({selezionato.righe.length})</div>
@@ -7659,6 +7710,23 @@ ${o.firma_cliente ? `
               onCambia={patch=>setClienteInfoNuovoOrdine(patch)}
               sessione={sessione}
             />
+          </div>
+
+          <div style={{marginBottom:12}}>
+            <div style={{fontSize:11,fontFamily:F_MONO,color:"#9AA3AB",textTransform:"uppercase",letterSpacing:"0.05em",marginBottom:4}}>Referente Telos</div>
+            {RUOLI_APPROVATORI.includes(ruolo) ? (
+              <select value={referenteTelosNuovoOrdine} onChange={e=>setReferenteTelosNuovoOrdine(e.target.value)} style={S.inp}>
+                {referenteTelosNuovoOrdine && !(utentiTelos||[]).some(u=>u.nome===referenteTelosNuovoOrdine) && (
+                  <option value={referenteTelosNuovoOrdine}>{referenteTelosNuovoOrdine}</option>
+                )}
+                {(utentiTelos||[]).map(u=>{
+                  const nomeCompleto = [u.nome, u.cognome].filter(Boolean).join(" ");
+                  return <option key={u.id} value={nomeCompleto}>{nomeCompleto}</option>;
+                })}
+              </select>
+            ) : (
+              <div style={{fontSize:13,fontWeight:600}}>{referenteTelosNuovoOrdine || "—"}</div>
+            )}
           </div>
 
           <RicercaProdottiInline onSeleziona={aggiungiRigaNuovoOrdine} righeEsistenti={nuoveRighe} ruolo={ruolo} catalog={catalog} sessione={sessione}/>
@@ -8431,7 +8499,7 @@ function FormNuovoInterventoDaPianificare({ attrezzature, sessione, onCreato, on
   );
 }
 
-function DettaglioIntervento({ intervento, attrezzature, sessione, onIndietro, onAggiornato }){
+function DettaglioIntervento({ intervento, attrezzature, sessione, onIndietro, onAggiornato, precodici }){
   const accessToken = trovaAccessToken(sessione);
   const [assistenze, setAssistenze] = useState(null);
   const [utentiTelos, setUtentiTelos] = useState(null);
@@ -8552,6 +8620,26 @@ function DettaglioIntervento({ intervento, attrezzature, sessione, onIndietro, o
       </div>
       <div style={{fontFamily:F_DISPLAY,fontSize:18,fontWeight:600,marginBottom:4}}>{intervento.cliente_nome||"Cliente non specificato"}</div>
       {intervento.note && intervento.stato!=="Completato" && <div style={{fontSize:12.5,color:C.steel,marginBottom:16,whiteSpace:"pre-line"}}>{intervento.note}</div>}
+
+      {/* Cosa è stato ordinato — visibile subito, per verificare che tutto
+          corrisponda prima/durante l'installazione. Presente solo per gli
+          interventi nati da un ordine (creaInterventoInstallazione in
+          App.jsx); gli interventi aperti direttamente in Assistenza non
+          hanno un elenco articoli. */}
+      {intervento.articoli && intervento.articoli.length>0 && (
+        <div style={{...S.card,cursor:"default",marginBottom:16}}>
+          <div style={{fontSize:12.5,fontWeight:700,marginBottom:8}}>Articoli ordinati</div>
+          {intervento.articoli.map((a,i)=>(
+            <div key={i} style={{display:"flex",justifyContent:"space-between",gap:10,padding:"6px 0",borderBottom:i<intervento.articoli.length-1?`1px solid ${C.paperLine}`:"none"}}>
+              <div style={{minWidth:0}}>
+                <div style={{fontSize:12.5,fontWeight:600}}>{a.mar?`${a.mar} — `:""}{a.nome}</div>
+                <div className="tnum" style={{fontSize:10.5,color:"#9AA3AB",fontFamily:F_MONO}}>{codiceConPrecodice(precodici,a.mar,a.cod)}</div>
+              </div>
+              <div className="tnum" style={{fontSize:12.5,fontWeight:600,flexShrink:0,fontFamily:F_MONO}}>× {a.qty||1}</div>
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* Collegamento allo strumento del cliente — sempre facoltativo, modificabile in qualunque stadio */}
       <div style={{...S.card,cursor:"default",marginBottom:16}}>
@@ -8756,7 +8844,7 @@ function DettaglioIntervento({ intervento, attrezzature, sessione, onIndietro, o
   );
 }
 
-function Interventi({interventi, setInterventi, attrezzature, sessione, setArea, setInterventoDaCompletare, catalog, ruolo}){
+function Interventi({interventi, setInterventi, attrezzature, sessione, setArea, setInterventoDaCompletare, catalog, ruolo, precodici}){
   const accessToken = trovaAccessToken(sessione);
   // Preventivi per interventi tecnici (manodopera/ricambi) — vedi
   // FormPreventivoIntervento più sopra, diversi dai preventivi di vendita
@@ -8866,6 +8954,7 @@ function Interventi({interventi, setInterventi, attrezzature, sessione, setArea,
         sessione={sessione}
         onIndietro={tornaAlleListe}
         onAggiornato={onInterventoAggiornato}
+        precodici={precodici}
       />
     );
   }
