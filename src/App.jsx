@@ -140,16 +140,16 @@ const RUOLI = {
   commerciale: {label:"Commerciale", initials:"MC", nome:"Marco Conti",
     nav:["home","ai","prodotti","clienti","promemoria","preventivi","ordini"]},
   tecnico: {label:"Tecnico", initials:"LR", nome:"Luca Rossi",
-    nav:["home","ai","interventi","rapporti","clienti","promemoria","prodotti"]},
+    nav:["home","ai","interventi","clienti","promemoria","prodotti"]},
   responsabile: {label:"Responsabile", initials:"GF", nome:"Giovanni Ferri",
-    nav:["home","ai","prodotti","clienti","promemoria","preventivi","ordini","interventi","rapporti","gestione"]},
+    nav:["home","ai","prodotti","clienti","promemoria","preventivi","ordini","interventi","gestione"]},
   admin: {label:"Admin", initials:"AM", nome:"Amministratore",
-    nav:["home","ai","prodotti","clienti","promemoria","preventivi","ordini","interventi","rapporti","gestione","admin"]},
+    nav:["home","ai","prodotti","clienti","promemoria","preventivi","ordini","interventi","gestione","admin"]},
 };
 const NAV_META = {
   home:{icon:"⌂",label:"Dashboard"}, ai:{icon:"✦",label:"Assistente"}, prodotti:{icon:"▣",label:"Catalogo"},
   clienti:{icon:"◉",label:"Clienti"}, promemoria:{icon:"⚑",label:"Promemoria"}, preventivi:{icon:"▤",label:"Preventivi"}, ordini:{icon:"⬡",label:"Ordini"},
-  interventi:{icon:"⚒",label:"Assistenza"}, rapporti:{icon:"☑",label:"Rapporto"},
+  interventi:{icon:"⚒",label:"Assistenza"},
   admin:{icon:"⚙",label:"Admin"}, gestione:{icon:"🛠",label:"Gestione"},
 };
 function navMobile(nav){ return nav.slice(0,4).concat(nav.length>4?["more"]:[]); }
@@ -725,8 +725,7 @@ export default function App(){
           {area==="promemoria" && <Promemoria sessione={sessione} ruolo={role} preventivi={preventivi} interventi={interventi} ordini={ordini} promemoria={promemoria} setPromemoria={setPromemoria} setArea={setArea}/>}
           {area==="preventivi" && <Preventivi cart={cart} setCart={setCart} preventivi={preventivi} setPreventivi={setPreventivi} setOrdini={setOrdini} setArea={setArea} ruolo={role} catalog={catalog} sessione={sessione} precodici={precodici}/>}
           {area==="ordini" && <Ordini ordini={ordini} setOrdini={setOrdini} preventivi={preventivi} setPreventivi={setPreventivi} setInterventi={setInterventi} catalog={catalog} sessione={sessione} ruolo={role} precodici={precodici}/>}
-          {area==="interventi" && <Interventi interventi={interventi} setInterventi={setInterventi} attrezzature={attrezzature} sessione={sessione} setArea={setArea} setInterventoDaCompletare={setInterventoDaCompletare} catalog={catalog} ruolo={role} precodici={precodici}/>}
-          {area==="rapporti" && <RapportoDemo sessione={sessione} interventi={interventi} setInterventi={setInterventi} interventoDaCompletare={interventoDaCompletare} setInterventoDaCompletare={setInterventoDaCompletare}/>}
+          {area==="interventi" && <Interventi interventi={interventi} setInterventi={setInterventi} attrezzature={attrezzature} sessione={sessione} setArea={setArea} interventoDaCompletare={interventoDaCompletare} setInterventoDaCompletare={setInterventoDaCompletare} catalog={catalog} ruolo={role} precodici={precodici}/>}
           {area==="admin" && <PannelloAdmin ruolo={role} sessione={sessione}/>}
           {area==="gestione" && <PannelloGestione setCatalog={setCatalog} ruolo={role} sessione={sessione} catalog={catalog}/>}
         </div>
@@ -919,7 +918,7 @@ function Home({r,role,setArea,isMobile,preventivi,interventi,promemoria,sessione
           ["clienti","◉","Clienti"],
           ["promemoria","⚑","Promemoria",contaPromemoria],
           ["ai","✦","Assistente"],
-          [isT?"rapporti":"preventivi",isT?"☑":"▤",isT?"Rapporto":"Preventivo"]
+          [isT?"interventi":"preventivi",isT?"⚒":"▤",isT?"Assistenza":"Preventivo"]
         ].map(([id,icon,lbl,badge])=>(
           <div key={id} onClick={()=>setArea(id)} style={{
             position:"relative",
@@ -8508,6 +8507,9 @@ function DettaglioIntervento({ intervento, attrezzature, sessione, onIndietro, o
   const [modificaAttrezzatura, setModificaAttrezzatura] = useState(false);
   const [checklist, setChecklist] = useState(intervento.checklist || (intervento.tipo ? (CHECKLIST_TEMPLATES[intervento.tipo]||[]).map(v=>({voce:v,fatto:false})) : []));
   const [note, setNote] = useState(intervento.note || "");
+  const [foto, setFoto] = useState(intervento.foto || []);
+  const [documenti, setDocumenti] = useState(intervento.documenti || []);
+  const [caricandoAllegato, setCaricandoAllegato] = useState(false);
   const [confermaLocale, setConfermaLocale] = useState({
     firma_cliente: intervento.firma_cliente || null,
     firma_nome: intervento.firma_nome || null,
@@ -8597,6 +8599,61 @@ function DettaglioIntervento({ intervento, attrezzature, sessione, onIndietro, o
   }
   function segnaFatturato(){
     salvaPatch({ inviato_fatturazione:true, inviato_fatturazione_data:new Date().toISOString() });
+  }
+
+  // Foto e documenti del rapporto — caricati direttamente sullo storage
+  // bucket "interventi-allegati" col token dell'utente (stesso meccanismo
+  // già usato per la foto di rottamazione negli ordini, vedi sbUploadStorage),
+  // e salvati subito con un PATCH parziale così non si perde nulla anche se
+  // l'intervento viene chiuso o si esce dalla pagina subito dopo.
+  async function caricaFoto(file){
+    if(!file) return;
+    setCaricandoAllegato(true); setErrore("");
+    try{
+      const percorso = `${intervento.id}/${Date.now()}-${file.name.replace(/[^a-zA-Z0-9._-]/g,"_")}`;
+      const url = await sbUploadStorage("interventi-allegati", percorso, file, accessToken);
+      const nuove = [...foto, url];
+      setFoto(nuove);
+      await salvaPatch({ foto: nuove });
+    }catch(err){
+      setErrore("Caricamento foto non riuscito: "+err.message);
+    }
+    setCaricandoAllegato(false);
+  }
+  async function caricaDocumento(file){
+    if(!file) return;
+    setCaricandoAllegato(true); setErrore("");
+    try{
+      const percorso = `${intervento.id}/${Date.now()}-${file.name.replace(/[^a-zA-Z0-9._-]/g,"_")}`;
+      const url = await sbUploadStorage("interventi-allegati", percorso, file, accessToken);
+      const nuovi = [...documenti, { url, nome: file.name }];
+      setDocumenti(nuovi);
+      await salvaPatch({ documenti: nuovi });
+    }catch(err){
+      setErrore("Caricamento documento non riuscito: "+err.message);
+    }
+    setCaricandoAllegato(false);
+  }
+  function rimuoviFoto(idx){
+    const nuove = foto.filter((_,i)=>i!==idx);
+    setFoto(nuove); salvaPatch({ foto: nuove });
+  }
+  function rimuoviDocumento(idx){
+    const nuovi = documenti.filter((_,i)=>i!==idx);
+    setDocumenti(nuovi); salvaPatch({ documenti: nuovi });
+  }
+
+  // Riapertura per modifiche — consentita al tecnico (e a responsabile/admin)
+  // solo entro 15 giorni dalla chiusura, come richiesto: dopo torna
+  // "Pianificato" e ripassa dallo stesso flusso di chiusura sopra.
+  const giorniDallaChiusura = intervento.completato_il
+    ? (Date.now() - new Date(intervento.completato_il).getTime()) / 86400000
+    : null;
+  const puoRiaprire = giorniDallaChiusura!=null && giorniDallaChiusura <= 15;
+  function riapriIntervento(){
+    if(!puoRiaprire) return;
+    if(!window.confirm("Riaprire questo intervento per modifiche? Torna allo stadio \"Pianificato\".")) return;
+    salvaPatch({ stato:"Pianificato", riaperto_il:new Date().toISOString(), riaperto_da_nome: sessione?.nome||null });
   }
 
   const pillStile = on => ({
@@ -8756,6 +8813,34 @@ function DettaglioIntervento({ intervento, attrezzature, sessione, onIndietro, o
             <textarea value={note} onChange={e=>setNote(e.target.value)} rows={3} placeholder="Facoltative" style={{...S.inp,resize:"vertical"}}/>
           </div>
 
+          <div style={{...S.card,cursor:"default",marginBottom:16}}>
+            <div style={{fontSize:12.5,fontWeight:700,marginBottom:8}}>Foto e documenti</div>
+            <div style={{display:"flex",flexWrap:"wrap",gap:8,marginBottom:10}}>
+              {foto.map((url,idx)=>(
+                <div key={idx} style={{position:"relative",width:64,height:64}}>
+                  <img src={url} alt="" style={{width:64,height:64,objectFit:"cover",borderRadius:6,border:`1px solid ${C.paperLine}`}}/>
+                  <button onClick={()=>rimuoviFoto(idx)} style={{position:"absolute",top:-6,right:-6,width:18,height:18,borderRadius:"50%",border:"none",background:C.danger,color:"#fff",fontSize:11,cursor:"pointer",lineHeight:"18px",padding:0}}>✕</button>
+                </div>
+              ))}
+            </div>
+            {documenti.map((d,idx)=>(
+              <div key={idx} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"6px 0",borderBottom:`1px solid ${C.paperLine}`}}>
+                <a href={d.url} target="_blank" rel="noreferrer" style={{fontSize:12,color:C.ink,textDecoration:"underline",minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>📎 {d.nome}</a>
+                <button onClick={()=>rimuoviDocumento(idx)} style={{background:"none",border:"none",color:C.danger,fontSize:12,cursor:"pointer",flexShrink:0}}>Rimuovi</button>
+              </div>
+            ))}
+            <div style={{display:"flex",gap:8,marginTop:10,flexWrap:"wrap"}}>
+              <label style={{...S.btnS,padding:"7px 12px",fontSize:11.5,cursor:"pointer",opacity:caricandoAllegato?0.6:1}}>
+                📷 {caricandoAllegato?"Carico…":"Aggiungi foto"}
+                <input type="file" accept="image/*" capture="environment" disabled={caricandoAllegato} onChange={e=>{ caricaFoto(e.target.files[0]); e.target.value=""; }} style={{display:"none"}}/>
+              </label>
+              <label style={{...S.btnS,padding:"7px 12px",fontSize:11.5,cursor:"pointer",opacity:caricandoAllegato?0.6:1}}>
+                📎 {caricandoAllegato?"Carico…":"Aggiungi documento"}
+                <input type="file" accept=".pdf,.doc,.docx,.xls,.xlsx" disabled={caricandoAllegato} onChange={e=>{ caricaDocumento(e.target.files[0]); e.target.value=""; }} style={{display:"none"}}/>
+              </label>
+            </div>
+          </div>
+
           {perTelos ? (
             <>
               <SezioneConferma record={confermaLocale} editable={true} onAggiorna={aggiornaConferma}/>
@@ -8800,7 +8885,31 @@ function DettaglioIntervento({ intervento, attrezzature, sessione, onIndietro, o
           )}
           {note && <div style={{...S.card,cursor:"default",marginBottom:16}}><div style={{fontSize:12.5,fontWeight:700,marginBottom:6}}>Note</div><div style={{fontSize:12.5,color:C.steel,whiteSpace:"pre-line"}}>{note}</div></div>}
 
+          {(foto.length>0 || documenti.length>0) && (
+            <div style={{...S.card,cursor:"default",marginBottom:16}}>
+              <div style={{fontSize:12.5,fontWeight:700,marginBottom:8}}>Foto e documenti</div>
+              {foto.length>0 && (
+                <div style={{display:"flex",flexWrap:"wrap",gap:8,marginBottom:documenti.length>0?10:0}}>
+                  {foto.map((url,idx)=>(
+                    <a key={idx} href={url} target="_blank" rel="noreferrer">
+                      <img src={url} alt="" style={{width:64,height:64,objectFit:"cover",borderRadius:6,border:`1px solid ${C.paperLine}`}}/>
+                    </a>
+                  ))}
+                </div>
+              )}
+              {documenti.map((d,idx)=>(
+                <div key={idx} style={{padding:"4px 0"}}>
+                  <a href={d.url} target="_blank" rel="noreferrer" style={{fontSize:12,color:C.ink,textDecoration:"underline"}}>📎 {d.nome}</a>
+                </div>
+              ))}
+            </div>
+          )}
+
           <SezioneConferma record={confermaLocale} editable={false} onAggiorna={()=>{}}/>
+
+          {intervento.riaperto_il && (
+            <div style={{fontSize:11.5,color:C.warn,marginBottom:12}}>↺ Riaperto il {new Date(intervento.riaperto_il).toLocaleDateString("it-IT")} da {intervento.riaperto_da_nome||"—"}, poi richiuso.</div>
+          )}
 
           <div style={{...S.card,cursor:"default",marginBottom:16}}>
             <div style={{fontSize:12.5,fontWeight:700,marginBottom:8}}>Fatturazione</div>
@@ -8832,22 +8941,73 @@ function DettaglioIntervento({ intervento, attrezzature, sessione, onIndietro, o
                 Segna come inviato per la fatturazione
               </button>
             )}
+            {puoRiaprire && (
+              <button disabled={salvando} onClick={riapriIntervento} style={{...S.btnS,padding:"12px 18px",border:`1px solid ${C.warn}`,color:C.warn,background:"rgba(217,164,65,0.08)"}}>
+                ↺ Riapri per modifiche
+              </button>
+            )}
           </div>
+          {!puoRiaprire && giorniDallaChiusura!=null && (
+            <div style={{fontSize:11,color:"#9AA3AB",marginTop:8}}>La finestra di 15 giorni per riaprirlo è scaduta.</div>
+          )}
         </>
       )}
     </div>
   );
 }
 
-function Interventi({interventi, setInterventi, attrezzature, sessione, setArea, setInterventoDaCompletare, catalog, ruolo, precodici}){
+function Interventi({interventi, setInterventi, attrezzature, sessione, setArea, interventoDaCompletare, setInterventoDaCompletare, catalog, ruolo, precodici}){
   const accessToken = trovaAccessToken(sessione);
   // Preventivi per interventi tecnici (manodopera/ricambi) — vedi
   // FormPreventivoIntervento più sopra, diversi dai preventivi di vendita
   // materiale.
   const [vista,setVista] = useState("home"); // home | richiesti | da-pianificare | pianificati | planning | conclusi | dettaglio | preventivi-intervento | nuovo-preventivo-intervento
   const [interventoSel,setInterventoSel] = useState(null);
-  const [ricercaConclusi,setRicercaConclusi] = useState("");
-  const [termineCercatoConclusi,setTermineCercatoConclusi] = useState("");
+  const [filtroCod,setFiltroCod] = useState("");
+  const [filtroRag,setFiltroRag] = useState("");
+  const [filtroLoc,setFiltroLoc] = useState("");
+  const [filtroProv,setFiltroProv] = useState("");
+  const [filtroDa,setFiltroDa] = useState("");
+  const [filtroA,setFiltroA] = useState("");
+  const [filtroAttrezzatura,setFiltroAttrezzatura] = useState("");
+  const [filtroTecnico,setFiltroTecnico] = useState("");
+  const [filtriAttivi,setFiltriAttivi] = useState(null); // null = nessun filtro applicato ancora
+
+  function nomeAttrezzaturaIntervento(i){
+    if(i.attrezzatura_id) return (attrezzature||[]).find(a=>a.id===i.attrezzatura_id)?.nome_prodotto || null;
+    return i.attrezzatura_testo || null;
+  }
+  const localitaConclusi = useMemo(()=>[...new Set(conclusi.map(i=>i.cliente_localita).filter(Boolean))].sort((a,b)=>a.localeCompare(b)),[conclusi]);
+  const provinceConclusi = useMemo(()=>[...new Set(conclusi.map(i=>i.cliente_provincia).filter(Boolean))].sort((a,b)=>a.localeCompare(b)),[conclusi]);
+  const tecniciConclusi = useMemo(()=>[...new Set(conclusi.map(i=>i.tecnico_assegnato_nome).filter(Boolean))].sort((a,b)=>a.localeCompare(b)),[conclusi]);
+  const attrezzatureConclusi = useMemo(()=>[...new Set(conclusi.map(nomeAttrezzaturaIntervento).filter(Boolean))].sort((a,b)=>a.localeCompare(b)),[conclusi, attrezzature]);
+
+  const conclusiFiltrati = useMemo(()=>{
+    if(!filtriAttivi) return conclusi;
+    return conclusi.filter(i=>{
+      if(filtriAttivi.cod && !(i.cliente_codice||"").toLowerCase().includes(filtriAttivi.cod.toLowerCase())) return false;
+      if(filtriAttivi.rag && !corrispondeRicerca(filtriAttivi.rag, [i.cliente_nome])) return false;
+      if(filtriAttivi.loc && i.cliente_localita !== filtriAttivi.loc) return false;
+      if(filtriAttivi.prov && i.cliente_provincia !== filtriAttivi.prov) return false;
+      if(filtriAttivi.tecnico && i.tecnico_assegnato_nome !== filtriAttivi.tecnico) return false;
+      if(filtriAttivi.attrezzatura && nomeAttrezzaturaIntervento(i) !== filtriAttivi.attrezzatura) return false;
+      if(filtriAttivi.da && (!i.completato_il || i.completato_il.slice(0,10) < filtriAttivi.da)) return false;
+      if(filtriAttivi.a && (!i.completato_il || i.completato_il.slice(0,10) > filtriAttivi.a)) return false;
+      return true;
+    });
+  },[conclusi, filtriAttivi, attrezzature]);
+
+  function applicaFiltriConclusi(){
+    setFiltriAttivi({
+      cod: filtroCod.trim(), rag: filtroRag.trim(), loc: filtroLoc, prov: filtroProv,
+      da: filtroDa, a: filtroA, attrezzatura: filtroAttrezzatura, tecnico: filtroTecnico,
+    });
+  }
+  function azzeraFiltriConclusi(){
+    setFiltroCod(""); setFiltroRag(""); setFiltroLoc(""); setFiltroProv("");
+    setFiltroDa(""); setFiltroA(""); setFiltroAttrezzatura(""); setFiltroTecnico("");
+    setFiltriAttivi(null);
+  }
   const [tecnicoPlanning,setTecnicoPlanning] = useState("");
   const [preventiviIntervento,setPreventiviIntervento] = useState(null);
   const [preventivoInterventoSel,setPreventivoInterventoSel] = useState(null); // per la modifica
@@ -8889,13 +9049,6 @@ function Interventi({interventi, setInterventi, attrezzature, sessione, setArea,
     });
     return Object.entries(gruppi).sort(([a],[b])=> a==="Senza data" ? 1 : b==="Senza data" ? -1 : a.localeCompare(b));
   },[pianificatiFiltrati]);
-
-  const conclusiFiltrati = useMemo(()=>{
-    if(!termineCercatoConclusi) return conclusi;
-    return conclusi.filter(i => corrispondeRicerca(termineCercatoConclusi, [
-      i.cliente_nome, TIPO_LABELS[i.tipo]||i.tipo, i.tecnico_assegnato_nome, i.note,
-    ]));
-  },[conclusi, termineCercatoConclusi]);
 
   // Promemoria scadenze attrezzature (aggiornamenti/verifiche): entro 30
   // giorni o già scadute, visibili qui a responsabili e tecnici.
@@ -8951,6 +9104,15 @@ function Interventi({interventi, setInterventi, attrezzature, sessione, setArea,
         onAggiornato={onInterventoAggiornato}
         precodici={precodici}
       />
+    );
+  }
+
+  if(vista==="nuovo-rapporto"){
+    return (
+      <div>
+        <button onClick={()=>setVista("home")} style={{...S.btnS,marginBottom:14}}>← Torna ad Assistenza</button>
+        <RapportoDemo sessione={sessione} interventi={interventi} setInterventi={setInterventi} interventoDaCompletare={interventoDaCompletare} setInterventoDaCompletare={setInterventoDaCompletare}/>
+      </div>
     );
   }
 
@@ -9074,16 +9236,52 @@ function Interventi({interventi, setInterventi, attrezzature, sessione, setArea,
       <div>
         <button onClick={()=>setVista("home")} style={{...S.btnS,marginBottom:14}}>← Torna ad Assistenza</button>
         <div style={S.eyebrow}>Interventi conclusi ({conclusiFiltrati.length})</div>
-        <div style={{display:"flex",gap:8,marginTop:8,marginBottom:16}}>
-          <input
-            value={ricercaConclusi}
-            onChange={e=>setRicercaConclusi(e.target.value)}
-            onKeyDown={e=>{ if(e.key==="Enter"){ e.preventDefault(); setTermineCercatoConclusi(ricercaConclusi); } }}
-            placeholder="Cerca per cliente, tipo, tecnico, note…"
-            style={{...S.inp,flex:1}}
-          />
-          <button onClick={()=>setTermineCercatoConclusi(ricercaConclusi)} style={{...S.btnAccent,padding:"0 18px",flexShrink:0}}>Cerca</button>
+
+        <div style={{...S.card,cursor:"default",marginTop:8,marginBottom:16}}>
+          <div style={{fontSize:11,fontFamily:F_MONO,color:"#9AA3AB",textTransform:"uppercase",letterSpacing:"0.05em",marginBottom:8}}>Cliente</div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}>
+            <input value={filtroCod} onChange={e=>setFiltroCod(e.target.value)} placeholder="Codice cliente" style={S.inp}/>
+            <input value={filtroRag} onChange={e=>setFiltroRag(e.target.value)} placeholder="Ragione sociale" style={S.inp}/>
+          </div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:14}}>
+            <select value={filtroLoc} onChange={e=>setFiltroLoc(e.target.value)} style={S.inp}>
+              <option value="">Tutte le località</option>
+              {localitaConclusi.map(l=>(<option key={l} value={l}>{l}</option>))}
+            </select>
+            <select value={filtroProv} onChange={e=>setFiltroProv(e.target.value)} style={S.inp}>
+              <option value="">Tutte le province</option>
+              {provinceConclusi.map(p=>(<option key={p} value={p}>{p}</option>))}
+            </select>
+          </div>
+
+          <div style={{fontSize:11,fontFamily:F_MONO,color:"#9AA3AB",textTransform:"uppercase",letterSpacing:"0.05em",marginBottom:8}}>Periodo, attrezzatura, tecnico</div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}>
+            <div>
+              <div style={{fontSize:10.5,color:"#9AA3AB",marginBottom:3}}>Concluso dal</div>
+              <input type="date" value={filtroDa} onChange={e=>setFiltroDa(e.target.value)} style={S.inp}/>
+            </div>
+            <div>
+              <div style={{fontSize:10.5,color:"#9AA3AB",marginBottom:3}}>al</div>
+              <input type="date" value={filtroA} onChange={e=>setFiltroA(e.target.value)} style={S.inp}/>
+            </div>
+          </div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:14}}>
+            <select value={filtroAttrezzatura} onChange={e=>setFiltroAttrezzatura(e.target.value)} style={S.inp}>
+              <option value="">Tutte le attrezzature</option>
+              {attrezzatureConclusi.map(a=>(<option key={a} value={a}>{a}</option>))}
+            </select>
+            <select value={filtroTecnico} onChange={e=>setFiltroTecnico(e.target.value)} style={S.inp}>
+              <option value="">Tutti i tecnici</option>
+              {tecniciConclusi.map(t=>(<option key={t} value={t}>{t}</option>))}
+            </select>
+          </div>
+
+          <div style={{display:"flex",gap:8}}>
+            <button onClick={applicaFiltriConclusi} style={{...S.btnAccent,flex:1,padding:"11px"}}>Cerca</button>
+            {filtriAttivi && <button onClick={azzeraFiltriConclusi} style={S.btnS}>Azzera</button>}
+          </div>
         </div>
+
         {conclusiFiltrati.length===0 && <div style={{fontSize:12.5,color:"#9AA3AB"}}>Nessun intervento trovato.</div>}
         {conclusiFiltrati.map(i=>(
           <div key={i.id} onClick={()=>apriDettaglio(i)} style={{...S.card,cursor:"pointer",display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:10}}>
@@ -9093,7 +9291,7 @@ function Interventi({interventi, setInterventi, attrezzature, sessione, setArea,
                 {i.completato_il && <span className="tnum" style={{fontSize:10.5,color:"#9AA3AB",fontFamily:F_MONO}}>{new Date(i.completato_il).toLocaleDateString("it-IT")}</span>}
               </div>
               <div style={{fontWeight:600,fontSize:13.5}}>{i.cliente_nome}</div>
-              <div style={{fontSize:11,color:"#9AA3AB",marginTop:2}}>{i.tecnico_assegnato_nome || "—"}</div>
+              <div style={{fontSize:11,color:"#9AA3AB",marginTop:2}}>{nomeAttrezzaturaIntervento(i) ? `${nomeAttrezzaturaIntervento(i)} · ` : ""}{i.tecnico_assegnato_nome || "—"}</div>
             </div>
             <Tag tone={i.inviato_fatturazione?"ok":"warn"}>{i.inviato_fatturazione?"✓ fatturato":"da fatturare"}</Tag>
           </div>
@@ -9124,8 +9322,11 @@ function Interventi({interventi, setInterventi, attrezzature, sessione, setArea,
         </div>
       ))}
 
-      <button onClick={()=>setVista("preventivi-intervento")} style={{...S.btnS,width:"100%",marginTop:8,marginBottom:20}}>
+      <button onClick={()=>setVista("preventivi-intervento")} style={{...S.btnS,width:"100%",marginTop:8,marginBottom:8}}>
         🧾 Preventivi intervento ({(preventiviIntervento||[]).length})
+      </button>
+      <button onClick={()=>{ setInterventoDaCompletare(null); setVista("nuovo-rapporto"); }} style={{...S.btnS,width:"100%",marginBottom:20}}>
+        ☑ Nuovo rapporto (senza intervento pianificato)
       </button>
 
       {scadenzePromemoria.length>0 && (
@@ -9167,7 +9368,7 @@ function RapportoDemo({sessione, interventi, setInterventi, interventoDaCompleta
   function toggle(i){setChecklist(prev=>prev.map((c,idx)=>idx===i?{...c,fatto:!c.fatto}:c));}
 
   function resetTutto(){
-    setStep("dettagli"); setTipo(""); setClienteSel(null); setChecklist([]); setNote(""); setErrore("");
+    setStep("dettagli"); setTipo(""); setClienteInfo({}); setChecklist([]); setNote(""); setErrore("");
     setInterventoDaCompletare(null);
   }
 
