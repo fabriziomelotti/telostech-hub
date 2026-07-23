@@ -7597,30 +7597,25 @@ ${o.firma_cliente ? `
               <button onClick={segnalaAlCommerciale} disabled={!notaResponsabileForm.trim()||salvandoGestione} style={{...S.btnS,padding:"8px 14px",fontSize:12,opacity:notaResponsabileForm.trim()?1:0.5}}>Invia segnalazione</button>
             </div>
 
-            {selezionato.installazione_attiva && (
-              <div style={{paddingTop:14,borderTop:`1px solid ${C.paperLine}`}}>
-                <div style={{fontSize:12.5,fontWeight:600,marginBottom:8}}>Richiedi l'intervento di installazione</div>
-                {interventoCreato ? (
-                  <div style={{fontSize:12,color:C.ok}}>✓ Richiesta creata — da presa in carico in Assistenza.</div>
-                ) : (
-                  <button onClick={creaInterventoInstallazione} disabled={salvandoGestione} style={{...S.btnAccent,padding:"9px 15px",fontSize:12.5}}>Crea richiesta di intervento</button>
-                )}
-              </div>
-            )}
-
             {msgGestione && <div style={{fontSize:12,color:C.steel,marginTop:12}}>{msgGestione}</div>}
           </div>
         )}
 
-        <div style={{display:"flex",flexDirection:"column",gap:8}}>
+        <div style={{display:"flex",flexWrap:"wrap",gap:8,alignItems:"center"}}>
           {RUOLI_APPROVATORI.includes(ruolo) && selezionato.stato==="Inviato" && (
-            <button onClick={()=>prendiInCarico(selezionato.id)} style={{...S.btnAccent,padding:"13px"}}>📋 Prendi in carico</button>
+            <button onClick={()=>prendiInCarico(selezionato.id)} style={{...S.btnAccent,padding:"10px 16px",background:C.ink,color:"#fff"}}>📋 Prendi in carico</button>
           )}
           {selezionato.stato==="In gestione" && (
-            <button onClick={()=>setStato(selezionato.id,"Evaso")} style={{...S.btnAccent,padding:"12px",background:C.ok,color:"#fff"}}>✓ Segna come evaso</button>
+            <button onClick={()=>setStato(selezionato.id,"Evaso")} style={{...S.btnAccent,padding:"10px 16px",background:C.ok,color:"#fff"}}>✓ Segna come evaso</button>
           )}
-          <button disabled={generandoPdf} onClick={async ()=>{ setGenerandoPdf(true); try{ await generaOrdinePDF(selezionato); } finally { setGenerandoPdf(false); } }} style={{...S.btnAccent,padding:"12px",opacity:generandoPdf?0.6:1}}>{generandoPdf?"Generazione PDF…":"📄 Invia ordine in PDF"}</button>
+          <button disabled={generandoPdf} onClick={async ()=>{ setGenerandoPdf(true); try{ await generaOrdinePDF(selezionato); } finally { setGenerandoPdf(false); } }} style={{...S.btnAccent,padding:"10px 16px",background:C.cyan,color:C.inkDeep,opacity:generandoPdf?0.6:1}}>{generandoPdf?"Generazione PDF…":"📄 Invia ordine in PDF"}</button>
+          <button onClick={creaInterventoInstallazione} disabled={salvandoGestione} style={{...S.btnS,padding:"9px 14px",fontWeight:600,border:`1px solid ${C.warn}`,color:C.warn,background:"rgba(217,164,65,0.08)"}}>
+            🔧 {interventoCreato ? "Riattribuisci ad Assistenza tecnica" : "Assegna ad Assistenza tecnica"}
+          </button>
         </div>
+        {interventoCreato && (
+          <div style={{fontSize:11.5,color:C.ok,marginTop:6}}>✓ Richiesta di intervento inviata — visibile in Assistenza tra i "Richiesti". Puoi rifarlo se serve riassegnarlo.</div>
+        )}
 
         {RUOLI_APPROVATORI.includes(ruolo) && selezionato.stato==="Sospeso" && (
           <div style={{marginTop:20}}>
