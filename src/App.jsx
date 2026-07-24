@@ -2373,8 +2373,8 @@ function Clienti({sessione, preventivi, ordini, attrezzature, setAttrezzature, i
 
   async function eseguiRicercaClienti(){
     const codiceOk = codice.trim();
-    const ragioneOk = normalizzaRagioneSociale(ragioneSociale);
-    if(!codiceOk && !ragioneOk && !localita && !provincia){
+    const tokenRagione = normalizzaRagioneSociale(ragioneSociale).split(" ").filter(Boolean);
+    if(!codiceOk && tokenRagione.length===0 && !localita && !provincia){
       setErrore("Inserisci almeno un criterio di ricerca.");
       return;
     }
@@ -2382,7 +2382,7 @@ function Clienti({sessione, preventivi, ordini, attrezzature, setAttrezzature, i
     try{
       const filtri = [];
       if(codiceOk) filtri.push(`codice=ilike.*${encodeURIComponent(codiceOk)}*`);
-      if(ragioneOk) filtri.push(`ragione_sociale=ilike.*${encodeURIComponent(ragioneOk)}*`);
+      if(tokenRagione.length) filtri.push(`ragione_sociale=ilike.*${tokenRagione.map(t=>encodeURIComponent(t)).join("*")}*`);
       if(localita) filtri.push(`localita=eq.${encodeURIComponent(localita)}`);
       if(provincia) filtri.push(`provincia=eq.${encodeURIComponent(provincia)}`);
       const params = `select=codice,ragione_sociale,rag_sociale_agg,indirizzo,localita,provincia,cap,partita_iva,codice_fiscale,telefono,mail,filiale,agente&${filtri.join("&")}&limit=30`;

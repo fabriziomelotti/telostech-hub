@@ -415,8 +415,17 @@ export function SelezioneCliente({ onSeleziona, clienteSelezionato, sessione }){
 
   async function esegui(){
     const codiceOk = codice.trim();
-    const ragioneOk = normalizzaRagioneSociale(ragioneSociale);
-    if(!codiceOk && !ragioneOk && !localita && !provincia){
+    // Le singole parole della ragione sociale vengono cercate separatamente,
+    // con un carattere jolly TRA una e l'altra (non uno spazio letterale):
+    // "O.R.V.I." normalizzato diventa i token ["O","R","V","I"], cercati come
+    // *o*r*v*i* — così la punteggiatura/spaziatura REALE salvata in
+    // anagrafica (punti, spazi, altro) non deve più coincidere esattamente
+    // con quella digitata, basta che le lettere compaiano nello stesso
+    // ordine. Prima si cercava la stringa intera con gli spazi al posto
+    // della punteggiatura originale ("O R V I"), che con ragioni sociali
+    // come "O.R.V.I." (punti, non spazi) non trovava mai nulla.
+    const tokenRagione = normalizzaRagioneSociale(ragioneSociale).split(" ").filter(Boolean);
+    if(!codiceOk && tokenRagione.length===0 && !localita && !provincia){
       setErrore("Inserisci almeno un criterio di ricerca.");
       return;
     }
@@ -426,7 +435,7 @@ export function SelezioneCliente({ onSeleziona, clienteSelezionato, sessione }){
       // senza bisogno di or=/and=() — un parametro per colonna.
       const filtri = [];
       if(codiceOk) filtri.push(`codice=ilike.*${encodeURIComponent(codiceOk)}*`);
-      if(ragioneOk) filtri.push(`ragione_sociale=ilike.*${encodeURIComponent(ragioneOk)}*`);
+      if(tokenRagione.length) filtri.push(`ragione_sociale=ilike.*${tokenRagione.map(t=>encodeURIComponent(t)).join("*")}*`);
       if(localita) filtri.push(`localita=eq.${encodeURIComponent(localita)}`);
       if(provincia) filtri.push(`provincia=eq.${encodeURIComponent(provincia)}`);
       const params =
