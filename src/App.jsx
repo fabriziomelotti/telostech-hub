@@ -783,7 +783,7 @@ export default function App(){
           {area==="promemoria" && <Promemoria sessione={sessione} ruolo={role} preventivi={preventivi} interventi={interventi} ordini={ordini} promemoria={promemoria} setPromemoria={setPromemoria} setArea={setArea}/>}
           {area==="preventivi" && <Preventivi cart={cart} setCart={setCart} preventivi={preventivi} setPreventivi={setPreventivi} setOrdini={setOrdini} setArea={setArea} ruolo={role} catalog={catalog} sessione={sessione} precodici={precodici} isMobile={isMobile}/>}
           {area==="ordini" && <Ordini ordini={ordini} setOrdini={setOrdini} preventivi={preventivi} setPreventivi={setPreventivi} setInterventi={setInterventi} catalog={catalog} sessione={sessione} ruolo={role} precodici={precodici} isMobile={isMobile}/>}
-          {area==="interventi" && <Interventi interventi={interventi} setInterventi={setInterventi} attrezzature={attrezzature} sessione={sessione} setArea={setArea} interventoDaCompletare={interventoDaCompletare} setInterventoDaCompletare={setInterventoDaCompletare} catalog={catalog} ruolo={role} precodici={precodici}/>}
+          {area==="interventi" && <Interventi interventi={interventi} setInterventi={setInterventi} attrezzature={attrezzature} sessione={sessione} setArea={setArea} interventoDaCompletare={interventoDaCompletare} setInterventoDaCompletare={setInterventoDaCompletare} catalog={catalog} ruolo={role} precodici={precodici} isMobile={isMobile}/>}
           {area==="admin" && <PannelloAdmin ruolo={role} sessione={sessione}/>}
           {area==="gestione" && <PannelloGestione setCatalog={setCatalog} ruolo={role} sessione={sessione} catalog={catalog}/>}
         </div>
@@ -5267,6 +5267,7 @@ function Preventivi({cart,setCart,preventivi,setPreventivi,setOrdini,setArea,ruo
         costo: costoInfo?.costo,
         margine_minimo_override: prod.margine_minimo_override ?? null,
         pacchetto_nome: pacchetto.nome,
+        pacchetto_tipo: pacchetto.tipo || "telos",
       };
       rigaNuova.sottoMargine = rigaSottoMargine(rigaNuova);
       const idx = righe.findIndex(r=>r.cod===comp.cod);
@@ -6821,6 +6822,7 @@ function Ordini({ordini,setOrdini,preventivi,setPreventivi,setInterventi,catalog
           costo: costoInfo?.costo,
           margine_minimo_override: prod.margine_minimo_override ?? null,
           pacchetto_nome: pacchetto.nome,
+          pacchetto_tipo: pacchetto.tipo || "telos",
         };
         rigaNuova.sottoMargine = rigaSottoMargine(rigaNuova);
         const idx = righe.findIndex(r=>r.cod===comp.cod);
@@ -7304,7 +7306,7 @@ function Ordini({ordini,setOrdini,preventivi,setPreventivi,setInterventi,catalog
   }
   async function generaOrdinePDF(o){
     const righe = o.righe.map(r => `
-      <tr><td style="padding:8px 6px;border-bottom:1px solid #E3E5EA;font-size:12px">${r.mar} ${r.nome}</td>
+      <tr><td style="padding:8px 6px;border-bottom:1px solid #E3E5EA;font-size:12px">${r.mar} ${r.nome}${r.pacchetto_nome ? `<br/><span style="font-size:10px;color:${r.pacchetto_tipo==="fornitore"?"#C84B3A":"#7C879E"};font-weight:${r.pacchetto_tipo==="fornitore"?"700":"400"}">📦 Pacchetto${r.pacchetto_tipo==="fornitore"?" FORNITORE":""} — ${r.pacchetto_nome}</span>` : ""}</td>
       <td style="padding:8px 6px;border-bottom:1px solid #E3E5EA;font-size:12px;font-family:monospace">${codiceConPrecodice(precodici,r.mar,r.cod)}</td>
       <td style="padding:8px 6px;border-bottom:1px solid #E3E5EA;font-size:12px;text-align:center">${r.qty||1}</td>
       <td style="padding:8px 6px;border-bottom:1px solid #E3E5EA;font-size:12px;text-align:right">€${(r.netto*(r.qty||1)).toFixed(2)}</td></tr>`).join("");
@@ -7691,10 +7693,17 @@ ${o.firma_cliente ? `
             <div style={{paddingTop:14,borderTop:`1px solid ${C.paperLine}`,marginBottom:18}}>
               <div style={{fontSize:12.5,fontWeight:600,marginBottom:8}}>Segnala qualcosa al commerciale</div>
               <textarea value={notaResponsabileForm} onChange={e=>setNotaResponsabileForm(e.target.value)} placeholder="Es. manca l'indirizzo di consegna, verificare disponibilità…" rows={2} style={{...S.inp,resize:"vertical",marginBottom:8}}/>
-              <button onClick={segnalaAlCommerciale} disabled={!notaResponsabileForm.trim()||salvandoGestione} style={{...S.btnS,padding:"8px 14px",fontSize:12,opacity:notaResponsabileForm.trim()?1:0.5}}>Invia segnalazione</button>
+              <button onClick={segnalaAlCommerciale} disabled={!notaResponsabileForm.trim()||salvandoGestione} style={{...S.btnS,padding:"8px 14px",fontSize:12,opacity:notaResponsabileForm.trim()?1:0.5}}>{salvandoGestione?"Invio…":"Invia segnalazione"}</button>
             </div>
 
-            {msgGestione && <div style={{fontSize:12,color:C.steel,marginTop:12}}>{msgGestione}</div>}
+            {msgGestione && (
+              <div style={{fontSize:12.5,fontWeight:600,marginTop:12,padding:"9px 12px",borderRadius:7,display:"flex",alignItems:"center",gap:7,
+                color:msgGestione.startsWith("Errore")?C.danger:C.ok,
+                background:msgGestione.startsWith("Errore")?"rgba(200,75,58,0.08)":"rgba(74,157,110,0.1)"}}>
+                <Icon name={msgGestione.startsWith("Errore")?"xCircle":"checkCircle"} size={15}/>
+                {msgGestione}
+              </div>
+            )}
           </div>
         )}
 
@@ -9121,13 +9130,40 @@ function DettaglioIntervento({ intervento, attrezzature, sessione, onIndietro, o
   );
 }
 
-function Interventi({interventi, setInterventi, attrezzature, sessione, setArea, interventoDaCompletare, setInterventoDaCompletare, catalog, ruolo, precodici}){
+function Interventi({interventi, setInterventi, attrezzature, sessione, setArea, interventoDaCompletare, setInterventoDaCompletare, catalog, ruolo, precodici, isMobile}){
   const accessToken = trovaAccessToken(sessione);
   // Preventivi per interventi tecnici (manodopera/ricambi) — vedi
   // FormPreventivoIntervento più sopra, diversi dai preventivi di vendita
   // materiale.
   const [vista,setVista] = useState("home"); // home | richiesti | da-pianificare | pianificati | planning | conclusi | dettaglio | preventivi-intervento | nuovo-preventivo-intervento
   const [interventoSel,setInterventoSel] = useState(null);
+
+  const [tecnicoPlanning,setTecnicoPlanning] = useState("");
+  const [preventiviIntervento,setPreventiviIntervento] = useState(null);
+  const [preventivoInterventoSel,setPreventivoInterventoSel] = useState(null); // per la modifica
+  function ricaricaPreventiviIntervento(){
+    sbGetAuth("preventivi_intervento", "select=*&order=creato_il.desc&limit=200", accessToken)
+      .then(setPreventiviIntervento)
+      .catch(()=>setPreventiviIntervento([]));
+  }
+  useEffect(()=>{ ricaricaPreventiviIntervento(); },[]);
+
+  function apriDettaglio(i){ setInterventoSel(i); setVista("dettaglio"); }
+  function tornaAlleListe(){ setInterventoSel(null); setVista("home"); }
+  function onInterventoAggiornato(aggiornato){
+    setInterventi(prev=>prev.map(x=>x.id===aggiornato.id?aggiornato:x));
+    setInterventoSel(aggiornato);
+  }
+
+  const richiesti = useMemo(()=>(interventi||[]).filter(i=>i.stato==="Richiesto")
+    .sort((a,b)=>new Date(b.creato_il||0)-new Date(a.creato_il||0)), [interventi]);
+  const daPianificare = useMemo(()=>(interventi||[]).filter(i=>i.stato==="Da pianificare")
+    .sort((a,b)=>new Date(b.creato_il||0)-new Date(a.creato_il||0)), [interventi]);
+  const pianificati = useMemo(()=>(interventi||[]).filter(i=>i.stato==="Pianificato")
+    .sort((a,b)=>new Date(a.data_pianificata||"9999-12-31")-new Date(b.data_pianificata||"9999-12-31")), [interventi]);
+  const conclusi = useMemo(()=>(interventi||[]).filter(i=>i.stato==="Completato")
+    .sort((a,b)=>new Date(b.completato_il||0)-new Date(a.completato_il||0)), [interventi]);
+
   const [filtroCod,setFiltroCod] = useState("");
   const [filtroRag,setFiltroRag] = useState("");
   const [filtroLoc,setFiltroLoc] = useState("");
@@ -9173,31 +9209,6 @@ function Interventi({interventi, setInterventi, attrezzature, sessione, setArea,
     setFiltroDa(""); setFiltroA(""); setFiltroAttrezzatura(""); setFiltroTecnico("");
     setFiltriAttivi(null);
   }
-  const [tecnicoPlanning,setTecnicoPlanning] = useState("");
-  const [preventiviIntervento,setPreventiviIntervento] = useState(null);
-  const [preventivoInterventoSel,setPreventivoInterventoSel] = useState(null); // per la modifica
-  function ricaricaPreventiviIntervento(){
-    sbGetAuth("preventivi_intervento", "select=*&order=creato_il.desc&limit=200", accessToken)
-      .then(setPreventiviIntervento)
-      .catch(()=>setPreventiviIntervento([]));
-  }
-  useEffect(()=>{ ricaricaPreventiviIntervento(); },[]);
-
-  function apriDettaglio(i){ setInterventoSel(i); setVista("dettaglio"); }
-  function tornaAlleListe(){ setInterventoSel(null); setVista("home"); }
-  function onInterventoAggiornato(aggiornato){
-    setInterventi(prev=>prev.map(x=>x.id===aggiornato.id?aggiornato:x));
-    setInterventoSel(aggiornato);
-  }
-
-  const richiesti = useMemo(()=>(interventi||[]).filter(i=>i.stato==="Richiesto")
-    .sort((a,b)=>new Date(b.creato_il||0)-new Date(a.creato_il||0)), [interventi]);
-  const daPianificare = useMemo(()=>(interventi||[]).filter(i=>i.stato==="Da pianificare")
-    .sort((a,b)=>new Date(b.creato_il||0)-new Date(a.creato_il||0)), [interventi]);
-  const pianificati = useMemo(()=>(interventi||[]).filter(i=>i.stato==="Pianificato")
-    .sort((a,b)=>new Date(a.data_pianificata||"9999-12-31")-new Date(b.data_pianificata||"9999-12-31")), [interventi]);
-  const conclusi = useMemo(()=>(interventi||[]).filter(i=>i.stato==="Completato")
-    .sort((a,b)=>new Date(b.completato_il||0)-new Date(a.completato_il||0)), [interventi]);
 
   const tecniciInPlanning = useMemo(()=>{
     const insieme = new Set(pianificati.map(i=>i.tecnico_assegnato_nome).filter(Boolean));
@@ -9468,30 +9479,43 @@ function Interventi({interventi, setInterventi, attrezzature, sessione, setArea,
   // ── Home: landing con i quattro stadi + accessori ──────────────────────
   return (
     <div>
-      <div style={{display:"flex",justifyContent:"flex-end",marginBottom:16}}>
-        <button onClick={()=>{ setPreventivoInterventoSel(null); setVista("nuovo-preventivo-intervento"); }} style={S.btnP}>+ Nuovo preventivo intervento</button>
+      <button onClick={()=>{ setPreventivoInterventoSel(null); setVista("nuovo-preventivo-intervento"); }} style={{...S.btnAccent,width:"100%",padding:"14px",fontSize:14.5,fontWeight:700,marginBottom:12,display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
+        <Icon name="plus" size={17}/> Nuovo preventivo intervento
+      </button>
+
+      <div style={isMobile ? {display:"flex",flexDirection:"column",gap:8} : {display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:12}}>
+        {[
+          ["richiesti","bell","Richiesti",richiesti.length,"Da ordini o preventivi confermati, in attesa di presa in carico","rgba(200,75,58,0.09)",C.danger],
+          ["da-pianificare","clipboard","Da pianificare",daPianificare.length,"Presi in carico, in attesa di data e ora","rgba(217,164,65,0.12)",C.warn],
+          ["pianificati","calendar","Pianificati",pianificati.length,"Con data confermata — anche vista planning per tecnico","rgba(22,39,88,0.09)",C.ink],
+          ["conclusi","checkCircle","Conclusi",conclusi.length,"Chiusi con conferma cliente, in archivio","rgba(74,157,110,0.1)",C.ok],
+        ].map(([id,icona,lbl,n,sub,sfondo,colore])=>(
+          isMobile ? (
+            <div key={id} onClick={()=>setVista(id)} style={{...S.card,cursor:"pointer",display:"flex",alignItems:"center",gap:12,background:sfondo,border:`1px solid ${colore}`}}>
+              <Icon name={icona} size={22} color={colore}/>
+              <div style={{flex:1,minWidth:0}}>
+                <div style={{fontWeight:700,fontSize:14,color:C.charcoal}}>{lbl}</div>
+              </div>
+              {n>0 && <span className="tnum" style={{fontSize:16,fontWeight:700,color:colore,fontFamily:F_MONO,flexShrink:0}}>{n}</span>}
+            </div>
+          ) : (
+            <div key={id} onClick={()=>setVista(id)} style={{...S.card,cursor:"pointer",aspectRatio:"1.1",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:8,padding:14,textAlign:"center",position:"relative",background:sfondo,border:`1px solid ${colore}`}}>
+              {n>0 && (
+                <span className="tnum" style={{position:"absolute",top:12,right:14,fontSize:18,fontWeight:700,color:colore,fontFamily:F_MONO}}>{n}</span>
+              )}
+              <Icon name={icona} size={28} color={colore}/>
+              <div style={{fontWeight:700,fontSize:14,color:C.charcoal}}>{lbl}</div>
+              <div style={{fontSize:11,color:C.steel,lineHeight:1.35}}>{sub}</div>
+            </div>
+          )
+        ))}
       </div>
 
-      {[
-        ["richiesti","📥 Interventi richiesti",richiesti.length,"Da ordini o preventivi confermati, in attesa di essere presi in carico"],
-        ["da-pianificare","🗂 Interventi da pianificare",daPianificare.length,"Presi in carico, in attesa di data e ora"],
-        ["pianificati","📅 Interventi pianificati",pianificati.length,"Con data confermata — anche vista planning per tecnico"],
-        ["conclusi","✓ Interventi conclusi",conclusi.length,"Chiusi con conferma cliente, in archivio"],
-      ].map(([id,lbl,n,sub])=>(
-        <div key={id} onClick={()=>setVista(id)} style={{...S.card,cursor:"pointer",display:"flex",justifyContent:"space-between",alignItems:"center",gap:10,marginBottom:8}}>
-          <div>
-            <div style={{fontWeight:600,fontSize:14}}>{lbl}</div>
-            <div style={{fontSize:12,color:C.steel,marginTop:2}}>{sub}</div>
-          </div>
-          <span className="tnum" style={{fontSize:15,fontWeight:700,color:n>0?C.ink:"#9AA3AB",fontFamily:F_MONO,flexShrink:0}}>{n}</span>
-        </div>
-      ))}
-
-      <button onClick={()=>setVista("preventivi-intervento")} style={{...S.btnS,width:"100%",marginTop:8,marginBottom:8}}>
-        🧾 Preventivi intervento ({(preventiviIntervento||[]).length})
+      <button onClick={()=>setVista("preventivi-intervento")} style={{...S.btnS,width:"100%",marginTop:16,marginBottom:8,display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
+        <Icon name="document" size={15}/> Preventivi intervento ({(preventiviIntervento||[]).length})
       </button>
-      <button onClick={()=>{ setInterventoDaCompletare(null); setVista("nuovo-rapporto"); }} style={{...S.btnS,width:"100%",marginBottom:20}}>
-        ☑ Nuovo rapporto (senza intervento pianificato)
+      <button onClick={()=>{ setInterventoDaCompletare(null); setVista("nuovo-rapporto"); }} style={{...S.btnS,width:"100%",marginBottom:20,display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
+        <Icon name="clipboard" size={15}/> Nuovo rapporto (senza intervento pianificato)
       </button>
 
       {scadenzePromemoria.length>0 && (
