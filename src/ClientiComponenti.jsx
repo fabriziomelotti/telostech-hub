@@ -386,6 +386,20 @@ export function normalizzaRagioneSociale(s){
     .trim();
 }
 
+// Elimina OGNI carattere non alfanumerico (non lo sostituisce con uno
+// spazio, lo toglie proprio) — usata per confrontare sigle/ragioni sociali
+// indipendentemente da come sono scritte punteggiatura a parte: "O.R.V.I.",
+// "ORVI" e "O R V I" diventano tutte "orvi" e si confrontano correttamente
+// tra loro, cosa che normalizzaRagioneSociale (che lascia uno spazio al
+// posto della punteggiatura) non garantisce quando lo spazio non coincide
+// con quello realmente salvato in anagrafica.
+export function soloAlfanumerico(s){
+  return (s||"").toString()
+    .normalize("NFD").replace(/[\u0300-\u036f]/g,"")
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g,"");
+}
+
 export function SelezioneCliente({ onSeleziona, clienteSelezionato, sessione }){
   const accessToken = trovaAccessToken(sessione);
   const [codice, setCodice] = useState("");
@@ -415,34 +429,51 @@ export function SelezioneCliente({ onSeleziona, clienteSelezionato, sessione }){
 
   async function esegui(){
     const codiceOk = codice.trim();
-    // Le singole parole della ragione sociale vengono cercate separatamente,
-    // con un carattere jolly TRA una e l'altra (non uno spazio letterale):
-    // "O.R.V.I." normalizzato diventa i token ["O","R","V","I"], cercati come
-    // *o*r*v*i* — così la punteggiatura/spaziatura REALE salvata in
-    // anagrafica (punti, spazi, altro) non deve più coincidere esattamente
-    // con quella digitata, basta che le lettere compaiano nello stesso
-    // ordine. Prima si cercava la stringa intera con gli spazi al posto
-    // della punteggiatura originale ("O R V I"), che con ragioni sociali
-    // come "O.R.V.I." (punti, non spazi) non trovava mai nulla.
-    const tokenRagione = normalizzaRagioneSociale(ragioneSociale).split(" ").filter(Boolean);
-    if(!codiceOk && tokenRagione.length===0 && !localita && !provincia){
+    // Ogni "parola" digitata (separata da spazi VERI, non dalla punteggiatura
+    // interna) viene confrontata ignorando completamente la sua punteggiatura
+    // interna — così "O.R.V.I.", "ORVI" e "O R V I" sono equivalenti e
+    // trovano sempre la stessa azienda, qualunque sia la forma realmente
+    // salvata in anagrafica.
+    const paroleRagione = ragioneSociale.trim().split(/\s+/).filter(Boolean).map(soloAlfanumerico).filter(Boolean);
+    if(!codiceOk && paroleRagione.length===0 && !localita && !provincia){
       setErrore("Inserisci almeno un criterio di ricerca.");
       return;
     }
     setCaricando(true); setErrore(""); setCercato(true);
     try{
       // Filtri su colonne diverse: PostgREST li combina in AND di default,
-      // senza bisogno di or=/and=() — un parametro per colonna.
+      // senza bisogno di or=/and=() — un parametro per colonna. Per la
+      // ragione sociale usiamo solo la parola più lunga (la più selettiva)
+      // con un carattere jolly tra ogni lettera: un filtro volutamente
+      // permissivo lato server, per non perdere candidati validi solo
+      // perché scritti con punteggiatura diversa — la precisione arriva
+      // subito dopo, verificando lato client TUTTE le parole (vedi sotto).
       const filtri = [];
       if(codiceOk) filtri.push(`codice=ilike.*${encodeURIComponent(codiceOk)}*`);
-      if(tokenRagione.length) filtri.push(`ragione_sociale=ilike.*${tokenRagione.map(t=>encodeURIComponent(t)).join("*")}*`);
+      if(paroleRagione.length){
+        const piuLunga = [...paroleRagione].sort((a,b)=>b.length-a.length)[0];
+        filtri.push(`ragione_sociale=ilike.*${piuLunga.split("").map(c=>encodeURIComponent(c)).join("*")}*`);
+      }
       if(localita) filtri.push(`localita=eq.${encodeURIComponent(localita)}`);
       if(provincia) filtri.push(`provincia=eq.${encodeURIComponent(provincia)}`);
       const params =
         `select=codice,ragione_sociale,rag_sociale_agg,indirizzo,localita,provincia,cap,partita_iva,codice_fiscale,telefono,mail,filiale,agente` +
         `&${filtri.join("&")}&limit=25&order=ragione_sociale`;
       const dati = await sbGetAuth("clienti", params, accessToken);
-      setRisultati(dati || []);
+      // Verifica rigorosa: il filtro lato server sopra è volutamente
+      // permissivo (per non perdere "O.R.V.I." scritto "ORVI" o viceversa),
+      // quindi può restituire candidati che in realtà non corrispondono
+      // (es. lettere o-r-v-i sparse in punti diversi della ragione sociale,
+      // senza essere davvero la sigla cercata). Qui si ributta fuori tutto
+      // ciò che, ripulito dalla punteggiatura, non contiene DAVVERO ogni
+      // parola cercata come sequenza contigua di caratteri.
+      const filtrati = paroleRagione.length
+        ? (dati||[]).filter(c => {
+            const rip = soloAlfanumerico(c.ragione_sociale);
+            return paroleRagione.every(p => rip.includes(p));
+          })
+        : (dati||[]);
+      setRisultati(filtrati);
     }catch(err){
       setErrore("Ricerca non riuscita: " + err.message + " — riprova.");
       setRisultati([]);

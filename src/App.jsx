@@ -1,7 +1,7 @@
 import { useState, useMemo, useEffect, useRef } from "react";
 import html2canvas from "html2canvas";
 import jsPDF from "jspdf";
-import { ImportClienti, SelezioneCliente, CreaProdotto, EditaProdotto, normalizzaTesto, tokenRicerca, corrispondeRicerca, filtroServerRicerca, affinaRicerca, normalizzaRagioneSociale } from "./ClientiComponenti";
+import { ImportClienti, SelezioneCliente, CreaProdotto, EditaProdotto, normalizzaTesto, tokenRicerca, corrispondeRicerca, filtroServerRicerca, affinaRicerca, normalizzaRagioneSociale, soloAlfanumerico } from "./ClientiComponenti";
 import { useAuth, LoginReale } from "./Auth";
 
 // ─── SUPABASE REST (fetch diretto — nessuna libreria esterna) ────────────────
@@ -2373,8 +2373,8 @@ function Clienti({sessione, preventivi, ordini, attrezzature, setAttrezzature, i
 
   async function eseguiRicercaClienti(){
     const codiceOk = codice.trim();
-    const tokenRagione = normalizzaRagioneSociale(ragioneSociale).split(" ").filter(Boolean);
-    if(!codiceOk && tokenRagione.length===0 && !localita && !provincia){
+    const paroleRagione = ragioneSociale.trim().split(/\s+/).filter(Boolean).map(soloAlfanumerico).filter(Boolean);
+    if(!codiceOk && paroleRagione.length===0 && !localita && !provincia){
       setErrore("Inserisci almeno un criterio di ricerca.");
       return;
     }
@@ -2382,12 +2382,21 @@ function Clienti({sessione, preventivi, ordini, attrezzature, setAttrezzature, i
     try{
       const filtri = [];
       if(codiceOk) filtri.push(`codice=ilike.*${encodeURIComponent(codiceOk)}*`);
-      if(tokenRagione.length) filtri.push(`ragione_sociale=ilike.*${tokenRagione.map(t=>encodeURIComponent(t)).join("*")}*`);
+      if(paroleRagione.length){
+        const piuLunga = [...paroleRagione].sort((a,b)=>b.length-a.length)[0];
+        filtri.push(`ragione_sociale=ilike.*${piuLunga.split("").map(c=>encodeURIComponent(c)).join("*")}*`);
+      }
       if(localita) filtri.push(`localita=eq.${encodeURIComponent(localita)}`);
       if(provincia) filtri.push(`provincia=eq.${encodeURIComponent(provincia)}`);
       const params = `select=codice,ragione_sociale,rag_sociale_agg,indirizzo,localita,provincia,cap,partita_iva,codice_fiscale,telefono,mail,filiale,agente&${filtri.join("&")}&limit=30`;
       const dati = await sbGetAuth("clienti", params, accessToken);
-      setRisultati(dati||[]);
+      const filtrati = paroleRagione.length
+        ? (dati||[]).filter(c => {
+            const rip = soloAlfanumerico(c.ragione_sociale);
+            return paroleRagione.every(p => rip.includes(p));
+          })
+        : (dati||[]);
+      setRisultati(filtrati);
     }catch(err){
       setErrore("Ricerca non riuscita: "+err.message+" — riprova.");
       setRisultati([]);
