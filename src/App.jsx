@@ -146,11 +146,69 @@ const RUOLI = {
   admin: {label:"Admin", initials:"AM", nome:"Amministratore",
     nav:["home","ai","prodotti","clienti","promemoria","preventivi","ordini","interventi","gestione","admin"]},
 };
+// ─── ICONE — set outline minimal (stile iOS/Apple, tratto sottile), al posto
+// delle emoji/simboli usati finora. Ogni icona è un semplice path SVG,
+// nessuna dipendenza esterna necessaria. Uso: <Icon name="home" size={20}/>
+const ICONE_PATH = {
+  home: "M4 11.5 12 4l8 7.5M6 10v9a1 1 0 0 0 1 1h3v-6h4v6h3a1 1 0 0 0 1-1v-9",
+  sparkle: "M12 3v4M12 17v4M3 12h4M17 12h4M6 6l2.5 2.5M15.5 15.5 18 18M18 6l-2.5 2.5M8.5 15.5 6 18",
+  grid: "M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h6v6h-6z",
+  users: "M9 11a3 3 0 1 0 0-6 3 3 0 0 0 0 6ZM3 20c0-3 2.5-5.5 6-5.5s6 2.5 6 5.5M16.5 8.5a2.5 2.5 0 1 0 0-5M19 20c0-2.3-1.5-4.2-3.5-5",
+  flag: "M6 3v18M6 4h11l-2.5 3.5L17 11H6",
+  document: "M7 3h7l4 4v14H7zM14 3v4h4M9 12h6M9 16h6",
+  box: "m3.5 8 8.5-4.5L20.5 8 12 12.5 3.5 8Zm0 0v8L12 20.5m0-8v8m8.5-12v8L12 20.5",
+  wrench: "M14.7 6.3a4 4 0 0 1-5.4 5.4L4 17l3 3 5.3-5.3a4 4 0 0 1 5.4-5.4l-2.6 2.6-2-2 2.6-2.6Z",
+  settings: "M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6ZM4.5 12H3m18 0h-1.5M12 4.5V3m0 18v-1.5M6.5 6.5 5.4 5.4m13.2 13.2-1.1-1.1m0-12.2 1.1-1.1M5.4 18.6l1.1-1.1",
+  tools: "M4 20 14 10M17.5 3.5 20.5 6.5 17 10 14 7ZM4 20l3-1 7-7-2-2-7 7Z",
+  more: "M5 12h.01M12 12h.01M19 12h.01",
+  logout: "M9 21H5a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h4M16 17l4-5-4-5M20 12H9",
+  save: "M5 4h11l3 3v13H5zM8 4v6h8V4M8 14h8v6H8z",
+  pdf: "M7 3h7l4 4v14H7zM14 3v4h4M9 13h1.5a1.5 1.5 0 0 1 0 3H9v-3Zm0 3v2M13.5 13H15v5h-1.5v-5Zm0 2.5H15",
+  package: "m3.5 8 8.5-4.5L20.5 8 12 12.5 3.5 8Zm0 0v8L12 20.5m0-8v8m8.5-12v8L12 20.5",
+  tag: "M12 3h6a1 1 0 0 1 1 1v6l-9 9-7-7 9-9Z M15.5 8.5h.01",
+  euro: "M15 6a5.5 5.5 0 0 0-4.8 8.2M15 18a5.5 5.5 0 0 1-4.8-8.2m-1.7 3.2h7M8.5 10h6",
+  check: "m4 12 5 5 11-11",
+  x: "M5 5l14 14M19 5 5 19",
+  plus: "M12 5v14M5 12h14",
+  search: "M11 18a7 7 0 1 0 0-14 7 7 0 0 0 0 14ZM21 21l-4.3-4.3",
+  calendar: "M4 9h16M8 3v4M16 3v4M6 5h12a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1Z",
+  warning: "M12 3 2 20h20L12 3ZM12 10v5M12 18h.01",
+  trash: "M5 7h14M9 7V4h6v3M6 7l1 13h10l1-13M10 11v6M14 11v6",
+  edit: "M4 20h4L18.5 9.5a2 2 0 0 0-2.8-2.8L5 17.5V20h.01Z M15 5l4 4",
+  phone: "M6 3h3l2 5-2.5 1.5a11 11 0 0 0 5 5L15 12l5 2v3a2 2 0 0 1-2 2C9.5 19 5 14.5 5 5a2 2 0 0 1 1-2Z",
+  mail: "M4 5h16v14H4zM4 6l8 7 8-7",
+  arrowLeft: "M19 12H5M11 6l-6 6 6 6",
+  arrowRight: "M5 12h14M13 6l6 6-6 6",
+  chart: "M4 20V10M11 20V4M18 20v-7",
+  camera: "M4 8h3l2-2h6l2 2h3v11H4zM12 17a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z",
+  paperclip: "M17 6.5 8.5 15a3 3 0 1 0 4.2 4.2L20 12",
+  undo: "M8 7 4 11l4 4M4 11h10a5 5 0 0 1 0 10h-2",
+  lock: "M6 11V8a6 6 0 1 1 12 0v3M5 11h14v9H5ZM12 15v2",
+  clipboard: "M8 4h8v3H8zM6 6h12v15H6zM9 12h6M9 16h6",
+  signature: "M4 19c3-6 5-9 7-9s1 6 3 6 3-4 6-4M4 21h16",
+  checkCircle: "M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18ZM8 12l2.5 2.5L16 9",
+  xCircle: "M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18ZM9 9l6 6M15 9l-6 6",
+  refresh: "M20 12a8 8 0 1 1-2.6-5.9M20 4v5h-5",
+  bell: "M12 3a5 5 0 0 0-5 5v3.5L5 15h14l-2-3.5V8a5 5 0 0 0-5-5ZM10 18a2 2 0 0 0 4 0",
+  reply: "M9 8 4 12l5 4M4 12h9a6 6 0 0 1 6 6v1",
+  attach: "M17 6.5 8.5 15a3 3 0 1 0 4.2 4.2L20 12",
+  printer: "M6 9V4h12v5M6 18H4v-6h16v6h-2M6 14h12v6H6z",
+};
+function Icon({ name, size=20, color="currentColor", strokeWidth=1.6 }){
+  const d = ICONE_PATH[name];
+  if(!d) return null;
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round" style={{display:"block",flexShrink:0}}>
+      <path d={d}/>
+    </svg>
+  );
+}
+
 const NAV_META = {
-  home:{icon:"⌂",label:"Dashboard"}, ai:{icon:"✦",label:"Assistente"}, prodotti:{icon:"▣",label:"Catalogo"},
-  clienti:{icon:"◉",label:"Clienti"}, promemoria:{icon:"⚑",label:"Promemoria"}, preventivi:{icon:"▤",label:"Preventivi"}, ordini:{icon:"⬡",label:"Ordini"},
-  interventi:{icon:"⚒",label:"Assistenza"},
-  admin:{icon:"⚙",label:"Admin"}, gestione:{icon:"🛠",label:"Gestione"},
+  home:{icon:"home",label:"Dashboard"}, ai:{icon:"sparkle",label:"Assistente"}, prodotti:{icon:"grid",label:"Catalogo"},
+  clienti:{icon:"users",label:"Clienti"}, promemoria:{icon:"flag",label:"Promemoria"}, preventivi:{icon:"document",label:"Preventivi"}, ordini:{icon:"box",label:"Ordini"},
+  interventi:{icon:"wrench",label:"Assistenza"},
+  admin:{icon:"settings",label:"Admin"}, gestione:{icon:"tools",label:"Gestione"},
 };
 function navMobile(nav){ return nav.slice(0,4).concat(nav.length>4?["more"]:[]); }
 
@@ -669,7 +727,7 @@ export default function App(){
           <div style={{padding:"10px 0",flex:1,overflowY:"auto"}}>
             {r.nav.map(id=>(
               <div key={id} onClick={()=>setArea(id)} style={{...S.navItem,...(area===id?S.navActive:{})}}>
-                <span style={{fontSize:15,width:18,textAlign:"center",opacity:area===id?1:0.7}}>{NAV_META[id].icon}</span>
+                <span style={{width:18,display:"flex",justifyContent:"center",opacity:area===id?1:0.7}}><Icon name={NAV_META[id].icon} size={17}/></span>
                 <span style={{flex:1,fontWeight:area===id?600:400}}>{NAV_META[id].label}</span>
               </div>
             ))}
@@ -713,7 +771,7 @@ export default function App(){
             </span>
           )}
           {area!=="ai" && (
-            <button onClick={()=>setArea("ai")} style={{...S.btnP,padding:isMobile?"7px 11px":"8px 14px",fontSize:12,flexShrink:0}}>✦ {!isMobile&&"Assistente"}</button>
+            <button onClick={()=>setArea("ai")} style={{...S.btnP,padding:isMobile?"7px 11px":"8px 14px",fontSize:12,flexShrink:0,display:"flex",alignItems:"center",gap:6}}><Icon name="sparkle" size={14}/>{!isMobile&&"Assistente"}</button>
           )}
         </div>
 
@@ -735,17 +793,18 @@ export default function App(){
             {navList.map(id=>{
               if(id==="more"){
                 return (
-                  <button key="more" onClick={()=>setShowMore(true)} style={{flex:1,background:"none",border:"none",padding:"9px 4px 8px",display:"flex",flexDirection:"column",alignItems:"center",gap:3,cursor:"pointer",color:C.steelLight}}>
-                    <span style={{fontSize:17}}>⋯</span>
+                  <button key="more" onClick={()=>setShowMore(true)} style={{flex:1,background:"none",border:"none",padding:"7px 4px 8px",display:"flex",flexDirection:"column",alignItems:"center",gap:4,cursor:"pointer",color:C.steelLight}}>
+                    <span style={{width:34,height:34,borderRadius:9,display:"flex",alignItems:"center",justifyContent:"center"}}><Icon name="more" size={19}/></span>
                     <span style={{fontSize:9.5,fontFamily:F_MONO,letterSpacing:"0.02em"}}>ALTRO</span>
                   </button>
                 );
               }
               const active = area===id;
               return (
-                <button key={id} onClick={()=>setArea(id)} style={{flex:1,background:"none",border:"none",padding:"9px 4px 8px",display:"flex",flexDirection:"column",alignItems:"center",gap:3,cursor:"pointer",color:active?C.cyan:C.steelLight,position:"relative"}}>
-                  {active && <span style={{position:"absolute",top:0,left:"30%",right:"30%",height:2,background:C.cyan}}/>}
-                  <span style={{fontSize:17}}>{NAV_META[id].icon}</span>
+                <button key={id} onClick={()=>setArea(id)} style={{flex:1,background:"none",border:"none",padding:"7px 4px 8px",display:"flex",flexDirection:"column",alignItems:"center",gap:4,cursor:"pointer",color:active?C.cyan:C.steelLight,position:"relative"}}>
+                  <span style={{width:34,height:34,borderRadius:9,display:"flex",alignItems:"center",justifyContent:"center",background:active?"rgba(87,206,202,0.14)":"transparent"}}>
+                    <Icon name={NAV_META[id].icon} size={19}/>
+                  </span>
                   <span style={{fontSize:9.5,fontFamily:F_MONO,letterSpacing:"0.02em",fontWeight:active?700:400}}>{NAV_META[id].label.toUpperCase()}</span>
                 </button>
               );
@@ -760,13 +819,13 @@ export default function App(){
             <div style={{width:36,height:4,background:C.surface,borderRadius:2,margin:"6px auto 10px"}}/>
             {r.nav.map(id=>(
               <div key={id} onClick={()=>{setArea(id);setShowMore(false);}} style={{display:"flex",alignItems:"center",gap:12,padding:"13px 20px",cursor:"pointer",color:area===id?"#fff":C.steelLight}}>
-                <span style={{fontSize:18,width:20,textAlign:"center"}}>{NAV_META[id].icon}</span>
+                <span style={{width:20,display:"flex",justifyContent:"center"}}><Icon name={NAV_META[id].icon} size={18}/></span>
                 <span style={{fontSize:14,fontWeight:area===id?600:400}}>{NAV_META[id].label}</span>
               </div>
             ))}
             <div style={{borderTop:`1px solid ${C.surface}`,marginTop:6}}>
               <div onClick={logout} style={{display:"flex",alignItems:"center",gap:12,padding:"13px 20px",cursor:"pointer",color:C.cyan}}>
-                <span style={{fontSize:18,width:20,textAlign:"center"}}>⏻</span>
+                <span style={{width:20,display:"flex",justifyContent:"center"}}><Icon name="logout" size={18}/></span>
                 <span style={{fontSize:14,fontWeight:500}}>Esci · {r.nome}</span>
               </div>
             </div>
@@ -12080,27 +12139,26 @@ function PannelloGestione({ setCatalog, ruolo, sessione, catalog }) {
       {tab==="landing" ? (
         <>
           <div style={{fontSize:13,color:C.steel,marginBottom:16}}>Catalogo prodotti e listini.</div>
-          {[
-            ["prodotto","+ Nuovo prodotto","Aggiungi un articolo al catalogo"],
-            ["import","⬆ Importa catalogo","Carica un file CSV con i prodotti"],
-            ["export","⬇ Esporta catalogo","Scarica il catalogo completo in CSV"],
-            ["categorie","▤ Categorie","Rinomina o unisci categorie duplicate"],
-            ["marchi","🏷 Marchi","Precodice a 3 lettere per marchio (gestionale)"],
-            ["condizioni","💶 Condizioni","Acquisto, margine minimo di vendita per marchio e per categoria"],
-            ["prezzi","💶 Prezzi","Aggiorna i prezzi da un listino fornitore"],
-            ["listino","🧾 Listino","Importa un listino fornitore completo"],
-            ["logistica","⚑ Logistica","Ordini sospesi e in gestione"],
-            ["pacchetti","📦 Pacchetti","Kit di prodotti, finanziaria e libreria documenti"],
-            ["assistenze","🔧 Assistenze","Telos interno e partner esterni, coi loro listini"],
-          ].map(([id,lbl,sub])=>(
-            <div key={id} onClick={()=>setTab(id)} style={{...S.card,cursor:"pointer",display:"flex",justifyContent:"space-between",alignItems:"center",gap:10,marginBottom:8}}>
-              <div>
-                <div style={{fontWeight:600,fontSize:14}}>{lbl}</div>
-                <div style={{fontSize:12,color:C.steel,marginTop:2}}>{sub}</div>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:8}}>
+            {[
+              ["prodotto","plus","Nuovo prodotto"],
+              ["import","arrowRight","Importa catalogo"],
+              ["export","arrowLeft","Esporta catalogo"],
+              ["categorie","clipboard","Categorie"],
+              ["marchi","tag","Marchi"],
+              ["condizioni","euro","Condizioni"],
+              ["prezzi","refresh","Prezzi"],
+              ["listino","document","Listino"],
+              ["logistica","flag","Logistica"],
+              ["pacchetti","package","Pacchetti"],
+              ["assistenze","wrench","Assistenze"],
+            ].map(([id,icona,lbl])=>(
+              <div key={id} onClick={()=>setTab(id)} style={{...S.card,cursor:"pointer",aspectRatio:"1",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:8,padding:10,textAlign:"center"}}>
+                <Icon name={icona} size={24} color={C.ink}/>
+                <div style={{fontWeight:600,fontSize:12}}>{lbl}</div>
               </div>
-              <span style={{fontSize:16,color:"#9AA3AB",flexShrink:0}}>›</span>
-            </div>
-          ))}
+            ))}
+          </div>
         </>
       ) : (
         <>
@@ -12224,7 +12282,7 @@ function PannelloGestione({ setCatalog, ruolo, sessione, catalog }) {
 function Placeholder({area,setArea}){
   return (
     <div style={{textAlign:"center",padding:"3.5rem 1rem"}}>
-      <div style={{fontSize:32,color:"#C7CCCF",marginBottom:14}}>{NAV_META[area].icon}</div>
+      <div style={{color:"#C7CCCF",marginBottom:14,display:"flex",justifyContent:"center"}}><Icon name={NAV_META[area].icon} size={40}/></div>
       <div style={{fontSize:13,color:"#8A929A",marginBottom:18}}>Modulo completo disponibile separatamente.</div>
       <button style={S.btnP} onClick={()=>setArea("home")}>← Dashboard</button>
     </div>
