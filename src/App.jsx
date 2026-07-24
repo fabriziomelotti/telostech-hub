@@ -3938,17 +3938,17 @@ async function generaPreventivoPDF(righe, total, meta={}){
   table.articoli thead th.cella-num{text-align:right}
   .riga-prodotto td{border-bottom:1px solid #E3E5EA;padding:14px 12px;vertical-align:top;font-size:14px}
   .riga-alt td{background:#F3F6FB}
-  .cella-prodotto{width:18%;padding-right:6px}
+  .cella-prodotto{width:16%;padding-right:6px}
   .tag{display:inline-block;font-size:11px;font-weight:600;text-transform:uppercase;background:#EEF0F4;color:#5B6770;padding:3px 8px;border-radius:3px;margin-bottom:4px}
   .prodotto-nome{font-weight:600;font-size:15.5px}
   .prodotto-codice{font-family:monospace;font-size:11.5px;color:#9AA3AB;margin-top:3px}
-  .cella-descr{width:46%;padding-left:6px}
+  .cella-descr{width:36%;padding-left:6px}
   .prodotto-img{width:100%;max-width:270px;height:210px;border-radius:6px;display:flex;align-items:center;justify-content:center;overflow:hidden;margin-top:10px}
   .prodotto-img img{max-width:100%;max-height:100%;object-fit:contain}
   .caratteristiche-testo{font-size:13px;color:#7C879E;line-height:1.6;margin-top:8px}
   .descr-testo{font-size:14px;font-weight:700;color:#3A4248;line-height:1.6}
-  .cella-num{text-align:right;white-space:nowrap;width:9%;font-size:17px}
-  .cella-tot{font-weight:700;color:#162758;font-size:22px}
+  .cella-num{text-align:right;white-space:nowrap;width:12%;font-size:15px}
+  .cella-tot{font-weight:700;color:#162758;font-size:18px}
 
   .totali-box{text-align:right;margin-top:10px}
   .tot-imponibile{font-size:24px;font-weight:700;color:#162758}
