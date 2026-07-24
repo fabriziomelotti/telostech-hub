@@ -5496,23 +5496,27 @@ function Preventivi({cart,setCart,preventivi,setPreventivi,setOrdini,setArea,ruo
     return (
       <div>
         {erroreSync && <div style={{fontSize:12,color:C.danger,background:"rgba(200,75,58,0.08)",borderRadius:6,padding:"9px 11px",marginBottom:14}}>⚠ {erroreSync}</div>}
-        <button onClick={creaVuoto} style={{...S.btnAccent,width:"100%",padding:"14px",fontSize:14.5,fontWeight:700,marginBottom:8}}>+ Nuovo preventivo</button>
-        {[
-          ["cerca","🔍 Cerca preventivo",preventivi.length,"Tutti i preventivi, con ricerca per cliente"],
-          ["da-gestire","📤 Da gestire",daGestireN,"Inviati al cliente, in attesa di firma/conferma"],
-          ["in-ordine","✓ Confermati in ordine",inOrdineN,"Preventivi già convertiti in ordine"],
-        ].map(([id,lbl,n,sub])=>(
-          <div key={id} onClick={()=>setView(id)} style={{...S.card,cursor:"pointer",display:"flex",justifyContent:"space-between",alignItems:"center",gap:10,marginBottom:8}}>
-            <div>
-              <div style={{fontWeight:600,fontSize:14}}>{lbl}</div>
-              <div style={{fontSize:12,color:C.steel,marginTop:2}}>{sub}</div>
+        <button onClick={creaVuoto} style={{...S.btnAccent,width:"100%",padding:"14px",fontSize:14.5,fontWeight:700,marginBottom:12,display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
+          <Icon name="plus" size={17}/> Nuovo preventivo
+        </button>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:8}}>
+          {[
+            ["cerca","search","Cerca",preventivi.length],
+            ["da-gestire","reply","Da gestire",daGestireN],
+            ["in-ordine","checkCircle","Confermati",inOrdineN],
+          ].map(([id,icona,lbl,n])=>(
+            <div key={id} onClick={()=>setView(id)} style={{...S.card,cursor:"pointer",aspectRatio:"1",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:7,padding:8,textAlign:"center",position:"relative"}}>
+              {n>0 && (
+                <span className="tnum" style={{position:"absolute",top:8,right:8,fontSize:11,fontWeight:700,color:C.ink,fontFamily:F_MONO}}>{n}</span>
+              )}
+              <Icon name={icona} size={22} color={C.ink}/>
+              <div style={{fontWeight:600,fontSize:12}}>{lbl}</div>
             </div>
-            <span className="tnum" style={{fontSize:15,fontWeight:700,color:n>0?C.ink:"#9AA3AB",fontFamily:F_MONO,flexShrink:0}}>{n}</span>
-          </div>
-        ))}
+          ))}
+        </div>
 
         <button onClick={()=>setView("bloccate")} style={{...S.btnS,width:"100%",padding:"13px",marginTop:16,display:"flex",justifyContent:"space-between",alignItems:"center",border:`1px solid ${C.danger}`,color:C.danger,background:"rgba(200,75,58,0.06)"}}>
-          <span>⊘ Trattative bloccate — analisi{RUOLI_APPROVATORI.includes(ruolo)?" di tutto il team":""}</span>
+          <span style={{display:"flex",alignItems:"center",gap:8}}><Icon name="xCircle" size={16}/> Trattative bloccate — analisi{RUOLI_APPROVATORI.includes(ruolo)?" di tutto il team":""}</span>
           <span className="tnum" style={{fontWeight:700,fontFamily:F_MONO}}>{bloccateN}</span>
         </button>
       </div>
