@@ -782,7 +782,7 @@ export default function App(){
           {area==="clienti" && <Clienti sessione={sessione} preventivi={preventivi} ordini={ordini} attrezzature={attrezzature} setAttrezzature={setAttrezzature} interventi={interventi} setInterventi={setInterventi} catalog={catalog} ruolo={role}/>}
           {area==="promemoria" && <Promemoria sessione={sessione} ruolo={role} preventivi={preventivi} interventi={interventi} ordini={ordini} promemoria={promemoria} setPromemoria={setPromemoria} setArea={setArea}/>}
           {area==="preventivi" && <Preventivi cart={cart} setCart={setCart} preventivi={preventivi} setPreventivi={setPreventivi} setOrdini={setOrdini} setArea={setArea} ruolo={role} catalog={catalog} sessione={sessione} precodici={precodici} isMobile={isMobile}/>}
-          {area==="ordini" && <Ordini ordini={ordini} setOrdini={setOrdini} preventivi={preventivi} setPreventivi={setPreventivi} setInterventi={setInterventi} catalog={catalog} sessione={sessione} ruolo={role} precodici={precodici}/>}
+          {area==="ordini" && <Ordini ordini={ordini} setOrdini={setOrdini} preventivi={preventivi} setPreventivi={setPreventivi} setInterventi={setInterventi} catalog={catalog} sessione={sessione} ruolo={role} precodici={precodici} isMobile={isMobile}/>}
           {area==="interventi" && <Interventi interventi={interventi} setInterventi={setInterventi} attrezzature={attrezzature} sessione={sessione} setArea={setArea} interventoDaCompletare={interventoDaCompletare} setInterventoDaCompletare={setInterventoDaCompletare} catalog={catalog} ruolo={role} precodici={precodici}/>}
           {area==="admin" && <PannelloAdmin ruolo={role} sessione={sessione}/>}
           {area==="gestione" && <PannelloGestione setCatalog={setCatalog} ruolo={role} sessione={sessione} catalog={catalog}/>}
@@ -6725,8 +6725,9 @@ function PreventiviSaltati({preventivi}){
 }
 
 // ─── ORDINI ───────────────────────────────────────────────────────────────────
-function Ordini({ordini,setOrdini,preventivi,setPreventivi,setInterventi,catalog,sessione,ruolo,precodici}){
+function Ordini({ordini,setOrdini,preventivi,setPreventivi,setInterventi,catalog,sessione,ruolo,precodici,isMobile}){
   const [selId,setSelId]=useState(null);
+  const [vista,setVista]=useState("home");
   const [generandoPdf,setGenerandoPdf]=useState(false);
   const [documentiFinSelezionati,setDocumentiFinSelezionati]=useState([]); // indici selezionati nell'ordine corrente
   const [erroreSync,setErroreSync]=useState("");
@@ -7779,10 +7780,77 @@ ${o.firma_cliente ? `
     );
   }
 
+  if(vista==="home" && !creandoNuovo){
+    const daGestireN = ordini.filter(o=>o.stato==="Inviato").length;
+    const confermatiN = ordini.filter(o=>o.stato==="Evaso").length;
+    return (
+      <div>
+        <div style={S.eyebrow}>Ordini</div>
+        {erroreSync && <div style={{fontSize:12,color:C.danger,background:"rgba(200,75,58,0.08)",borderRadius:6,padding:"9px 11px",marginTop:14,marginBottom:14}}>⚠ {erroreSync}</div>}
+        <button onClick={()=>setCreandoNuovo(true)} style={{...S.btnAccent,width:"100%",padding:"14px",fontSize:14.5,fontWeight:700,margin:"12px 0",display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
+          <Icon name="plus" size={17}/> Nuovo ordine
+        </button>
+
+        <div style={isMobile ? {display:"flex",flexDirection:"column",gap:8} : {display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:12}}>
+          {[
+            ["cerca","search","Cerca ordini",ordini.length,"Tutti gli ordini, con ricerca per cliente","rgba(200,75,58,0.09)",C.danger],
+            ["da-gestire","reply","Da gestire",daGestireN,"Inviati, ancora da prendere in carico","rgba(217,164,65,0.12)",C.warn],
+            ["confermati","checkCircle","Confermati",confermatiN,"Evasi, gestiti fino in fondo","rgba(74,157,110,0.1)",C.ok],
+          ].map(([id,icona,lbl,n,sub,sfondo,colore])=>(
+            isMobile ? (
+              <div key={id} onClick={()=>setVista(id)} style={{...S.card,cursor:"pointer",display:"flex",alignItems:"center",gap:12,background:sfondo,border:`1px solid ${colore}`}}>
+                <Icon name={icona} size={22} color={colore}/>
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{fontWeight:700,fontSize:14,color:C.charcoal}}>{lbl}</div>
+                </div>
+                {n>0 && <span className="tnum" style={{fontSize:16,fontWeight:700,color:colore,fontFamily:F_MONO,flexShrink:0}}>{n}</span>}
+              </div>
+            ) : (
+              <div key={id} onClick={()=>setVista(id)} style={{...S.card,cursor:"pointer",aspectRatio:"1.3",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:10,padding:18,textAlign:"center",position:"relative",background:sfondo,border:`1px solid ${colore}`}}>
+                {n>0 && (
+                  <span className="tnum" style={{position:"absolute",top:14,right:16,fontSize:20,fontWeight:700,color:colore,fontFamily:F_MONO}}>{n}</span>
+                )}
+                <Icon name={icona} size={34} color={colore}/>
+                <div style={{fontWeight:700,fontSize:16,color:C.charcoal}}>{lbl}</div>
+                <div style={{fontSize:12,color:C.steel,lineHeight:1.4}}>{sub}</div>
+              </div>
+            )
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  if(vista==="da-gestire" || vista==="confermati"){
+    const stato = vista==="da-gestire" ? "Inviato" : "Evaso";
+    const titolo = vista==="da-gestire" ? "Da gestire" : "Confermati";
+    const elenco = ordini.filter(o=>o.stato===stato);
+    return (
+      <div>
+        <button onClick={()=>setVista("home")} style={{...S.btnS,marginBottom:14}}>← Ordini</button>
+        <div style={S.eyebrow}>{titolo} ({elenco.length})</div>
+        {elenco.length===0 && <div style={{fontSize:12.5,color:"#9AA3AB",padding:"8px 0"}}>Nessun ordine qui.</div>}
+        {elenco.map(o=>(
+          <div key={o.id} onClick={()=>setSelId(o.id)} style={{...S.card,cursor:"pointer",display:"flex",justifyContent:"space-between",alignItems:"center",gap:10}}>
+            <div style={{minWidth:0}}>
+              <div className="tnum" style={{fontSize:10.5,color:"#9AA3AB",fontFamily:F_MONO}}>{codiceOrdine(o)}</div>
+              <div style={{fontWeight:600,fontSize:13.5,marginTop:2}}>{o.cliente}</div>
+              <div style={{fontSize:11.5,color:"#8A929A",marginTop:1}}>{o.righe.length} articol{o.righe.length===1?"o":"i"}</div>
+            </div>
+            <div style={{textAlign:"right",flexShrink:0}}>
+              <div className="tnum" style={{fontWeight:700,fontSize:14,fontFamily:F_MONO}}>€{o.val.toLocaleString("it-IT")}</div>
+              <Tag tone={toneOrdine(o.stato)} style={{marginTop:5}}>{o.stato}</Tag>
+            </div>
+          </div>
+        ))}
+      </div>
+    );
+  }
+
   return (
     <div>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:8}}>
-        <div style={S.eyebrow}>Ordini</div>
+        <button onClick={()=>{ if(creandoNuovo) annullaNuovoOrdine(); setVista("home"); }} style={{...S.btnS}}>← Ordini</button>
         {!creandoNuovo && <button onClick={()=>setCreandoNuovo(true)} style={{...S.btnAccent,padding:"9px 15px",fontSize:12.5}}>+ Nuovo ordine</button>}
       </div>
       {erroreSync && <div style={{fontSize:12,color:C.danger,background:"rgba(200,75,58,0.08)",borderRadius:6,padding:"9px 11px",marginTop:14}}>⚠ {erroreSync}</div>}
