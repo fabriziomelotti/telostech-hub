@@ -794,8 +794,20 @@ function giorniA(dataStr){
   return Math.round((d-oggi)/(1000*60*60*24));
 }
 // Preventivi "Inviato" ancora da gestire (tutto il team, come in ListaPreventivi).
+// Compare come promemoria solo a partire da 3 giorni dall'invio (non subito
+// il giorno stesso) — e da lì resta visibile ininterrottamente finché non
+// viene gestito (confermato, convertito o segnato come saltato), il che
+// equivale a "si ripropone ogni 3 giorni" senza bisogno di un meccanismo di
+// rinvio separato: semplicemente non sparisce finché non si agisce.
 function preventiviDaGestire(preventivi){
-  return (preventivi||[]).filter(p=>p.stato==="Inviato");
+  const SOGLIA_GIORNI = 3;
+  const adesso = Date.now();
+  return (preventivi||[]).filter(p=>{
+    if(p.stato!=="Inviato") return false;
+    if(!p.inviato_il) return true; // preventivi inviati prima di questa funzionalità: mostrali comunque
+    const giorniDaInvio = (adesso - new Date(p.inviato_il).getTime()) / 86400000;
+    return giorniDaInvio >= SOGLIA_GIORNI;
+  });
 }
 // Trattative "vendita rimandata" con un richiamo impostato, con i giorni al richiamo.
 function trattativeDaRecuperare(preventivi){
@@ -2537,8 +2549,8 @@ function Promemoria({sessione, ruolo, preventivi, interventi, ordini, promemoria
     setSalvando(true); setErrore("");
     try{
       const payload = {
-        cliente_codice: clienteForm?.codice || null,
-        cliente_nome: clienteForm?.ragione_sociale || null,
+        cliente_codice: clienteForm?.cliente_codice || null,
+        cliente_nome: clienteForm?.cliente || null,
         testo: testoForm.trim(),
         scadenza: scadenzaForm || null,
         autore_nome: sessione?.nome || null,
@@ -2697,7 +2709,7 @@ function Promemoria({sessione, ruolo, preventivi, interventi, ordini, promemoria
           <div style={{...S.card,cursor:"default",border:`1px solid ${C.ink}`}}>
             <div style={S.eyebrow}>Nuovo promemoria</div>
             <div style={{marginTop:8,marginBottom:10}}>
-              <SelezioneCliente clienteSelezionato={clienteForm} onSeleziona={setClienteForm} sessione={sessione}/>
+              <SelezioneClienteEstesa valore={clienteForm} onCambia={setClienteForm} sessione={sessione}/>
             </div>
             <textarea value={testoForm} onChange={e=>setTestoForm(e.target.value)} placeholder="Cosa devi ricordare?" rows={3} style={{...S.inp,resize:"vertical",marginBottom:10}}/>
             <div style={{marginBottom:12}}>
@@ -5430,7 +5442,6 @@ function Preventivi({cart,setCart,preventivi,setPreventivi,setOrdini,setArea,ruo
           ["cerca","🔍 Cerca preventivo",preventivi.length,"Tutti i preventivi, con ricerca per cliente"],
           ["da-gestire","📤 Da gestire",daGestireN,"Inviati al cliente, in attesa di firma/conferma"],
           ["in-ordine","✓ Confermati in ordine",inOrdineN,"Preventivi già convertiti in ordine"],
-          ["bloccate","⊘ Trattative bloccate",bloccateN,"Saltate, con il motivo indicato"],
         ].map(([id,lbl,n,sub])=>(
           <div key={id} onClick={()=>setView(id)} style={{...S.card,cursor:"pointer",display:"flex",justifyContent:"space-between",alignItems:"center",gap:10,marginBottom:8}}>
             <div>
@@ -5440,6 +5451,11 @@ function Preventivi({cart,setCart,preventivi,setPreventivi,setOrdini,setArea,ruo
             <span className="tnum" style={{fontSize:15,fontWeight:700,color:n>0?C.ink:"#9AA3AB",fontFamily:F_MONO,flexShrink:0}}>{n}</span>
           </div>
         ))}
+
+        <button onClick={()=>setView("bloccate")} style={{...S.btnS,width:"100%",padding:"13px",marginTop:16,display:"flex",justifyContent:"space-between",alignItems:"center",border:`1px solid ${C.danger}`,color:C.danger,background:"rgba(200,75,58,0.06)"}}>
+          <span>⊘ Trattative bloccate — analisi{RUOLI_APPROVATORI.includes(ruolo)?" di tutto il team":""}</span>
+          <span className="tnum" style={{fontWeight:700,fontFamily:F_MONO}}>{bloccateN}</span>
+        </button>
       </div>
     );
   }
@@ -5940,7 +5956,7 @@ function Preventivi({cart,setCart,preventivi,setPreventivi,setOrdini,setArea,ruo
             </button>
           )}
           {selezionato.stato==="Bozza" && !inAttesaApprovazione && (
-            <button onClick={()=>aggiorna(selezionato.id,{stato:"Inviato"})} disabled={!selezionato.cliente||selezionato.righe.length===0} style={{...S.btnAccent,padding:"10px 16px",background:C.warn,color:"#fff",opacity:(!selezionato.cliente||selezionato.righe.length===0)?0.4:1}}>
+            <button onClick={()=>aggiorna(selezionato.id,{stato:"Inviato", inviato_il:new Date().toISOString()})} disabled={!selezionato.cliente||selezionato.righe.length===0} style={{...S.btnAccent,padding:"10px 16px",background:C.warn,color:"#fff",opacity:(!selezionato.cliente||selezionato.righe.length===0)?0.4:1}}>
               Segna come inviato al cliente
             </button>
           )}
@@ -6615,8 +6631,15 @@ function PreventiviSaltati({preventivi}){
                 <div className="tnum" style={{fontWeight:700,fontSize:14,fontFamily:F_MONO,flexShrink:0}}>€{(p.val||0).toLocaleString("it-IT")}</div>
               </div>
               {p.motivo_saltato && (
-                <div style={{fontSize:12.5,color:C.charcoal,background:"rgba(200,75,58,0.06)",borderRadius:7,padding:"9px 11px",lineHeight:1.5}}>
+                <div style={{fontSize:12.5,color:C.charcoal,background:"rgba(200,75,58,0.06)",borderRadius:7,padding:"9px 11px",lineHeight:1.5,marginBottom:p.righe?.length?8:0}}>
                   {p.motivo_saltato}
+                </div>
+              )}
+              {p.righe?.length>0 && (
+                <div style={{fontSize:11.5,color:C.steel,lineHeight:1.6}}>
+                  {p.righe.map((r,i)=>(
+                    <span key={i}>{r.mar?`${r.mar} `:""}{r.nome}{r.qty>1?` ×${r.qty}`:""}{i<p.righe.length-1?" · ":""}</span>
+                  ))}
                 </div>
               )}
             </div>
