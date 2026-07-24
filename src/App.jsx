@@ -781,7 +781,7 @@ export default function App(){
           {area==="prodotti" && <Prodotti cart={cart} setCart={setCart} catalog={catalog} catalogLoading={catalogLoading} sessione={sessione} ruolo={role} setCatalog={setCatalog} setArea={setArea} precodici={precodici}/>}
           {area==="clienti" && <Clienti sessione={sessione} preventivi={preventivi} ordini={ordini} attrezzature={attrezzature} setAttrezzature={setAttrezzature} interventi={interventi} setInterventi={setInterventi} catalog={catalog} ruolo={role}/>}
           {area==="promemoria" && <Promemoria sessione={sessione} ruolo={role} preventivi={preventivi} interventi={interventi} ordini={ordini} promemoria={promemoria} setPromemoria={setPromemoria} setArea={setArea}/>}
-          {area==="preventivi" && <Preventivi cart={cart} setCart={setCart} preventivi={preventivi} setPreventivi={setPreventivi} setOrdini={setOrdini} setArea={setArea} ruolo={role} catalog={catalog} sessione={sessione} precodici={precodici}/>}
+          {area==="preventivi" && <Preventivi cart={cart} setCart={setCart} preventivi={preventivi} setPreventivi={setPreventivi} setOrdini={setOrdini} setArea={setArea} ruolo={role} catalog={catalog} sessione={sessione} precodici={precodici} isMobile={isMobile}/>}
           {area==="ordini" && <Ordini ordini={ordini} setOrdini={setOrdini} preventivi={preventivi} setPreventivi={setPreventivi} setInterventi={setInterventi} catalog={catalog} sessione={sessione} ruolo={role} precodici={precodici}/>}
           {area==="interventi" && <Interventi interventi={interventi} setInterventi={setInterventi} attrezzature={attrezzature} sessione={sessione} setArea={setArea} interventoDaCompletare={interventoDaCompletare} setInterventoDaCompletare={setInterventoDaCompletare} catalog={catalog} ruolo={role} precodici={precodici}/>}
           {area==="admin" && <PannelloAdmin ruolo={role} sessione={sessione}/>}
@@ -5028,7 +5028,7 @@ function BloccoSoluzioneVendita({ soluzione, indice, onCambia, onRimuovi, catalo
   );
 }
 
-function Preventivi({cart,setCart,preventivi,setPreventivi,setOrdini,setArea,ruolo,catalog,sessione,precodici}){
+function Preventivi({cart,setCart,preventivi,setPreventivi,setOrdini,setArea,ruolo,catalog,sessione,precodici,isMobile}){
   const [view,setView]=useState("home"); // home | cerca | da-gestire | in-ordine | bloccate | nuovo | dettaglio
   const [generandoPdf,setGenerandoPdf]=useState(false);
   const [mostraSelezionePacchetto,setMostraSelezionePacchetto]=useState(false);
@@ -5499,19 +5499,30 @@ function Preventivi({cart,setCart,preventivi,setPreventivi,setOrdini,setArea,ruo
         <button onClick={creaVuoto} style={{...S.btnAccent,width:"100%",padding:"14px",fontSize:14.5,fontWeight:700,marginBottom:12,display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
           <Icon name="plus" size={17}/> Nuovo preventivo
         </button>
-        <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:8}}>
+        <div style={isMobile ? {display:"flex",flexDirection:"column",gap:8} : {display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:12}}>
           {[
-            ["cerca","search","Cerca",preventivi.length],
-            ["da-gestire","reply","Da gestire",daGestireN],
-            ["in-ordine","checkCircle","Confermati",inOrdineN],
-          ].map(([id,icona,lbl,n])=>(
-            <div key={id} onClick={()=>setView(id)} style={{...S.card,cursor:"pointer",aspectRatio:"1",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:7,padding:8,textAlign:"center",position:"relative"}}>
-              {n>0 && (
-                <span className="tnum" style={{position:"absolute",top:8,right:8,fontSize:11,fontWeight:700,color:C.ink,fontFamily:F_MONO}}>{n}</span>
-              )}
-              <Icon name={icona} size={22} color={C.ink}/>
-              <div style={{fontWeight:600,fontSize:12}}>{lbl}</div>
-            </div>
+            ["cerca","search","Cerca preventivo",preventivi.length,"Tutti i preventivi, con ricerca per cliente","rgba(200,75,58,0.09)",C.danger],
+            ["da-gestire","reply","Da gestire",daGestireN,"Inviati al cliente, in attesa di firma/conferma","rgba(217,164,65,0.12)",C.warn],
+            ["in-ordine","checkCircle","Confermati in ordine",inOrdineN,"Preventivi già convertiti in ordine","rgba(74,157,110,0.1)",C.ok],
+          ].map(([id,icona,lbl,n,sub,sfondo,colore])=>(
+            isMobile ? (
+              <div key={id} onClick={()=>setView(id)} style={{...S.card,cursor:"pointer",display:"flex",alignItems:"center",gap:12,background:sfondo,border:`1px solid ${colore}`}}>
+                <Icon name={icona} size={22} color={colore}/>
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{fontWeight:700,fontSize:14,color:C.charcoal}}>{lbl}</div>
+                </div>
+                {n>0 && <span className="tnum" style={{fontSize:16,fontWeight:700,color:colore,fontFamily:F_MONO,flexShrink:0}}>{n}</span>}
+              </div>
+            ) : (
+              <div key={id} onClick={()=>setView(id)} style={{...S.card,cursor:"pointer",aspectRatio:"1.3",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:10,padding:18,textAlign:"center",position:"relative",background:sfondo,border:`1px solid ${colore}`}}>
+                {n>0 && (
+                  <span className="tnum" style={{position:"absolute",top:14,right:16,fontSize:20,fontWeight:700,color:colore,fontFamily:F_MONO}}>{n}</span>
+                )}
+                <Icon name={icona} size={34} color={colore}/>
+                <div style={{fontWeight:700,fontSize:16,color:C.charcoal}}>{lbl}</div>
+                <div style={{fontSize:12,color:C.steel,lineHeight:1.4}}>{sub}</div>
+              </div>
+            )
           ))}
         </div>
 
