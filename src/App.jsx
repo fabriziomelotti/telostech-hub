@@ -4075,7 +4075,13 @@ ${paginaArticoliHtml("PROPOSTA ORDINE", righe, finanziariaFornitoreAttiva, `
         <div class="rata-evidenziata">€${(meta.finanziaria_rata||0).toFixed(2)} <span class="mesi">al mese × ${meta.finanziaria_mesi} mesi</span></div>
         <div class="finanziamento-nota">Importo finanziato: €${meta.finanziaria_importo.toFixed(2)} (${meta.finanziaria_iva_inclusa?"IVA inclusa":"IVA esclusa"})</div>
       ` : `
-        <div class="tot-imponibile">Totale (IVA esclusa): €${total.toFixed(2)}</div>
+        ${meta.sconto_rottamazione_attivo && meta.sconto_rottamazione_importo>0 ? `
+          <div class="tot-imponibile-minore">Totale prodotti (IVA esclusa): €${total.toFixed(2)}</div>
+          <div class="finanziamento-nota">Sconto rottamazione/usato: −€${meta.sconto_rottamazione_importo.toFixed(2)}</div>
+          <div class="tot-imponibile">Totale (IVA esclusa): €${(total-meta.sconto_rottamazione_importo).toFixed(2)}</div>
+        ` : `
+          <div class="tot-imponibile">Totale (IVA esclusa): €${total.toFixed(2)}</div>
+        `}
         ${finanziamentoHtml}
       `}
     </div>
@@ -5378,10 +5384,12 @@ function Preventivi({cart,setCart,preventivi,setPreventivi,setOrdini,setArea,ruo
       pagamento_dettagli: p.pagamento_dettagli || null,
       referente_telos: p.referente_telos || null,
       righe: righeOrdine,
-      val: p.extra_sconto_euro ? (valBase - p.extra_sconto_euro) : valBase,
+      val: valBase - (p.extra_sconto_euro||0) - (p.sconto_rottamazione_attivo ? (p.sconto_rottamazione_importo||0) : 0),
       soluzione_confermata: p.soluzione_confermata || null,
       extra_sconto_euro: p.extra_sconto_euro || null,
       extra_sconto_approvato: p.extra_sconto_euro ? !!p.extra_sconto_approvato : null,
+      sconto_rottamazione_attivo: p.sconto_rottamazione_attivo || false,
+      sconto_rottamazione_importo: p.sconto_rottamazione_attivo ? (p.sconto_rottamazione_importo || null) : null,
       conferma_note: p.conferma_note || null,
       stato: "Inserito",
       creato_da_nome: sessione?.nome || null,
@@ -5849,10 +5857,18 @@ function Preventivi({cart,setCart,preventivi,setPreventivi,setOrdini,setArea,ruo
             </div>
           </div>
         ) : (
-          <div style={{display:"flex",justifyContent:"space-between",padding:"14px 0",borderTop:`1px solid ${C.paperLine}`,marginTop:8}}>
-            <span style={{fontWeight:600,fontSize:14}}>Totale</span>
-            <span className="tnum" style={{fontWeight:700,fontSize:18,fontFamily:F_MONO,color:C.ink}}>€{selezionato.val.toFixed(2)}</span>
-          </div>
+          <>
+            {selezionato.sconto_rottamazione_attivo && selezionato.sconto_rottamazione_importo>0 && (
+              <div style={{display:"flex",justifyContent:"space-between",padding:"6px 0"}}>
+                <span style={{fontSize:12.5,color:C.steel}}>Sconto rottamazione/usato</span>
+                <span className="tnum" style={{fontSize:13,fontFamily:F_MONO,color:C.ok}}>−€{selezionato.sconto_rottamazione_importo.toFixed(2)}</span>
+              </div>
+            )}
+            <div style={{display:"flex",justifyContent:"space-between",padding:"14px 0",borderTop:`1px solid ${C.paperLine}`,marginTop:selezionato.sconto_rottamazione_attivo?0:8}}>
+              <span style={{fontWeight:600,fontSize:14}}>Totale</span>
+              <span className="tnum" style={{fontWeight:700,fontSize:18,fontFamily:F_MONO,color:C.ink}}>€{(selezionato.val - (selezionato.sconto_rottamazione_attivo ? (selezionato.sconto_rottamazione_importo||0) : 0)).toFixed(2)}</span>
+            </div>
+          </>
         )}
 
         {/* Finanziamento / Noleggio — rata calcolata automaticamente in base
@@ -6126,6 +6142,8 @@ function Preventivi({cart,setCart,preventivi,setPreventivi,setOrdini,setArea,ruo
                 finanziaria_rata: selezionato.finanziaria_rata,
                 finanziaria_mesi: selezionato.finanziaria_mesi,
                 finanziaria_iva_inclusa: selezionato.finanziaria_iva_inclusa,
+                sconto_rottamazione_attivo: selezionato.sconto_rottamazione_attivo,
+                sconto_rottamazione_importo: selezionato.sconto_rottamazione_importo,
                 includi_copertina: selezionato.includi_copertina,
                 firma_cliente: selezionato.firma_cliente,
                 firma_data: selezionato.firma_data,
@@ -6157,6 +6175,28 @@ function Preventivi({cart,setCart,preventivi,setPreventivi,setOrdini,setArea,ruo
           )}
           {selezionato.stato==="Convertito in ordine" && (
             <button onClick={()=>setArea("ordini")} style={{...S.btnP,padding:"10px 16px"}}>Vedi l'ordine →</button>
+          )}
+        </div>
+
+        <div style={{...S.card,cursor:"default",marginTop:12}}>
+          <div style={{fontSize:13.5,fontWeight:700,marginBottom:4}}>Sconto rottamazione / usato</div>
+          <div style={{fontSize:12,color:C.steel,marginBottom:10}}>
+            Valore riconosciuto per il ritiro di un'attrezzatura usata, da scontare dal totale imponibile — visibile come riga separata sul preventivo e riportato anche sull'ordine.
+          </div>
+          {editable ? (
+            <>
+              <div style={{display:"flex",gap:8,marginBottom:selezionato.sconto_rottamazione_attivo?10:0}}>
+                <button onClick={()=>aggiorna(selezionato.id,{sconto_rottamazione_attivo:true})} style={{border:`1px solid ${selezionato.sconto_rottamazione_attivo?C.ink:C.paperLine}`,borderRadius:7,padding:"8px 14px",fontSize:12.5,cursor:"pointer",fontWeight:selezionato.sconto_rottamazione_attivo?600:400,background:selezionato.sconto_rottamazione_attivo?C.ink:"#fff",color:selezionato.sconto_rottamazione_attivo?"#fff":"#5B6770"}}>Sì</button>
+                <button onClick={()=>aggiorna(selezionato.id,{sconto_rottamazione_attivo:false,sconto_rottamazione_importo:null})} style={{border:`1px solid ${!selezionato.sconto_rottamazione_attivo?C.ink:C.paperLine}`,borderRadius:7,padding:"8px 14px",fontSize:12.5,cursor:"pointer",fontWeight:!selezionato.sconto_rottamazione_attivo?600:400,background:!selezionato.sconto_rottamazione_attivo?C.ink:"#fff",color:!selezionato.sconto_rottamazione_attivo?"#fff":"#5B6770"}}>No</button>
+              </div>
+              {selezionato.sconto_rottamazione_attivo && (
+                <input type="number" min="0" step="0.01" value={selezionato.sconto_rottamazione_importo ?? ""}
+                  onChange={e=>aggiorna(selezionato.id,{sconto_rottamazione_importo: e.target.value ? parseFloat(e.target.value) : null})}
+                  placeholder="0.00" className="tnum" style={{...S.inp,width:140,fontFamily:F_MONO}}/>
+              )}
+            </>
+          ) : (
+            <div className="tnum" style={{fontSize:13,fontWeight:600,fontFamily:F_MONO}}>{selezionato.sconto_rottamazione_attivo && selezionato.sconto_rottamazione_importo ? `€${selezionato.sconto_rottamazione_importo.toFixed(2)}` : "Nessuno"}</div>
           )}
         </div>
 
@@ -7409,7 +7449,13 @@ ${(o.cliente_indirizzo||o.cliente_referente||o.cliente_telefono||o.cliente_email
 </div>` : ""}
 
 <table><thead><tr><th>Articolo</th><th>Codice</th><th style="text-align:center">Qtà</th><th style="text-align:right">Totale</th></tr></thead><tbody>${righe}</tbody></table>
-<div class="tot">Totale: €${o.val.toFixed(2)}</div>
+${o.sconto_rottamazione_attivo && o.sconto_rottamazione_importo>0 ? `
+<div style="text-align:right;margin-top:18px">
+  <div style="font-size:12px;color:#7C879E">Totale prodotti: €${(o.val+o.sconto_rottamazione_importo).toFixed(2)}</div>
+  <div style="font-size:12px;color:#3F9D63">Sconto rottamazione/usato: −€${o.sconto_rottamazione_importo.toFixed(2)}</div>
+  <div class="tot">Totale: €${o.val.toFixed(2)}</div>
+</div>
+` : `<div class="tot">Totale: €${o.val.toFixed(2)}</div>`}
 
 ${o.pagamento_modalita ? `
 <div class="blocco">
