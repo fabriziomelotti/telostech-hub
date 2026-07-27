@@ -3683,6 +3683,10 @@ async function generaPdfBlob(htmlContenuto){
         // il suo margine reale lo eredita per davvero da ".pagina".
         if(headerCanvas) pdf.addImage(headerCanvas.toDataURL("image/jpeg", 0.95), "JPEG", PAD_LR_MM, PAD_TOP_MM, LARGHEZZA_CONTENUTO_MM, headerAltezzaMm);
         pdf.addImage(canvas.toDataURL("image/jpeg", 0.95), "JPEG", 0, yCorpoMm, A4_LARGHEZZA_MM, altezzaTotaleMm);
+        if(footerCanvas){
+          const yFooterMm = A4_ALTEZZA_MM - footerAltezzaMm - MARGINE_INFERIORE_FOOTER_MM;
+          pdf.addImage(footerCanvas.toDataURL("image/jpeg", 0.95), "JPEG", PAD_LR_MM, yFooterMm, LARGHEZZA_CONTENUTO_MM, footerAltezzaMm);
+        }
         primaPaginaCreata = true;
       } else {
         // Ripiego residuo: anche al fattore minimo di riduzione il contenuto
@@ -3722,19 +3726,30 @@ async function generaPdfBlob(htmlContenuto){
           if(primaPaginaCreata) pdf.addPage();
           if(headerCanvas) pdf.addImage(headerCanvas.toDataURL("image/jpeg", 0.95), "JPEG", PAD_LR_MM, PAD_TOP_MM, LARGHEZZA_CONTENUTO_MM, headerAltezzaMm);
           pdf.addImage(fetta.toDataURL("image/jpeg", 0.95), "JPEG", 0, yCorpoMm, A4_LARGHEZZA_MM, altezzaQuestaFettaPx / pxPerMm);
+          // Il footer va ripetuto su OGNI pagina fisica generata da questo
+          // ".pagina" (come l'header), non solo sull'ultima fetta — prima
+          // spariva dalle pagine intermedie di un contenuto molto lungo.
+          if(footerCanvas){
+            const yFooterMm = A4_ALTEZZA_MM - footerAltezzaMm - MARGINE_INFERIORE_FOOTER_MM;
+            pdf.addImage(footerCanvas.toDataURL("image/jpeg", 0.95), "JPEG", PAD_LR_MM, yFooterMm, LARGHEZZA_CONTENUTO_MM, footerAltezzaMm);
+          }
           primaPaginaCreata = true;
           offset = limite;
         }
       }
+    }
 
-      // Il footer (se presente) va sempre sull'ULTIMA pagina fisica generata
-      // per questo ".pagina" (l'unica pagina, o l'ultima fetta in caso di
-      // ripiego) — jsPDF opera sempre sulla pagina "corrente", che a questo
-      // punto è già quella giusta.
-      if(footerCanvas){
-        const yFooterMm = A4_ALTEZZA_MM - footerAltezzaMm - MARGINE_INFERIORE_FOOTER_MM;
-        pdf.addImage(footerCanvas.toDataURL("image/jpeg", 0.95), "JPEG", PAD_LR_MM, yFooterMm, LARGHEZZA_CONTENUTO_MM, footerAltezzaMm);
-      }
+    // Numerazione pagine in basso a destra — un'unica passata finale su
+    // tutto il documento (non dentro il ciclo sopra, perché lì non sappiamo
+    // ancora quante pagine ci saranno in totale). Testo vettoriale vero
+    // (non parte dell'immagine rasterizzata), quindi resta nitido e non
+    // interferisce con la logica di header/footer/ripiego qui sopra.
+    const totalePagine = pdf.internal.getNumberOfPages();
+    for(let p = 1; p <= totalePagine; p++){
+      pdf.setPage(p);
+      pdf.setFontSize(8);
+      pdf.setTextColor(154, 163, 171);
+      pdf.text(`Pagina ${p} di ${totalePagine}`, A4_LARGHEZZA_MM - PAD_LR_MM, A4_ALTEZZA_MM - 4, { align: "right" });
     }
 
     return pdf.output("blob");
@@ -4037,7 +4052,7 @@ async function generaPreventivoPDF(righe, total, meta={}){
   .note-box .lbl{font-weight:700;margin-bottom:6px;font-size:18px}
   .note-box .testo{white-space:pre-line}
 
-  .soluzione-separatore{margin-top:28px;padding-top:16px;border-top:2px solid #162758;font-size:16px;font-weight:700;color:#162758;margin-bottom:12px}
+  .soluzione-separatore{margin-top:28px;padding-top:16px;font-size:16px;font-weight:700;color:#162758;margin-bottom:12px}
 
   .footer-legale{font-size:11px;color:#9AA3AB;border-top:1px solid #E3E5EA;padding-top:6px;margin-top:10px}
   .footer-legale b{color:#5B6770}
@@ -4094,6 +4109,17 @@ ${paginaArticoliHtml("PROPOSTA ORDINE", righe, finanziariaFornitoreAttiva, `
 
 <div class="pagina condizioni">
   <div class="corpo-contenuto">
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:16px;margin-bottom:16px;padding-bottom:10px;border-bottom:1px solid #E3E5EA">
+      <div>
+        <div style="font-size:11px;color:#7C879E">Spett.le Cliente</div>
+        <div style="font-size:13px;font-weight:700;color:#232323">${meta.cliente||""}</div>
+      </div>
+      <div style="text-align:right;font-size:11px;color:#3A4248;line-height:1.6">
+        <div><span style="color:#7C879E">Preventivo</span> <b>${codiceMostrato}</b></div>
+        <div><span style="color:#7C879E">Data</span> ${oggi} · <span style="color:#7C879E">Scadenza</span> ${scadenzaMostrata||"—"}</div>
+        ${referenteCognome ? `<div><span style="color:#7C879E">Referente Telos</span> ${referenteCognome}${referenteTelefono ? ` — ${referenteTelefono}` : ""}</div>` : ""}
+      </div>
+    </div>
     ${TESTO_CONDIZIONI}
     <div class="firma-box">
       <div class="titolo">Timbro e Firma per accettazione</div>
