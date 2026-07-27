@@ -10421,8 +10421,11 @@ function GestioneUtenti({ ruolo, sessione }) {
     setMsgCreazione("");
     if (!f.email.trim() || !f.email.includes("@")) { setStatoCreazione("errore"); setMsgCreazione("Inserisci un'email valida."); return; }
     if (!f.password || f.password.length < 8) { setStatoCreazione("errore"); setMsgCreazione("La password deve avere almeno 8 caratteri."); return; }
-    if (!f.nome.trim() || !f.cognome.trim()) { setStatoCreazione("errore"); setMsgCreazione("Nome e cognome sono obbligatori."); return; }
-    if (f.ruolo === "cliente" && !clienteScelto?.codice) { setStatoCreazione("errore"); setMsgCreazione("Un account cliente richiede la selezione dell'azienda in anagrafica."); return; }
+    if (f.ruolo === "cliente") {
+      if (!clienteScelto?.codice) { setStatoCreazione("errore"); setMsgCreazione("Un account cliente richiede la selezione dell'azienda in anagrafica."); return; }
+    } else if (!f.nome.trim() || !f.cognome.trim()) {
+      setStatoCreazione("errore"); setMsgCreazione("Nome e cognome sono obbligatori."); return;
+    }
 
     setStatoCreazione("salvo"); setMsgCreazione("Creazione in corso…");
     try {
@@ -10565,10 +10568,12 @@ function GestioneUtenti({ ruolo, sessione }) {
             L'utente potrà accedere subito con queste credenziali (nessuna email viene inviata automaticamente).
           </div>
           {campo("Email *", <input value={f.email} onChange={e => setF({ ...f, email: e.target.value })} placeholder="nome.cognome@telos.it" style={S.inp} />)}
-          <div style={{ display: "flex", gap: 10 }}>
-            <div style={{ flex: 1 }}>{campo("Nome *", <input value={f.nome} onChange={e => setF({ ...f, nome: e.target.value })} style={S.inp} />)}</div>
-            <div style={{ flex: 1 }}>{campo("Cognome *", <input value={f.cognome} onChange={e => setF({ ...f, cognome: e.target.value })} style={S.inp} />)}</div>
-          </div>
+          {f.ruolo !== "cliente" && (
+            <div style={{ display: "flex", gap: 10 }}>
+              <div style={{ flex: 1 }}>{campo("Nome *", <input value={f.nome} onChange={e => setF({ ...f, nome: e.target.value })} style={S.inp} />)}</div>
+              <div style={{ flex: 1 }}>{campo("Cognome *", <input value={f.cognome} onChange={e => setF({ ...f, cognome: e.target.value })} style={S.inp} />)}</div>
+            </div>
+          )}
           {campo("Password iniziale *", (
             <div style={{ display: "flex", gap: 8 }}>
               <input value={f.password} onChange={e => setF({ ...f, password: e.target.value })} style={{ ...S.inp, fontFamily: F_MONO }} />
@@ -10621,10 +10626,12 @@ function GestioneUtenti({ ruolo, sessione }) {
 
           {editId === u.id && (
             <div style={{ marginTop: 12, paddingTop: 12, borderTop: `1px solid ${C.paperLine}` }}>
-              <div style={{ display: "flex", gap: 10 }}>
-                <div style={{ flex: 1 }}>{campo("Nome", <input value={editBuf.nome} onChange={e => setEditBuf({ ...editBuf, nome: e.target.value })} style={S.inp} />)}</div>
-                <div style={{ flex: 1 }}>{campo("Cognome", <input value={editBuf.cognome} onChange={e => setEditBuf({ ...editBuf, cognome: e.target.value })} style={S.inp} />)}</div>
-              </div>
+              {editBuf.ruolo !== "cliente" && (
+                <div style={{ display: "flex", gap: 10 }}>
+                  <div style={{ flex: 1 }}>{campo("Nome", <input value={editBuf.nome} onChange={e => setEditBuf({ ...editBuf, nome: e.target.value })} style={S.inp} />)}</div>
+                  <div style={{ flex: 1 }}>{campo("Cognome", <input value={editBuf.cognome} onChange={e => setEditBuf({ ...editBuf, cognome: e.target.value })} style={S.inp} />)}</div>
+                </div>
+              )}
               {campo("Telefono", <input value={editBuf.telefono} onChange={e => setEditBuf({ ...editBuf, telefono: e.target.value })} placeholder="es. 335 1234567" style={S.inp} />)}
               {campo("Ruolo", ruoliBtn(editBuf.ruolo, v => setEditBuf({ ...editBuf, ruolo: v })))}
               {editBuf.ruolo === "cliente" && campo("Azienda cliente collegata *", clienteSceltoEdit ? (
