@@ -3606,6 +3606,25 @@ async function generaPdfBlob(htmlContenuto){
       const footerAltezzaMm = footerCanvas ? footerCanvas.height / (footerCanvas.width / LARGHEZZA_CONTENUTO_MM) : 0;
       const spazioFooterMm = footerCanvas ? footerAltezzaMm + MARGINE_INFERIORE_FOOTER_MM : 0;
 
+      // Altezza VERA del contenuto di questo ".pagina", ignorando
+      // temporaneamente il suo min-height:297mm — che altrimenti "gonfia"
+      // sempre l'elemento a piena pagina anche quando il contenuto reale è
+      // molto più corto (tipicamente la copertina, o una pagina condizioni
+      // che finisce prima del fondo foglio): senza questa misura, il
+      // controllo qui sotto vedeva sempre un'altezza di ~297mm anche per
+      // pagine cortissime e, sommandoci margine/footer, scattava quasi
+      // sempre il ripiego a fette (vedi più sotto), generando in coda una
+      // pagina fisica aggiuntiva quasi vuota (la sola eccedenza fittizia
+      // del min-height). Il min-height va ripristinato SUBITO dopo la
+      // misura, prima della cattura vera e propria via html2canvas: una
+      // pagina che ci sta in un solo foglio continua così a essere
+      // renderizzata a piena altezza 297mm (sfondo bianco fino in fondo,
+      // footer nella posizione corretta) esattamente come prima.
+      const minHeightOriginale = pagina.style.minHeight;
+      pagina.style.minHeight = "0";
+      const altezzaContenutoRealeMm = altezzaMm(pagina);
+      pagina.style.minHeight = minHeightOriginale;
+
       // Un ".pagina" ha solo min-height:297mm, non un limite massimo: se il
       // contenuto (tipicamente il testo delle condizioni, o un preventivo
       // con moltissime righe prodotto) è più lungo di una pagina fisica,
@@ -3625,10 +3644,10 @@ async function generaPdfBlob(htmlContenuto){
       const styleOriginale = { width: pagina.style.width, transform: pagina.style.transform, transformOrigin: pagina.style.transformOrigin };
       let ridimensionata = false;
       const obiettivoCorpoMm = Math.max(OBIETTIVO_MM - PAD_TOP_MM - headerAltezzaMm - spazioFooterMm, 40);
-      if(altezzaMm(pagina) + PAD_TOP_MM + headerAltezzaMm + spazioFooterMm > A4_ALTEZZA_MM + TOLLERANZA_MM){
+      if(altezzaContenutoRealeMm + PAD_TOP_MM + headerAltezzaMm + spazioFooterMm > A4_ALTEZZA_MM + TOLLERANZA_MM){
         ridimensionata = true;
         pagina.style.transformOrigin = "top left";
-        let fattore = 1, altezza = altezzaMm(pagina), tentativi = 0;
+        let fattore = 1, altezza = altezzaContenutoRealeMm, tentativi = 0;
         while(altezza > obiettivoCorpoMm && fattore > FATTORE_MINIMO && tentativi < 8){
           fattore = Math.max(fattore * (obiettivoCorpoMm/altezza) * 0.98, FATTORE_MINIMO);
           pagina.style.width = `${A4_LARGHEZZA_MM/fattore}mm`;
@@ -3672,7 +3691,7 @@ async function generaPdfBlob(htmlContenuto){
       // alcun respiro) più l'altezza dell'header stesso.
       const yCorpoMm = PAD_TOP_MM + headerAltezzaMm;
 
-      if(yCorpoMm + altezzaTotaleMm + spazioFooterMm <= A4_ALTEZZA_MM + 0.5){
+      if(yCorpoMm + altezzaContenutoRealeMm + spazioFooterMm <= A4_ALTEZZA_MM + 0.5){
         if(primaPaginaCreata) pdf.addPage();
         // Header e footer vanno incollati alla loro dimensione NATURALE
         // (LARGHEZZA_CONTENUTO_MM, con lo stesso margine sinistro/destro del
