@@ -145,6 +145,12 @@ const RUOLI = {
     nav:["home","ai","prodotti","clienti","promemoria","preventivi","ordini","interventi","ticket","gestione"]},
   admin: {label:"Admin", initials:"AM", nome:"Amministratore",
     nav:["home","ai","prodotti","clienti","promemoria","preventivi","ordini","interventi","ticket","gestione","admin"]},
+  // Nav vuota di proposito: il portale cliente vero e proprio non è ancora
+  // costruito. Finché non lo è, un account "cliente" non deve avere
+  // accesso a NESSUNA delle aree pensate per lo staff — vedi il gate
+  // dedicato subito dopo il login più sotto in App(), che mostra un
+  // semplice placeholder invece della shell completa.
+  cliente: {label:"Cliente", initials:"CL", nome:"Cliente", nav:[]},
 };
 // ─── ICONE — set outline minimal (stile iOS/Apple, tratto sottile), al posto
 // delle emoji/simboli usati finora. Ogni icona è un semplice path SVG,
@@ -602,7 +608,15 @@ export default function App(){
   // il token di sessione, quindi non si può fare prima del login come per
   // il catalogo). Restano condivisi tra tutti gli utenti autenticati.
   useEffect(()=>{
-    if(!role) return;
+    // Ruolo "cliente": nessun fetch di dati aziendali, a prescindere da
+    // cosa permettano oggi le RLS delle altre tabelle (preventivi, ordini,
+    // condizioni di acquisto/vendita, margini…) — quelle policy sono state
+    // scritte quando esistevano solo i 4 ruoli interni e presumono
+    // "autenticato = staff". Finché non vengono riverificate una per una,
+    // questo blocco è la difesa che impedisce comunque la fuga di dati:
+    // anche se una RLS altrove fosse ancora troppo permissiva, qui il
+    // browser di un cliente non arriva proprio a fare la richiesta.
+    if(!role || role==="cliente") return;
     const accessToken = trovaAccessToken(sessione);
     if(!accessToken) return;
     sbGetAuth("preventivi", "select=*&order=creato_il.desc&limit=500", accessToken)
@@ -706,6 +720,24 @@ export default function App(){
     </div>
   );
   if(!role) return <LoginReale onLogin={login} errore={authErrore} mfaStep={mfaStep} onCompletaMFA={authCompletaMFA} onAnnullaMFA={authAnnullaMFA} Logo={Logo} G={G} C={C} S={S} F_BODY={F_BODY} F_MONO={F_MONO}/>;
+
+  // Gate di sicurezza: il portale cliente vero e proprio (ticket, apertura
+  // richieste, attrezzature proprie) non è ancora costruito. Un account
+  // "cliente" autenticato non deve MAI atterrare sulla shell pensata per
+  // lo staff (sidebar con Preventivi/Ordini/Clienti/…) nel frattempo,
+  // anche solo per un attimo prima che l'eventuale sviluppo del portale
+  // la sostituisca — da qui il return dedicato, completamente separato.
+  if(role === "cliente"){
+    return (
+      <div style={{minHeight:"100dvh",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:16,background:C.paper,fontFamily:F_BODY,padding:20,textAlign:"center"}}>
+        <style>{G}</style>
+        <Logo variant="telostech" height={40}/>
+        <div style={{fontFamily:F_DISPLAY,fontSize:18,fontWeight:600,color:C.charcoal}}>Portale cliente in arrivo</div>
+        <div style={{fontSize:13,color:C.steel,maxWidth:360}}>Il tuo account è attivo. La sezione per aprire e seguire i ticket di assistenza sarà disponibile a breve — nel frattempo continua pure a contattarci come hai sempre fatto.</div>
+        <button onClick={logout} style={{...S.btnS,marginTop:6}}>Esci</button>
+      </div>
+    );
+  }
 
   const navList = isMobile ? navMobile(r.nav) : r.nav;
 
@@ -10342,10 +10374,13 @@ function GestioneUtenti({ ruolo, sessione }) {
   const accessToken = trovaAccessToken(sessione);
   const vuoto = { email: "", password: generaPassword(), nome: "", cognome: "", ruolo: "commerciale" };
   const [utenti, setUtenti] = useState([]);
+  const [clientiMap, setClientiMap] = useState({}); // codice -> ragione_sociale, per mostrare i profili "cliente" nella lista
   const [caricando, setCaricando] = useState(true);
   const [msgGlobale, setMsgGlobale] = useState("");
   const [nuovoAperto, setNuovoAperto] = useState(false);
   const [f, setF] = useState(vuoto);
+  const [clienteScelto, setClienteScelto] = useState(null); // oggetto cliente completo, solo per ruolo "cliente" in creazione
+  const [clienteSceltoEdit, setClienteSceltoEdit] = useState(null); // stesso, in modifica
   const [statoCreazione, setStatoCreazione] = useState("idle"); // idle | salvo | fatto | errore
   const [msgCreazione, setMsgCreazione] = useState("");
   const [editId, setEditId] = useState(null);
@@ -10359,6 +10394,12 @@ function GestioneUtenti({ ruolo, sessione }) {
     try {
       const { utenti: lista } = await chiamaAdminUsers("list", {}, accessToken);
       setUtenti(lista || []);
+      const codici = [...new Set((lista||[]).filter(u=>u.ruolo==="cliente" && u.cliente_codice).map(u=>u.cliente_codice))];
+      if(codici.length){
+        const cl = await sbGetAuth("clienti", `select=codice,ragione_sociale&codice=in.(${codici.map(c=>encodeURIComponent(c)).join(",")})`, accessToken);
+        const mappa = {}; (cl||[]).forEach(c=>{ mappa[c.codice]=c.ragione_sociale; });
+        setClientiMap(mappa);
+      }
     } catch (err) {
       setMsgGlobale("Errore nel caricamento utenti: " + err.message);
     }
@@ -10381,17 +10422,20 @@ function GestioneUtenti({ ruolo, sessione }) {
     if (!f.email.trim() || !f.email.includes("@")) { setStatoCreazione("errore"); setMsgCreazione("Inserisci un'email valida."); return; }
     if (!f.password || f.password.length < 8) { setStatoCreazione("errore"); setMsgCreazione("La password deve avere almeno 8 caratteri."); return; }
     if (!f.nome.trim() || !f.cognome.trim()) { setStatoCreazione("errore"); setMsgCreazione("Nome e cognome sono obbligatori."); return; }
+    if (f.ruolo === "cliente" && !clienteScelto?.codice) { setStatoCreazione("errore"); setMsgCreazione("Un account cliente richiede la selezione dell'azienda in anagrafica."); return; }
 
     setStatoCreazione("salvo"); setMsgCreazione("Creazione in corso…");
     try {
       await chiamaAdminUsers("create", {
         email: f.email.trim(), password: f.password,
         nome: f.nome.trim(), cognome: f.cognome.trim(), ruolo: f.ruolo,
+        cliente_codice: f.ruolo === "cliente" ? clienteScelto.codice : undefined,
       }, accessToken);
 
       setStatoCreazione("fatto");
       setMsgCreazione(`Utente creato — comunica a ${f.nome} queste credenziali (non verranno mostrate di nuovo): ${f.email.trim()} / ${f.password}`);
       setF({ ...vuoto, password: generaPassword() });
+      setClienteScelto(null);
       caricaUtenti();
     } catch (err) {
       setStatoCreazione("errore");
@@ -10401,14 +10445,20 @@ function GestioneUtenti({ ruolo, sessione }) {
 
   function apriModifica(u) {
     setEditId(u.id);
-    setEditBuf({ nome: u.nome, cognome: u.cognome, ruolo: u.ruolo || "commerciale", telefono: u.telefono || "" });
+    setEditBuf({ nome: u.nome, cognome: u.cognome, ruolo: u.ruolo || "commerciale", telefono: u.telefono || "", cliente_codice: u.cliente_codice || null });
+    setClienteSceltoEdit(u.cliente_codice ? { codice: u.cliente_codice, ragione_sociale: clientiMap[u.cliente_codice] || u.cliente_codice } : null);
   }
 
   async function salvaModifica(id) {
+    if (editBuf.ruolo === "cliente" && !editBuf.cliente_codice) {
+      setMsgGlobale("Un account cliente richiede la selezione dell'azienda in anagrafica.");
+      return;
+    }
     try {
       await chiamaAdminUsers("update", {
         id, nome: editBuf.nome.trim(), cognome: editBuf.cognome.trim(), ruolo: editBuf.ruolo,
         telefono: editBuf.telefono.trim() || null,
+        cliente_codice: editBuf.ruolo === "cliente" ? editBuf.cliente_codice : null,
       }, accessToken);
       setEditId(null);
       caricaUtenti();
@@ -10526,6 +10576,14 @@ function GestioneUtenti({ ruolo, sessione }) {
             </div>
           ))}
           {campo("Ruolo", ruoliBtn(f.ruolo, v => setF({ ...f, ruolo: v })))}
+          {f.ruolo === "cliente" && campo("Azienda cliente collegata *", clienteScelto ? (
+            <div style={{ ...S.card, cursor: "default", display: "flex", justifyContent: "space-between", alignItems: "center", padding: "9px 12px" }}>
+              <span style={{ fontWeight: 600, fontSize: 13 }}>{clienteScelto.ragione_sociale}</span>
+              <span onClick={() => setClienteScelto(null)} style={{ fontSize: 12, color: C.ink, cursor: "pointer", fontWeight: 600 }}>Cambia</span>
+            </div>
+          ) : (
+            <SelezioneCliente sessione={sessione} onSeleziona={setClienteScelto} />
+          ))}
 
           <button onClick={creaUtente} disabled={statoCreazione === "salvo"} style={{ ...S.btnP, width: "100%", padding: "12px", marginTop: 4, opacity: statoCreazione === "salvo" ? 0.6 : 1 }}>
             {statoCreazione === "salvo" ? "Creazione…" : "Crea utente"}
@@ -10549,6 +10607,7 @@ function GestioneUtenti({ ruolo, sessione }) {
               <div style={{ fontSize: 12, color: C.steel, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{u.email}</div>
               <div style={{ fontSize: 11, fontFamily: F_MONO, color: "#9AA3AB", marginTop: 3 }}>
                 {u.ruolo ? RUOLI[u.ruolo]?.label || u.ruolo : "— nessun ruolo —"}
+                {u.ruolo === "cliente" && u.cliente_codice ? ` · ${clientiMap[u.cliente_codice] || u.cliente_codice}` : ""}
                 {u.telefono ? ` · ${u.telefono}` : " · nessun telefono"}
                 {u.ultimoAccesso ? ` · ultimo accesso ${new Date(u.ultimoAccesso).toLocaleDateString("it-IT")}` : " · mai acceduto"}
               </div>
@@ -10568,6 +10627,14 @@ function GestioneUtenti({ ruolo, sessione }) {
               </div>
               {campo("Telefono", <input value={editBuf.telefono} onChange={e => setEditBuf({ ...editBuf, telefono: e.target.value })} placeholder="es. 335 1234567" style={S.inp} />)}
               {campo("Ruolo", ruoliBtn(editBuf.ruolo, v => setEditBuf({ ...editBuf, ruolo: v })))}
+              {editBuf.ruolo === "cliente" && campo("Azienda cliente collegata *", clienteSceltoEdit ? (
+                <div style={{ ...S.card, cursor: "default", display: "flex", justifyContent: "space-between", alignItems: "center", padding: "9px 12px" }}>
+                  <span style={{ fontWeight: 600, fontSize: 13 }}>{clienteSceltoEdit.ragione_sociale}</span>
+                  <span onClick={() => { setClienteSceltoEdit(null); setEditBuf({ ...editBuf, cliente_codice: null }); }} style={{ fontSize: 12, color: C.ink, cursor: "pointer", fontWeight: 600 }}>Cambia</span>
+                </div>
+              ) : (
+                <SelezioneCliente sessione={sessione} onSeleziona={c => { setClienteSceltoEdit(c); setEditBuf({ ...editBuf, cliente_codice: c.codice }); }} />
+              ))}
 
               <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
                 <button onClick={() => salvaModifica(u.id)} style={{ ...S.btnAccent, flex: 1, padding: "10px" }}>✓ Salva</button>
