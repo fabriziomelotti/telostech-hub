@@ -3672,7 +3672,7 @@ async function generaPdfBlob(htmlContenuto){
       // alcun respiro) più l'altezza dell'header stesso.
       const yCorpoMm = PAD_TOP_MM + headerAltezzaMm;
 
-      if(yCorpoMm + altezzaTotaleMm <= A4_ALTEZZA_MM + 0.5){
+      if(yCorpoMm + altezzaTotaleMm + spazioFooterMm <= A4_ALTEZZA_MM + 0.5){
         if(primaPaginaCreata) pdf.addPage();
         // Header e footer vanno incollati alla loro dimensione NATURALE
         // (LARGHEZZA_CONTENUTO_MM, con lo stesso margine sinistro/destro del
@@ -3979,7 +3979,7 @@ async function generaPreventivoPDF(righe, total, meta={}){
   *{box-sizing:border-box;margin:0;padding:0}
   html,body{width:210mm}
   body{font-family:Arial,sans-serif;color:#232323;font-size:15px}
-  .pagina{width:210mm;min-height:297mm;padding:6mm 9mm;page-break-after:always;display:flex;flex-direction:column}
+  .pagina{width:210mm;min-height:297mm;padding:7mm 12mm;page-break-after:always;display:flex;flex-direction:column}
   .pagina:last-child{page-break-after:auto}
 
   /* ── Copertina ── */
@@ -4013,17 +4013,17 @@ async function generaPreventivoPDF(righe, total, meta={}){
   table.articoli thead th.cella-num{text-align:right}
   .riga-prodotto td{border-bottom:1px solid #E3E5EA;padding:14px 12px;vertical-align:top;font-size:14px}
   .riga-alt td{background:#F3F6FB}
-  .cella-prodotto{width:16%;padding-right:6px}
+  .cella-prodotto{width:15%;padding-right:6px}
   .tag{display:inline-block;font-size:11px;font-weight:600;text-transform:uppercase;background:#EEF0F4;color:#5B6770;padding:3px 8px;border-radius:3px;margin-bottom:4px}
   .prodotto-nome{font-weight:600;font-size:15.5px}
   .prodotto-codice{font-family:monospace;font-size:11.5px;color:#9AA3AB;margin-top:3px}
-  .cella-descr{width:36%;padding-left:6px}
+  .cella-descr{width:33%;padding-left:6px}
   .prodotto-img{width:100%;max-width:270px;height:210px;border-radius:6px;display:flex;align-items:center;justify-content:center;overflow:hidden;margin-top:10px}
   .prodotto-img img{max-width:100%;max-height:100%;object-fit:contain}
-  .caratteristiche-testo{font-size:13px;color:#7C879E;line-height:1.6;margin-top:8px}
-  .descr-testo{font-size:14px;font-weight:700;color:#3A4248;line-height:1.6}
-  .cella-num{text-align:right;white-space:nowrap;width:12%;font-size:15px}
-  .cella-tot{font-weight:700;color:#162758;font-size:18px}
+  .caratteristiche-testo{font-size:14px;color:#7C879E;line-height:1.6;margin-top:8px}
+  .descr-testo{font-size:16px;font-weight:700;color:#3A4248;line-height:1.6}
+  .cella-num{text-align:right;white-space:nowrap;width:13%;font-size:16px}
+  .cella-tot{font-weight:700;color:#162758;font-size:20px}
 
   .totali-box{text-align:right;margin-top:10px}
   .tot-imponibile{font-size:24px;font-weight:700;color:#162758}
@@ -4167,7 +4167,7 @@ async function generaPreventivoInterventoPDF(pv, meta={}){
   *{box-sizing:border-box;margin:0;padding:0}
   html,body{width:210mm}
   body{font-family:Arial,sans-serif;color:#232323;font-size:12.5px}
-  .pagina{width:210mm;min-height:297mm;padding:6mm 9mm;page-break-after:always;display:flex;flex-direction:column}
+  .pagina{width:210mm;min-height:297mm;padding:7mm 12mm;page-break-after:always;display:flex;flex-direction:column}
   .pagina:last-child{page-break-after:auto}
 
   .corpo-contenuto{flex:1}
@@ -4326,7 +4326,7 @@ async function generaRapportoInterventoPDF(i, meta={}){
   *{box-sizing:border-box;margin:0;padding:0}
   html,body{width:210mm}
   body{font-family:Arial,sans-serif;color:#232323;font-size:12.5px}
-  .pagina{width:210mm;min-height:297mm;padding:6mm 9mm;display:flex;flex-direction:column}
+  .pagina{width:210mm;min-height:297mm;padding:7mm 12mm;display:flex;flex-direction:column}
   .corpo-contenuto{flex:1}
   .hd-content{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;padding-bottom:6px;border-bottom:2px solid #162758}
   .hd-content .logo-telos-spa{height:34px}
@@ -7419,7 +7419,7 @@ function Ordini({ordini,setOrdini,preventivi,setPreventivi,setInterventi,catalog
   *{box-sizing:border-box;margin:0;padding:0}
   html,body{width:210mm}
   body{font-family:Arial,sans-serif;color:#232323;font-size:13px}
-  .pagina{width:210mm;min-height:297mm;padding:6mm 9mm;page-break-after:always}
+  .pagina{width:210mm;min-height:297mm;padding:7mm 12mm;page-break-after:always}
   .pagina:last-child{page-break-after:auto}
   .hd{display:flex;justify-content:space-between;margin-bottom:14px;padding-bottom:10px;border-bottom:2px solid #162758}
   .brand{font-size:22px;font-weight:700;color:#162758}
