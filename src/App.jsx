@@ -3598,6 +3598,13 @@ async function generaPdfBlob(htmlContenuto){
           scale: 2, useCORS: true, backgroundColor: "#ffffff", logging: false,
         });
       }
+      // Spazio riservato al footer (altezza + margine dal bordo inferiore):
+      // va tolto dal target di rimpicciolimento del corpo esattamente come
+      // l'header, altrimenti il corpo può restare "quasi a misura" e il
+      // footer, incollato a una posizione fissa vicino al bordo inferiore,
+      // finisce sovrapposto alla coda del contenuto invece di starci sotto.
+      const footerAltezzaMm = footerCanvas ? footerCanvas.height / (footerCanvas.width / LARGHEZZA_CONTENUTO_MM) : 0;
+      const spazioFooterMm = footerCanvas ? footerAltezzaMm + MARGINE_INFERIORE_FOOTER_MM : 0;
 
       // Un ".pagina" ha solo min-height:297mm, non un limite massimo: se il
       // contenuto (tipicamente il testo delle condizioni, o un preventivo
@@ -3617,8 +3624,8 @@ async function generaPdfBlob(htmlContenuto){
       // quella distribuzione (visto nel PDF di prova: copertina schiacciata).
       const styleOriginale = { width: pagina.style.width, transform: pagina.style.transform, transformOrigin: pagina.style.transformOrigin };
       let ridimensionata = false;
-      const obiettivoCorpoMm = Math.max(OBIETTIVO_MM - PAD_TOP_MM - headerAltezzaMm, 40);
-      if(altezzaMm(pagina) + PAD_TOP_MM + headerAltezzaMm > A4_ALTEZZA_MM + TOLLERANZA_MM){
+      const obiettivoCorpoMm = Math.max(OBIETTIVO_MM - PAD_TOP_MM - headerAltezzaMm - spazioFooterMm, 40);
+      if(altezzaMm(pagina) + PAD_TOP_MM + headerAltezzaMm + spazioFooterMm > A4_ALTEZZA_MM + TOLLERANZA_MM){
         ridimensionata = true;
         pagina.style.transformOrigin = "top left";
         let fattore = 1, altezza = altezzaMm(pagina), tentativi = 0;
@@ -3687,7 +3694,7 @@ async function generaPdfBlob(htmlContenuto){
         // qui che prima l'header spariva dalla seconda pagina in poi e il
         // contenuto "saliva" a occuparne il posto — ora resta fisso su ogni
         // pagina fisica generata da questo ".pagina", non solo sulla prima.
-        const altezzaPerPaginaCorpoMm = A4_ALTEZZA_MM - yCorpoMm;
+        const altezzaPerPaginaCorpoMm = A4_ALTEZZA_MM - yCorpoMm - spazioFooterMm;
         const altezzaFettaPx = Math.round(altezzaPerPaginaCorpoMm * pxPerMm);
         let offset = 0;
         while(offset < canvas.height){
@@ -3725,8 +3732,6 @@ async function generaPdfBlob(htmlContenuto){
       // ripiego) — jsPDF opera sempre sulla pagina "corrente", che a questo
       // punto è già quella giusta.
       if(footerCanvas){
-        const footerPxPerMm = footerCanvas.width / LARGHEZZA_CONTENUTO_MM;
-        const footerAltezzaMm = footerCanvas.height / footerPxPerMm;
         const yFooterMm = A4_ALTEZZA_MM - footerAltezzaMm - MARGINE_INFERIORE_FOOTER_MM;
         pdf.addImage(footerCanvas.toDataURL("image/jpeg", 0.95), "JPEG", PAD_LR_MM, yFooterMm, LARGHEZZA_CONTENUTO_MM, footerAltezzaMm);
       }
