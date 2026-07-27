@@ -10376,6 +10376,14 @@ function GestioneUtenti({ ruolo, sessione }) {
   const [editBuf, setEditBuf] = useState({});
   const [pwResetId, setPwResetId] = useState(null);
   const [pwResetVal, setPwResetVal] = useState("");
+  // Riorganizzazione pagina: due sezioni distinte invece di un'unica lista
+  // mista — Utenti Telos (staff, filtrabili per tipologia) e Utenti
+  // Clienti (account portale, filtrabili per azienda/email), ciascuna con
+  // la propria ricerca.
+  const [tabUtenti, setTabUtenti] = useState("telos"); // "telos" | "clienti"
+  const [filtroRuoloTelos, setFiltroRuoloTelos] = useState("tutti");
+  const [ricercaTelos, setRicercaTelos] = useState("");
+  const [ricercaClienti, setRicercaClienti] = useState("");
 
   async function caricaUtenti() {
     setCaricando(true);
@@ -10526,6 +10534,27 @@ function GestioneUtenti({ ruolo, sessione }) {
     </div>
   );
 
+  // Due liste derivate invece di un'unica lista mista: "Telos" (i 4 ruoli
+  // interni, ulteriormente filtrabili per tipologia) e "Clienti" (ruolo
+  // "cliente", cercabili per ragione sociale/codice/email) — ciascuna con
+  // la propria ricerca testuale.
+  const utentiTelos = useMemo(()=>{
+    const q = ricercaTelos.trim().toLowerCase();
+    return utenti
+      .filter(u => u.ruolo !== "cliente")
+      .filter(u => filtroRuoloTelos==="tutti" || u.ruolo===filtroRuoloTelos)
+      .filter(u => !q || `${u.nome} ${u.cognome} ${u.email}`.toLowerCase().includes(q));
+  },[utenti, ricercaTelos, filtroRuoloTelos]);
+
+  const utentiClienti = useMemo(()=>{
+    const q = ricercaClienti.trim().toLowerCase();
+    return utenti
+      .filter(u => u.ruolo === "cliente")
+      .filter(u => !q || `${u.nome} ${u.email} ${u.cliente_codice||""} ${clientiMap[u.cliente_codice]||""}`.toLowerCase().includes(q));
+  },[utenti, ricercaClienti, clientiMap]);
+
+  const listaAttiva = tabUtenti === "telos" ? utentiTelos : utentiClienti;
+
   return (
     <div>
       {!accessToken && (
@@ -10539,12 +10568,42 @@ function GestioneUtenti({ ruolo, sessione }) {
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
         <div>
           <div style={{ fontFamily: F_DISPLAY, fontSize: 16, fontWeight: 600 }}>Utenti</div>
-          <div style={{ fontSize: 12.5, color: C.steel }}>{utenti.length} account{caricando ? " · caricamento…" : ""}</div>
+          <div style={{ fontSize: 12.5, color: C.steel }}>{utentiTelos.length + utentiClienti.length} account{caricando ? " · caricamento…" : ""}</div>
         </div>
         <button onClick={() => setNuovoAperto(v => !v)} style={S.btnP}>
           {nuovoAperto ? "✕ Chiudi" : "+ Nuovo utente"}
         </button>
       </div>
+
+      <div style={{ display: "flex", gap: 6, marginBottom: 14 }}>
+        {[["telos", `Utenti Telos (${utenti.filter(u=>u.ruolo!=="cliente").length})`], ["clienti", `Utenti Clienti (${utenti.filter(u=>u.ruolo==="cliente").length})`]].map(([id, label]) => (
+          <div key={id} onClick={() => setTabUtenti(id)} style={{
+            padding: "7px 12px", borderRadius: 20, fontSize: 12.5, cursor: "pointer", fontWeight: 600,
+            background: tabUtenti === id ? C.ink : "#fff", color: tabUtenti === id ? "#fff" : C.charcoal,
+            border: `1px solid ${tabUtenti === id ? C.ink : C.paperLine}`,
+          }}>{label}</div>
+        ))}
+      </div>
+
+      {tabUtenti === "telos" ? (
+        <div style={{ marginBottom: 14 }}>
+          <input value={ricercaTelos} onChange={e => setRicercaTelos(e.target.value)} placeholder="Cerca per nome, cognome o email…" style={{ ...S.inp, marginBottom: 8 }} />
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+            {["tutti", "commerciale", "tecnico", "responsabile", "admin"].map(k => {
+              const on = filtroRuoloTelos === k;
+              return (
+                <div key={k} onClick={() => setFiltroRuoloTelos(k)} style={{
+                  padding: "5px 11px", borderRadius: 16, fontSize: 11.5, cursor: "pointer", fontWeight: 600,
+                  background: on ? C.ink : "#fff", color: on ? "#fff" : "#5B6770",
+                  border: `1px solid ${on ? C.ink : C.paperLine}`,
+                }}>{k === "tutti" ? "Tutti" : RUOLI[k].label}</div>
+              );
+            })}
+          </div>
+        </div>
+      ) : (
+        <input value={ricercaClienti} onChange={e => setRicercaClienti(e.target.value)} placeholder="Cerca per azienda, codice cliente o email…" style={{ ...S.inp, marginBottom: 14 }} />
+      )}
 
       {msgGlobale && (
         <div style={{ fontSize: 12, fontFamily: F_MONO, color: C.danger, marginBottom: 12 }}>{msgGlobale}</div>
@@ -10590,7 +10649,7 @@ function GestioneUtenti({ ruolo, sessione }) {
         </div>
       )}
 
-      {utenti.map(u => (
+      {listaAttiva.map(u => (
         <div key={u.id} style={{ ...S.card, cursor: "default" }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10 }}>
             <div style={{ minWidth: 0 }}>
@@ -10662,8 +10721,10 @@ function GestioneUtenti({ ruolo, sessione }) {
         </div>
       ))}
 
-      {!caricando && utenti.length === 0 && (
-        <div style={{ fontSize: 12.5, color: C.steel, textAlign: "center", padding: "20px 0" }}>Nessun utente trovato.</div>
+      {!caricando && listaAttiva.length === 0 && (
+        <div style={{ fontSize: 12.5, color: C.steel, textAlign: "center", padding: "20px 0" }}>
+          {tabUtenti === "telos" ? "Nessun utente Telos trovato." : "Nessun utente cliente trovato."}
+        </div>
       )}
     </div>
   );
@@ -12748,16 +12809,25 @@ function NotificheBell({ sessione, onApriTicket }){
   const idsMostrateRef = useRef(new Set());
   const primoCaricoRef = useRef(true);
 
-  // Richiede il permesso una sola volta per sessione (il browser ricorda
-  // la scelta oltre la sessione singola) — "come fosse un'app": popup del
-  // sistema operativo anche a scheda in background, non solo il badge qui
-  // in pagina. Nessun requisito di service worker: bastano le Notification
-  // web standard, il limite è che non arrivano a browser/tab chiuso.
-  useEffect(()=>{
-    if(typeof Notification !== "undefined" && Notification.permission === "default"){
-      Notification.requestPermission().catch(()=>{});
-    }
-  },[]);
+  const [permessoNotifiche, setPermessoNotifiche] = useState(
+    typeof Notification !== "undefined" ? Notification.permission : "unsupported"
+  );
+
+  // I browser mobile (in particolare Chrome Android) ignorano o bloccano
+  // silenziosamente Notification.requestPermission() se non parte da un
+  // tocco/click reale dell'utente — richiederlo in automatico al
+  // montaggio (come facevamo prima) è proprio il motivo per cui le
+  // notifiche non arrivavano lato mobile. Ora la richiesta parte solo dal
+  // pulsante "Attiva notifiche" qui sotto. Su iOS Safari "Notification"
+  // non esiste affatto fuori da una PWA con Web Push configurato: in quel
+  // caso il pulsante resta nascosto, nessun modo di aggirarlo da qui.
+  async function attivaNotifiche(){
+    if(typeof Notification === "undefined") return;
+    try{
+      const esito = await Notification.requestPermission();
+      setPermessoNotifiche(esito);
+    }catch{ /* ignora: resta comunque il badge in pagina */ }
+  }
 
   async function carica(){
     if(!accessToken || !mioId) return;
@@ -12806,7 +12876,12 @@ function NotificheBell({ sessione, onApriTicket }){
   if(!mioId) return null;
 
   return (
-    <div style={{position:"relative",flexShrink:0}}>
+    <div style={{position:"relative",flexShrink:0,display:"flex",alignItems:"center",gap:6}}>
+      {permessoNotifiche==="default" && (
+        <button onClick={attivaNotifiche} style={{background:"none",border:`1px solid ${C.paperLine}`,borderRadius:14,padding:"4px 9px",fontSize:11,color:C.ink,cursor:"pointer",fontWeight:600,whiteSpace:"nowrap"}}>
+          🔔 Attiva notifiche
+        </button>
+      )}
       <button onClick={()=>setAperto(a=>!a)} style={{background:"none",border:"none",cursor:"pointer",position:"relative",padding:6,display:"flex"}}>
         <Icon name="bell" size={19} color={C.charcoal}/>
         {nonLette>0 && <span style={{position:"absolute",top:2,right:2,background:C.danger,color:"#fff",fontSize:9,fontWeight:700,borderRadius:8,minWidth:15,height:15,display:"flex",alignItems:"center",justifyContent:"center",padding:"0 3px"}}>{nonLette>9?"9+":nonLette}</span>}
@@ -13057,15 +13132,33 @@ function DettaglioTicket({ ticket, sessione, ruolo, utenti, catalog, clienteInfo
   const [chiusuraInCorso, setChiusuraInCorso] = useState(false);
   const [esitoChiusura, setEsitoChiusura] = useState("");
 
-  async function caricaMessaggi(){
-    setCaricandoMsg(true);
+  async function caricaMessaggi(sfondo){
+    if(!sfondo) setCaricandoMsg(true);
     try{
       const dati = await sbGetAuth("ticket_messaggi", `select=*&ticket_id=eq.${ticket.id}&order=created_at.asc`, accessToken);
       setMessaggi(dati||[]);
     }catch{ /* thread vuoto in caso di errore, non blocca il resto della pagina */ }
-    setCaricandoMsg(false);
+    if(!sfondo) setCaricandoMsg(false);
   }
-  useEffect(()=>{ caricaMessaggi(); },[ticket.id]);
+  // Il thread non è realtime (nessuna sottoscrizione Supabase in questo
+  // stack): senza un refresh periodico, la risposta del cliente/collega
+  // compare solo uscendo e rientrando nel ticket. Ricarichiamo anche la
+  // riga del ticket stesso (non solo i messaggi), così uno stato/
+  // assegnazione cambiati da un altro utente si aggiornano allo stesso
+  // modo — "sfondo=true" evita lo spinner di caricamento a ogni giro.
+  async function ricaricaTicket(){
+    try{
+      const [t] = await sbGetAuth("ticket_assistenza", `select=*&id=eq.${ticket.id}`, accessToken);
+      if(t) onAggiornato(t);
+    }catch{}
+  }
+  useEffect(()=>{
+    caricaMessaggi();
+    const interval = setInterval(()=>{ caricaMessaggi(true); ricaricaTicket(); }, 8000);
+    const onVisibile = ()=>{ if(document.visibilityState==="visible"){ caricaMessaggi(true); ricaricaTicket(); } };
+    document.addEventListener("visibilitychange", onVisibile);
+    return ()=>{ clearInterval(interval); document.removeEventListener("visibilitychange", onVisibile); };
+  },[ticket.id]);
 
   useEffect(()=>{
     if(!ticket.marchio || !ticket.categoria){ setSuggeriti([]); return; }
@@ -13526,17 +13619,17 @@ function PortaleCliente({ sessione, logout, G }){
   },[ticketDaAprire, ticket]);
 
   return (
-    <div style={{minHeight:"100dvh",background:C.paper,fontFamily:F_BODY,color:C.charcoal}}>
+    <div style={{minHeight:"100dvh",background:C.paper,fontFamily:F_BODY,color:C.charcoal,fontSize:16}}>
       <style>{G}</style>
-      <div style={{height:54,borderBottom:`1px solid ${C.paperLine}`,display:"flex",alignItems:"center",padding:"0 16px",gap:10,background:"#fff",position:"sticky",top:0,zIndex:50}}>
-        <Logo variant="telostech" height={24}/>
-        <div style={{flex:1,fontSize:12.5,color:C.steel,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{sessione?.nome}</div>
+      <div style={{height:58,borderBottom:`1px solid ${C.paperLine}`,display:"flex",alignItems:"center",padding:"0 16px",gap:10,background:"#fff",position:"sticky",top:0,zIndex:50}}>
+        <Logo variant="telostech" height={26}/>
+        <div style={{flex:1,fontSize:14,color:C.steel,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{sessione?.nome}</div>
         <NotificheBell sessione={sessione} onApriTicket={(id)=>setTicketDaAprire(id)}/>
-        <button onClick={logout} style={S.btnS}>Esci</button>
+        <button onClick={logout} style={{...S.btnS,fontSize:14,padding:"9px 14px"}}>Esci</button>
       </div>
 
       <div style={{maxWidth:640,margin:"0 auto",padding:16}}>
-        {errore && <div style={{color:C.danger,fontSize:12.5,marginBottom:12}}>{errore}</div>}
+        {errore && <div style={{color:C.danger,fontSize:14,marginBottom:12}}>{errore}</div>}
 
         {aperto ? (
           <DettaglioTicketCliente
@@ -13552,21 +13645,21 @@ function PortaleCliente({ sessione, logout, G }){
           />
         ) : (
           <>
-            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
-              <div style={{fontFamily:F_DISPLAY,fontSize:18,fontWeight:600}}>I MIEI TICKET</div>
-              <button onClick={()=>setNuovoAperto(true)} style={S.btnP}>+ Nuovo ticket</button>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:18}}>
+              <div style={{fontFamily:F_DISPLAY,fontSize:21,fontWeight:600}}>I MIEI TICKET</div>
+              <button onClick={()=>setNuovoAperto(true)} style={{...S.btnP,fontSize:15,padding:"11px 16px"}}>+ Nuovo ticket</button>
             </div>
-            {caricando && <div style={{color:"#9AA3AB",fontSize:13}}>Caricamento…</div>}
+            {caricando && <div style={{color:"#9AA3AB",fontSize:15}}>Caricamento…</div>}
             {!caricando && ticket.length===0 && (
-              <div style={{textAlign:"center",padding:"2.5rem 1rem",color:"#9AA3AB",fontSize:13}}>
+              <div style={{textAlign:"center",padding:"2.5rem 1rem",color:"#9AA3AB",fontSize:15}}>
                 Nessun ticket ancora. Apri una richiesta se hai bisogno di assistenza.
               </div>
             )}
             {ticket.map(t=>(
-              <div key={t.id} onClick={()=>setAperto(t)} style={{...S.card, borderLeft:`3px solid ${STATO_TICKET_COLORE[t.stato]||C.steel}`}}>
-                <div style={{fontFamily:F_MONO,fontSize:11,color:"#9AA3AB"}}>{t.numero}</div>
-                <div style={{fontWeight:600,fontSize:13.5,marginTop:2}}>{t.titolo}</div>
-                <div style={{fontSize:11.5,color:STATO_TICKET_COLORE[t.stato]||C.steel,fontWeight:600,marginTop:5}}>{t.stato}</div>
+              <div key={t.id} onClick={()=>setAperto(t)} style={{...S.card, padding:"15px 16px", borderLeft:`4px solid ${STATO_TICKET_COLORE[t.stato]||C.steel}`}}>
+                <div style={{fontFamily:F_MONO,fontSize:13,color:"#9AA3AB"}}>{t.numero}</div>
+                <div style={{fontWeight:600,fontSize:17,marginTop:3}}>{t.titolo}</div>
+                <div style={{fontSize:14,color:STATO_TICKET_COLORE[t.stato]||C.steel,fontWeight:700,marginTop:6}}>{t.stato}</div>
               </div>
             ))}
           </>
@@ -13616,25 +13709,25 @@ function NuovoTicketCliente({ sessione, attrezzature, onAnnulla, onCreato }){
 
   return (
     <div>
-      <button onClick={onAnnulla} style={{...S.btnS,marginBottom:14}}>← Torna ai ticket</button>
-      <div style={{fontFamily:F_DISPLAY,fontSize:16,fontWeight:600,marginBottom:14}}>NUOVA RICHIESTA</div>
+      <button onClick={onAnnulla} style={{...S.btnS,fontSize:14,padding:"9px 14px",marginBottom:16}}>← Torna ai ticket</button>
+      <div style={{fontFamily:F_DISPLAY,fontSize:19,fontWeight:600,marginBottom:16}}>NUOVA RICHIESTA</div>
 
-      <input value={titolo} onChange={e=>setTitolo(e.target.value)} placeholder="Oggetto della richiesta *" style={{...S.inp,marginBottom:8}} autoFocus/>
-      <textarea value={descrizione} onChange={e=>setDescrizione(e.target.value)} placeholder="Descrivi il problema o la richiesta…" rows={4} style={{...S.inp,marginBottom:14,resize:"vertical",fontFamily:F_BODY}}/>
+      <input value={titolo} onChange={e=>setTitolo(e.target.value)} placeholder="Oggetto della richiesta *" style={{...S.inp,fontSize:16,padding:"12px 13px",marginBottom:10}} autoFocus/>
+      <textarea value={descrizione} onChange={e=>setDescrizione(e.target.value)} placeholder="Descrivi il problema o la richiesta…" rows={4} style={{...S.inp,fontSize:16,padding:"12px 13px",marginBottom:16,resize:"vertical",fontFamily:F_BODY}}/>
 
-      <div style={S.eyebrow}>A quale attrezzatura si riferisce? (facoltativo)</div>
-      <select value={attrezzaturaId} onChange={e=>setAttrezzaturaId(e.target.value)} style={{...S.sel,width:"100%",marginBottom:8}}>
+      <div style={{...S.eyebrow,fontSize:13}}>A quale attrezzatura si riferisce? (facoltativo)</div>
+      <select value={attrezzaturaId} onChange={e=>setAttrezzaturaId(e.target.value)} style={{...S.sel,fontSize:15,padding:"11px 12px",width:"100%",marginBottom:10}}>
         <option value="">— non la trovo / non riguarda un'attrezzatura specifica —</option>
         {attrezzature.map(a=>(
           <option key={a.id} value={a.id}>{a.marchio?`${a.marchio} `:""}{a.nome_prodotto}{a.numero_serie?` — S/N ${a.numero_serie}`:""}</option>
         ))}
       </select>
       {!attrezzaturaId && (
-        <input value={descrizioneLibera} onChange={e=>setDescrizioneLibera(e.target.value)} placeholder="Se non la trovi, descrivi il prodotto (facoltativo)" style={{...S.inp,marginBottom:14}}/>
+        <input value={descrizioneLibera} onChange={e=>setDescrizioneLibera(e.target.value)} placeholder="Se non la trovi, descrivi il prodotto (facoltativo)" style={{...S.inp,fontSize:16,padding:"12px 13px",marginBottom:16}}/>
       )}
 
-      {errore && <div style={{color:C.danger,fontSize:12.5,marginBottom:10}}>{errore}</div>}
-      <button onClick={salva} disabled={salvando||!titolo.trim()} style={{...S.btnAccent,width:"100%",padding:"12px",opacity:(salvando||!titolo.trim())?0.5:1}}>
+      {errore && <div style={{color:C.danger,fontSize:14,marginBottom:12}}>{errore}</div>}
+      <button onClick={salva} disabled={salvando||!titolo.trim()} style={{...S.btnAccent,width:"100%",fontSize:16,padding:"14px",opacity:(salvando||!titolo.trim())?0.5:1}}>
         {salvando?"Invio…":"Invia richiesta"}
       </button>
     </div>
@@ -13650,15 +13743,31 @@ function DettaglioTicketCliente({ ticket, sessione, onIndietro, onAggiornato }){
   const [inviando, setInviando] = useState(false);
   const [errore, setErrore] = useState("");
 
-  async function caricaMessaggi(){
-    setCaricando(true);
+  async function caricaMessaggi(sfondo){
+    if(!sfondo) setCaricando(true);
     try{
       const dati = await sbGetAuth("ticket_messaggi", `select=*&ticket_id=eq.${ticket.id}&order=created_at.asc`, accessToken);
       setMessaggi(dati||[]);
     }catch{ /* thread vuoto in caso di errore, non blocca il resto della pagina */ }
-    setCaricando(false);
+    if(!sfondo) setCaricando(false);
   }
-  useEffect(()=>{ caricaMessaggi(); },[ticket.id]);
+  // Stesso motivo del lato staff: nessun realtime in questo stack, quindi
+  // senza polling la risposta compare solo uscendo e rientrando dal
+  // ticket. Ricarichiamo anche la riga del ticket (stato, esito di
+  // chiusura) in "sfondo" (nessuno spinner) a ogni giro.
+  async function ricaricaTicket(){
+    try{
+      const [t] = await sbGetAuth("ticket_assistenza", `select=*&id=eq.${ticket.id}`, accessToken);
+      if(t) onAggiornato(t);
+    }catch{}
+  }
+  useEffect(()=>{
+    caricaMessaggi();
+    const interval = setInterval(()=>{ caricaMessaggi(true); ricaricaTicket(); }, 8000);
+    const onVisibile = ()=>{ if(document.visibilityState==="visible"){ caricaMessaggi(true); ricaricaTicket(); } };
+    document.addEventListener("visibilitychange", onVisibile);
+    return ()=>{ clearInterval(interval); document.removeEventListener("visibilitychange", onVisibile); };
+  },[ticket.id]);
 
   async function invia(){
     if(!testo.trim()) return;
@@ -13674,45 +13783,45 @@ function DettaglioTicketCliente({ ticket, sessione, onIndietro, onAggiornato }){
 
   return (
     <div>
-      <button onClick={onIndietro} style={{...S.btnS,marginBottom:14}}>← Torna ai ticket</button>
-      <div style={{fontFamily:F_MONO,fontSize:11,color:"#9AA3AB"}}>{ticket.numero}</div>
-      <div style={{fontFamily:F_DISPLAY,fontSize:18,fontWeight:600,marginTop:2}}>{ticket.titolo}</div>
-      <div style={{fontSize:12.5,fontWeight:600,color:STATO_TICKET_COLORE[ticket.stato]||C.steel,marginBottom:14}}>{ticket.stato}</div>
+      <button onClick={onIndietro} style={{...S.btnS,fontSize:14,padding:"9px 14px",marginBottom:16}}>← Torna ai ticket</button>
+      <div style={{fontFamily:F_MONO,fontSize:12.5,color:"#9AA3AB"}}>{ticket.numero}</div>
+      <div style={{fontFamily:F_DISPLAY,fontSize:20,fontWeight:600,marginTop:2}}>{ticket.titolo}</div>
+      <div style={{fontSize:14,fontWeight:700,color:STATO_TICKET_COLORE[ticket.stato]||C.steel,marginBottom:16}}>{ticket.stato}</div>
 
       {ticket.stato==="Chiuso" && ticket.esito_chiusura && (
         <div style={{...S.card,cursor:"default",background:"#F3F6FB",marginBottom:14}}>
-          <div style={{fontSize:11,color:C.steel,fontFamily:F_MONO,textTransform:"uppercase",letterSpacing:"0.05em",marginBottom:4}}>Esito</div>
-          <div style={{fontSize:13,whiteSpace:"pre-line"}}>{ticket.esito_chiusura}</div>
+          <div style={{fontSize:12.5,color:C.steel,fontFamily:F_MONO,textTransform:"uppercase",letterSpacing:"0.05em",marginBottom:5}}>Esito</div>
+          <div style={{fontSize:15,whiteSpace:"pre-line"}}>{ticket.esito_chiusura}</div>
         </div>
       )}
 
-      <div style={{border:`1px solid ${C.paperLine}`,borderRadius:8,padding:12,minHeight:160,marginBottom:12,background:"#fff"}}>
-        {caricando && <div style={{color:"#9AA3AB",fontSize:12.5}}>Caricamento…</div>}
-        {!caricando && messaggi.length===0 && <div style={{color:"#9AA3AB",fontSize:12.5}}>Nessun messaggio ancora.</div>}
+      <div style={{border:`1px solid ${C.paperLine}`,borderRadius:8,padding:13,minHeight:160,marginBottom:14,background:"#fff"}}>
+        {caricando && <div style={{color:"#9AA3AB",fontSize:14}}>Caricamento…</div>}
+        {!caricando && messaggi.length===0 && <div style={{color:"#9AA3AB",fontSize:14}}>Nessun messaggio ancora.</div>}
         {messaggi.map(m=>{
           const mio = m.autore_tipo==="cliente";
           const etichetta = mio ? "Tu" : m.autore_tipo==="chatbot" ? "Assistente virtuale" : "Telos";
           return (
-            <div key={m.id} style={{marginBottom:10,padding:"8px 10px",borderRadius:7,background: mio ? "rgba(87,206,202,0.12)" : "#F3F6FB", marginLeft: mio?"18%":0, marginRight: mio?0:"18%"}}>
-              <div style={{display:"flex",justifyContent:"space-between",fontSize:11,marginBottom:3,gap:8}}>
+            <div key={m.id} style={{marginBottom:12,padding:"10px 12px",borderRadius:8,background: mio ? "rgba(87,206,202,0.12)" : "#F3F6FB", marginLeft: mio?"12%":0, marginRight: mio?0:"12%"}}>
+              <div style={{display:"flex",justifyContent:"space-between",fontSize:12.5,marginBottom:4,gap:8}}>
                 <span style={{fontWeight:700,color:C.ink}}>{etichetta}</span>
                 <span style={{color:"#9AA3AB",fontFamily:F_MONO,flexShrink:0}}>{new Date(m.created_at).toLocaleString("it-IT",{dateStyle:"short",timeStyle:"short"})}</span>
               </div>
-              <div style={{fontSize:13,whiteSpace:"pre-line"}}>{m.testo}</div>
+              <div style={{fontSize:15.5,lineHeight:1.5,whiteSpace:"pre-line"}}>{m.testo}</div>
             </div>
           );
         })}
       </div>
 
-      {errore && <div style={{color:C.danger,fontSize:12.5,marginBottom:10}}>{errore}</div>}
+      {errore && <div style={{color:C.danger,fontSize:14,marginBottom:12}}>{errore}</div>}
 
       {ticket.stato!=="Chiuso" ? (
         <>
-          <textarea value={testo} onChange={e=>setTesto(e.target.value)} placeholder="Scrivi un messaggio…" rows={3} style={{...S.inp,marginBottom:8,resize:"vertical",fontFamily:F_BODY}}/>
-          <button onClick={invia} disabled={inviando||!testo.trim()} style={{...S.btnAccent,width:"100%",opacity:(inviando||!testo.trim())?0.5:1}}>{inviando?"Invio…":"Invia"}</button>
+          <textarea value={testo} onChange={e=>setTesto(e.target.value)} placeholder="Scrivi un messaggio…" rows={3} style={{...S.inp,fontSize:16,padding:"12px 13px",marginBottom:10,resize:"vertical",fontFamily:F_BODY}}/>
+          <button onClick={invia} disabled={inviando||!testo.trim()} style={{...S.btnAccent,width:"100%",fontSize:16,padding:"14px",opacity:(inviando||!testo.trim())?0.5:1}}>{inviando?"Invio…":"Invia"}</button>
         </>
       ) : (
-        <div style={{fontSize:12,color:"#9AA3AB",textAlign:"center",padding:"8px 0"}}>Questo ticket è chiuso.</div>
+        <div style={{fontSize:14,color:"#9AA3AB",textAlign:"center",padding:"10px 0"}}>Questo ticket è chiuso.</div>
       )}
     </div>
   );
