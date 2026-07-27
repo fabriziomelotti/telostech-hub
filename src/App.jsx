@@ -3906,7 +3906,7 @@ async function generaPreventivoPDF(righe, total, meta={}){
           ${r.desc ? `<div class="descr-testo">${r.desc}</div>` : ""}
           ${caratteristiche.length ? `<div class="caratteristiche-testo">${caratteristiche.join("<br/>")}</div>` : ""}
         </td>
-        <td class="cella-num">${r.qty||1}</td>
+        <td class="cella-num cella-qta">${r.qty||1}</td>
         ${finanziariaAttiva ? "" : `
         <td class="cella-num">€${(r.listino||0).toFixed(2)}</td>
         <td class="cella-num">€${r.netto.toFixed(2)}</td>
@@ -3915,7 +3915,7 @@ async function generaPreventivoPDF(righe, total, meta={}){
     }).join("");
     return `<table class="articoli">
       <thead><tr>
-        <th>Prodotto</th><th>Descrizione</th><th class="cella-num">Qtà</th>${finanziariaAttiva ? "" : `<th class="cella-num">Listino</th><th class="cella-num">Netto</th><th class="cella-num">Totale</th>`}
+        <th>Prodotto</th><th>Descrizione</th><th class="cella-num cella-qta">Qtà</th>${finanziariaAttiva ? "" : `<th class="cella-num">Listino</th><th class="cella-num">Netto</th><th class="cella-num">Totale</th>`}
       </tr></thead>
       <tbody>${righeHtml}</tbody>
     </table>`;
@@ -4032,13 +4032,14 @@ async function generaPreventivoPDF(righe, total, meta={}){
   .tag{display:inline-block;font-size:11px;font-weight:600;text-transform:uppercase;background:#EEF0F4;color:#5B6770;padding:3px 8px;border-radius:3px;margin-bottom:4px}
   .prodotto-nome{font-weight:600;font-size:15.5px}
   .prodotto-codice{font-family:monospace;font-size:11.5px;color:#9AA3AB;margin-top:3px}
-  .cella-descr{width:33%;padding-left:6px}
+  .cella-descr{width:37%;padding-left:6px}
   .prodotto-img{width:100%;max-width:270px;height:210px;border-radius:6px;display:flex;align-items:center;justify-content:center;overflow:hidden;margin-top:10px}
   .prodotto-img img{max-width:100%;max-height:100%;object-fit:contain}
   .caratteristiche-testo{font-size:14px;color:#7C879E;line-height:1.6;margin-top:8px}
   .descr-testo{font-size:16px;font-weight:700;color:#3A4248;line-height:1.6}
-  .cella-num{text-align:right;white-space:nowrap;width:13%;font-size:16px}
-  .cella-tot{font-weight:700;color:#162758;font-size:20px}
+  .cella-num{text-align:right;white-space:nowrap;width:14%;font-size:18px}
+  .cella-qta{width:6%;font-size:16px}
+  .cella-tot{font-weight:700;color:#162758;font-size:22px}
 
   .totali-box{text-align:right;margin-top:10px}
   .tot-imponibile{font-size:24px;font-weight:700;color:#162758}
