@@ -5291,6 +5291,32 @@ function Preventivi({cart,setCart,preventivi,setPreventivi,setOrdini,setArea,ruo
       const notaProdotto = (prod.note||"").trim();
       if(notaProdotto && !note.includes(notaProdotto)) note = note ? `${note}\n${notaProdotto}` : notaProdotto;
     }
+    // Pacchetto TELOS con un prezzo complessivo scontato impostato (Admin →
+    // Pacchetti): i prodotti restano ai loro prezzi normali (margini e
+    // statistiche per prodotto restano corretti), lo sconto compare come
+    // riga a parte — così in preventivo si vede chiaramente sia il valore
+    // pieno sia lo sconto applicato per l'acquisto in pacchetto, invece di
+    // "nascondere" lo sconto dentro prezzi netti modificati riga per riga.
+    const codScontoRiga = `SCONTO-PACCHETTO-${pacchetto.id || pacchetto.nome}`;
+    const righeScontabili = righe.filter(r=>r.pacchetto_nome===pacchetto.nome && r.cod!==codScontoRiga);
+    const rigaScontoIdx = righe.findIndex(r=>r.cod===codScontoRiga);
+    if(pacchetto.tipo!=="fornitore" && pacchetto.prezzo_scontato!=null){
+      const totaleComponenti = righeScontabili.reduce((acc,r)=>acc+r.netto*(r.qty||1),0);
+      const sconto = totaleComponenti - pacchetto.prezzo_scontato;
+      if(Math.abs(sconto) > 0.005){
+        const rigaSconto = {
+          cod: codScontoRiga, mar: null, nome: `Sconto pacchetto — ${pacchetto.nome}`,
+          listino: 0, netto: -sconto, qty: 1, costo: 0,
+          pacchetto_nome: pacchetto.nome, pacchetto_tipo: pacchetto.tipo || "telos",
+          sottoMargine: false,
+        };
+        if(rigaScontoIdx>=0) righe[rigaScontoIdx] = rigaSconto; else righe.push(rigaSconto);
+      } else if(rigaScontoIdx>=0){
+        righe.splice(rigaScontoIdx,1);
+      }
+    } else if(rigaScontoIdx>=0){
+      righe.splice(rigaScontoIdx,1); // il pacchetto non ha (più) un prezzo scontato impostato
+    }
     const patch = { righe, approvato:false, note };
     // Se il pacchetto ha già gli importi finanziati impostati (Admin →
     // Pacchetti), attiviamo subito il blocco "Vendita tramite finanziaria
@@ -6843,6 +6869,26 @@ function Ordini({ordini,setOrdini,preventivi,setPreventivi,setInterventi,catalog
         rigaNuova.sottoMargine = rigaSottoMargine(rigaNuova);
         const idx = righe.findIndex(r=>r.cod===comp.cod);
         if(idx>=0) righe[idx] = rigaNuova; else righe.push(rigaNuova);
+      }
+      const codScontoRiga = `SCONTO-PACCHETTO-${pacchetto.id || pacchetto.nome}`;
+      const righeScontabili = righe.filter(r=>r.pacchetto_nome===pacchetto.nome && r.cod!==codScontoRiga);
+      const rigaScontoIdx = righe.findIndex(r=>r.cod===codScontoRiga);
+      if(pacchetto.tipo!=="fornitore" && pacchetto.prezzo_scontato!=null){
+        const totaleComponenti = righeScontabili.reduce((acc,r)=>acc+r.netto*(r.qty||1),0);
+        const sconto = totaleComponenti - pacchetto.prezzo_scontato;
+        if(Math.abs(sconto) > 0.005){
+          const rigaSconto = {
+            cod: codScontoRiga, mar: null, nome: `Sconto pacchetto — ${pacchetto.nome}`,
+            listino: 0, netto: -sconto, qty: 1, costo: 0,
+            pacchetto_nome: pacchetto.nome, pacchetto_tipo: pacchetto.tipo || "telos",
+            sottoMargine: false,
+          };
+          if(rigaScontoIdx>=0) righe[rigaScontoIdx] = rigaSconto; else righe.push(rigaSconto);
+        } else if(rigaScontoIdx>=0){
+          righe.splice(rigaScontoIdx,1);
+        }
+      } else if(rigaScontoIdx>=0){
+        righe.splice(rigaScontoIdx,1);
       }
       return righe;
     });
@@ -11692,6 +11738,7 @@ function FormPacchetto({ pacchetto, catalog, accessToken, ruolo, onSalvato, onAn
   const [tipo, setTipo] = useState(pacchetto?.tipo || "telos");
   const [marca, setMarca] = useState(pacchetto?.marca || "");
   const [componenti, setComponenti] = useState(pacchetto?.prodotti || []); // [{cod,qty}]
+  const [prezzoScontato, setPrezzoScontato] = useState(pacchetto?.prezzo_scontato ?? "");
   const [ricerca, setRicerca] = useState("");
   const [salvando, setSalvando] = useState(false);
   const [errore, setErrore] = useState("");
@@ -11759,6 +11806,7 @@ function FormPacchetto({ pacchetto, catalog, accessToken, ruolo, onSalvato, onAn
       finanziaria_rata_con_iva: finRataConIva===""?null:finRataConIva,
       finanziaria_mesi: tipo==="fornitore" ? (parseInt(finMesi,10)||36) : null,
       documenti_finanziaria: documentiIds,
+      prezzo_scontato: tipo==="telos" && prezzoScontato!=="" ? parseFloat(prezzoScontato) : null,
     };
     try{
       if(pacchetto) await sbAuth("PATCH","pacchetti",`id=eq.${pacchetto.id}`,payload,accessToken);
@@ -11804,6 +11852,36 @@ function FormPacchetto({ pacchetto, catalog, accessToken, ruolo, onSalvato, onAn
 
           <div style={S.eyebrow}>Marca (per trovarlo più facilmente in ricerca)</div>
           <input value={marca} onChange={e=>setMarca(e.target.value)} placeholder="es. TEXA, BEISSBARTH…" style={{...S.inp,marginBottom:16}}/>
+
+          {tipo==="telos" && (()=>{
+            const totaleComponenti = componenti.reduce((acc,c)=>{
+              const p = (catalog||[]).find(x=>x.cod===c.cod);
+              return acc + (p ? p.netto*(c.qty||1) : 0);
+            },0);
+            const prezzoNum = prezzoScontato==="" ? null : parseFloat(prezzoScontato);
+            return (
+              <div style={{...S.card,cursor:"default",marginBottom:16}}>
+                <div style={{fontSize:12.5,fontWeight:700,marginBottom:4}}>Prezzo del pacchetto completo</div>
+                <div style={{fontSize:11.5,color:C.steel,marginBottom:10,lineHeight:1.5}}>
+                  Facoltativo: se lo lasci vuoto, il totale mostrato in preventivo/ordine resta la somma dei singoli prodotti (€{totaleComponenti.toFixed(2)}). Se lo imposti, in aggiunta ai prodotti (ai loro prezzi normali) comparirà una riga "Sconto pacchetto" che porta il totale a questa cifra.
+                </div>
+                <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:6}}>
+                  <span style={{fontSize:13,color:"#9AA3AB"}}>€</span>
+                  <input type="number" min="0" step="0.01" value={prezzoScontato}
+                    onChange={e=>setPrezzoScontato(e.target.value)}
+                    placeholder={totaleComponenti.toFixed(2)}
+                    className="tnum" style={{...S.inp,width:160,fontFamily:F_MONO,fontWeight:700}}/>
+                </div>
+                {prezzoNum!=null && !isNaN(prezzoNum) && (
+                  prezzoNum < totaleComponenti
+                    ? <div className="tnum" style={{fontSize:12,color:C.ok,fontFamily:F_MONO}}>Sconto pacchetto: −€{(totaleComponenti-prezzoNum).toFixed(2)}</div>
+                    : prezzoNum > totaleComponenti
+                    ? <div style={{fontSize:12,color:C.warn}}>⚠ È più alto della somma dei prodotti — verrà comunque applicato come maggiorazione.</div>
+                    : null
+                )}
+              </div>
+            );
+          })()}
 
           <div style={S.eyebrow}>Prodotti nel pacchetto</div>
           {componenti.length===0 && <div style={{fontSize:12.5,color:"#9AA3AB",padding:"8px 0"}}>Nessun prodotto ancora — cercalo qui sotto per aggiungerlo.</div>}
