@@ -13129,6 +13129,12 @@ function GestioneTurniCompetenze({ sessione, ruolo, catalog }){
   const { marchi, categorie } = useMemo(()=>marchiECategorieDaCatalogo(catalog),[catalog]);
   const [tab, setTab] = useState("turni");
   const [utenti, setUtenti] = useState([]);
+  // Competenze e copertura territoriale hanno senso solo per i tecnici —
+  // il turno call center resta invece aperto a tutto lo staff.
+  const tecnici = useMemo(()=>
+    (utenti||[]).filter(u=>u.ruolo==="tecnico")
+      .sort((a,b)=>`${a.nome} ${a.cognome||""}`.localeCompare(`${b.nome} ${b.cognome||""}`))
+  ,[utenti]);
   const [turni, setTurni] = useState([]);
   const [competenze, setCompetenze] = useState([]);
   const [province, setProvince] = useState([]);
@@ -13163,6 +13169,24 @@ function GestioneTurniCompetenze({ sessione, ruolo, catalog }){
     const u = utenti.find(x=>x.id===id);
     return u ? `${u.nome} ${u.cognome||""}`.trim() : id;
   }
+
+  // Elenco competenze/province ordinato per tecnico (alfabetico) e, a
+  // parità di tecnico, per marchio/categoria o provincia — così le righe
+  // dello stesso tecnico restano raggruppate e leggibili in ordine.
+  const competenzeOrdinate = useMemo(()=>{
+    return [...competenze].sort((a,b)=>
+      nomeUtente(a.profilo_id).localeCompare(nomeUtente(b.profilo_id))
+      || (a.marchio||"").localeCompare(b.marchio||"")
+      || (a.categoria||"").localeCompare(b.categoria||"")
+    );
+  },[competenze, utenti]);
+
+  const provinceOrdinate = useMemo(()=>{
+    return [...province].sort((a,b)=>
+      nomeUtente(a.profilo_id).localeCompare(nomeUtente(b.profilo_id))
+      || (a.provincia||"").localeCompare(b.provincia||"")
+    );
+  },[province, utenti]);
 
   async function impostaTurnista(giorno, profiloId){
     try{
@@ -13245,7 +13269,7 @@ function GestioneTurniCompetenze({ sessione, ruolo, catalog }){
           <div style={{display:"flex",gap:8,marginBottom:12,flexWrap:"wrap"}}>
             <select value={ctProfilo} onChange={e=>setCtProfilo(e.target.value)} style={{...S.sel,flex:1,minWidth:140}}>
               <option value="">Tecnico…</option>
-              {utenti.map(u=><option key={u.id} value={u.id}>{u.nome} {u.cognome||""}</option>)}
+              {tecnici.map(u=><option key={u.id} value={u.id}>{u.nome} {u.cognome||""}</option>)}
             </select>
             <select value={ctMarchio} onChange={e=>setCtMarchio(e.target.value)} style={{...S.sel,flex:1,minWidth:120}}>
               <option value="">Marchio…</option>
@@ -13257,7 +13281,7 @@ function GestioneTurniCompetenze({ sessione, ruolo, catalog }){
             </select>
             <button onClick={aggiungiCompetenza} style={S.btnP}>+ Aggiungi</button>
           </div>
-          {competenze.map(c=>(
+          {competenzeOrdinate.map(c=>(
             <div key={c.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"7px 10px",borderBottom:`1px solid ${C.paperLine}`,fontSize:12.5}}>
               <span>{nomeUtente(c.profilo_id)} — <b>{c.marchio}</b> / {c.categoria}</span>
               <span onClick={()=>rimuoviCompetenza(c.id)} style={{color:C.danger,cursor:"pointer",fontSize:11}}>Rimuovi</span>
@@ -13271,12 +13295,12 @@ function GestioneTurniCompetenze({ sessione, ruolo, catalog }){
           <div style={{display:"flex",gap:8,marginBottom:12,flexWrap:"wrap"}}>
             <select value={tpProfilo} onChange={e=>setTpProfilo(e.target.value)} style={{...S.sel,flex:1,minWidth:140}}>
               <option value="">Tecnico…</option>
-              {utenti.map(u=><option key={u.id} value={u.id}>{u.nome} {u.cognome||""}</option>)}
+              {tecnici.map(u=><option key={u.id} value={u.id}>{u.nome} {u.cognome||""}</option>)}
             </select>
             <input value={tpProvincia} onChange={e=>setTpProvincia(e.target.value.toUpperCase())} placeholder="Sigla prov. (es. TO)" maxLength={2} style={{...S.inp,flex:1,minWidth:120}}/>
             <button onClick={aggiungiProvincia} style={S.btnP}>+ Aggiungi</button>
           </div>
-          {province.map(p=>(
+          {provinceOrdinate.map(p=>(
             <div key={p.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"7px 10px",borderBottom:`1px solid ${C.paperLine}`,fontSize:12.5}}>
               <span>{nomeUtente(p.profilo_id)} — <b>{p.provincia}</b></span>
               <span onClick={()=>rimuoviProvincia(p.id)} style={{color:C.danger,cursor:"pointer",fontSize:11}}>Rimuovi</span>
