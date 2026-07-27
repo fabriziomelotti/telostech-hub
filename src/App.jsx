@@ -721,22 +721,11 @@ export default function App(){
   );
   if(!role) return <LoginReale onLogin={login} errore={authErrore} mfaStep={mfaStep} onCompletaMFA={authCompletaMFA} onAnnullaMFA={authAnnullaMFA} Logo={Logo} G={G} C={C} S={S} F_BODY={F_BODY} F_MONO={F_MONO}/>;
 
-  // Gate di sicurezza: il portale cliente vero e proprio (ticket, apertura
-  // richieste, attrezzature proprie) non è ancora costruito. Un account
-  // "cliente" autenticato non deve MAI atterrare sulla shell pensata per
-  // lo staff (sidebar con Preventivi/Ordini/Clienti/…) nel frattempo,
-  // anche solo per un attimo prima che l'eventuale sviluppo del portale
-  // la sostituisca — da qui il return dedicato, completamente separato.
+  // Gate: un account "cliente" autenticato non deve MAI atterrare sulla
+  // shell pensata per lo staff (sidebar con Preventivi/Ordini/Clienti/…)
+  // — resta completamente separato, con la sua UI dedicata e ridottissima.
   if(role === "cliente"){
-    return (
-      <div style={{minHeight:"100dvh",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:16,background:C.paper,fontFamily:F_BODY,padding:20,textAlign:"center"}}>
-        <style>{G}</style>
-        <Logo variant="telostech" height={40}/>
-        <div style={{fontFamily:F_DISPLAY,fontSize:18,fontWeight:600,color:C.charcoal}}>Portale cliente in arrivo</div>
-        <div style={{fontSize:13,color:C.steel,maxWidth:360}}>Il tuo account è attivo. La sezione per aprire e seguire i ticket di assistenza sarà disponibile a breve — nel frattempo continua pure a contattarci come hai sempre fatto.</div>
-        <button onClick={logout} style={{...S.btnS,marginTop:6}}>Esci</button>
-      </div>
-    );
+    return <PortaleCliente sessione={sessione} logout={logout} G={G}/>;
   }
 
   const navList = isMobile ? navMobile(r.nav) : r.nav;
@@ -12751,12 +12740,41 @@ function NotificheBell({ sessione, onApriTicket }){
   const mioId = sessione?.user?.id;
   const [notifiche, setNotifiche] = useState([]);
   const [aperto, setAperto] = useState(false);
+  // Id delle notifiche già mostrate come popup del browser in questa
+  // sessione — evita di ripeterle a ogni polling. primoCaricoRef impedisce
+  // una raffica di popup per notifiche vecchie non lette al semplice
+  // apertura/refresh della pagina: i popup partono solo per quelle
+  // arrivate DOPO che la pagina è già aperta, come farebbe un'app vera.
+  const idsMostrateRef = useRef(new Set());
+  const primoCaricoRef = useRef(true);
+
+  // Richiede il permesso una sola volta per sessione (il browser ricorda
+  // la scelta oltre la sessione singola) — "come fosse un'app": popup del
+  // sistema operativo anche a scheda in background, non solo il badge qui
+  // in pagina. Nessun requisito di service worker: bastano le Notification
+  // web standard, il limite è che non arrivano a browser/tab chiuso.
+  useEffect(()=>{
+    if(typeof Notification !== "undefined" && Notification.permission === "default"){
+      Notification.requestPermission().catch(()=>{});
+    }
+  },[]);
 
   async function carica(){
     if(!accessToken || !mioId) return;
     try{
       const dati = await sbGetAuth("notifiche", `select=*&profilo_id=eq.${mioId}&order=created_at.desc&limit=20`, accessToken);
       setNotifiche(dati||[]);
+
+      if(!primoCaricoRef.current && typeof Notification !== "undefined" && Notification.permission==="granted"){
+        (dati||[]).filter(n=>!n.letta && !idsMostrateRef.current.has(n.id)).forEach(n=>{
+          try{
+            const popup = new Notification("Telos Tech Hub", { body: n.testo, tag: n.id });
+            popup.onclick = ()=>{ window.focus(); if(n.ticket_id && onApriTicket) onApriTicket(n.ticket_id); popup.close(); };
+          }catch{ /* alcuni browser mobile non supportano new Notification() in foreground: ignora, resta comunque il badge */ }
+        });
+      }
+      (dati||[]).forEach(n=>idsMostrateRef.current.add(n.id));
+      primoCaricoRef.current = false;
     }catch{ /* silenzioso: la campanella non deve mai rompere il resto dell'app */ }
   }
 
@@ -13465,6 +13483,236 @@ function GestioneTurniCompetenze({ sessione, ruolo, catalog }){
             </div>
           ))}
         </div>
+      )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// PORTALE CLIENTE — UI ridottissima e completamente separata dalla shell
+// staff (vedi il gate in App()): solo "I miei ticket", apertura nuovo
+// ticket e il relativo thread. Nessun'altra area, nessun altro dato.
+// ═══════════════════════════════════════════════════════════════════════════
+const STATO_TICKET_COLORE = {"Aperto":C.danger,"In lavorazione":C.warn,"In attesa cliente":C.steel,"Risolto":C.ok,"Chiuso":C.steel};
+
+function PortaleCliente({ sessione, logout, G }){
+  const accessToken = trovaAccessToken(sessione);
+  const [ticket, setTicket] = useState([]);
+  const [attrezzature, setAttrezzature] = useState([]);
+  const [caricando, setCaricando] = useState(true);
+  const [aperto, setAperto] = useState(null);
+  const [nuovoAperto, setNuovoAperto] = useState(false);
+  const [ticketDaAprire, setTicketDaAprire] = useState(null);
+  const [errore, setErrore] = useState("");
+
+  async function carica(){
+    setCaricando(true); setErrore("");
+    try{
+      const [t, a] = await Promise.all([
+        sbGetAuth("ticket_assistenza","select=*&order=created_at.desc&limit=200",accessToken),
+        sbGetAuth("attrezzature","select=*&stato=neq.Dismessa&order=nome_prodotto.asc",accessToken).catch(()=>[]),
+      ]);
+      setTicket(t||[]); setAttrezzature(a||[]);
+    }catch(err){ setErrore("Non riesco a caricare i ticket: "+err.message); }
+    setCaricando(false);
+  }
+  useEffect(()=>{ carica(); },[]);
+
+  // Apertura diretta da una notifica cliccata in campanella
+  useEffect(()=>{
+    if(!ticketDaAprire || ticket.length===0) return;
+    const t = ticket.find(x=>x.id===ticketDaAprire);
+    if(t){ setAperto(t); setNuovoAperto(false); setTicketDaAprire(null); }
+  },[ticketDaAprire, ticket]);
+
+  return (
+    <div style={{minHeight:"100dvh",background:C.paper,fontFamily:F_BODY,color:C.charcoal}}>
+      <style>{G}</style>
+      <div style={{height:54,borderBottom:`1px solid ${C.paperLine}`,display:"flex",alignItems:"center",padding:"0 16px",gap:10,background:"#fff",position:"sticky",top:0,zIndex:50}}>
+        <Logo variant="telostech" height={24}/>
+        <div style={{flex:1,fontSize:12.5,color:C.steel,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{sessione?.nome}</div>
+        <NotificheBell sessione={sessione} onApriTicket={(id)=>setTicketDaAprire(id)}/>
+        <button onClick={logout} style={S.btnS}>Esci</button>
+      </div>
+
+      <div style={{maxWidth:640,margin:"0 auto",padding:16}}>
+        {errore && <div style={{color:C.danger,fontSize:12.5,marginBottom:12}}>{errore}</div>}
+
+        {aperto ? (
+          <DettaglioTicketCliente
+            ticket={aperto} sessione={sessione}
+            onIndietro={()=>{ setAperto(null); carica(); }}
+            onAggiornato={(agg)=>{ setTicket(prev=>prev.map(x=>x.id===agg.id?agg:x)); setAperto(agg); }}
+          />
+        ) : nuovoAperto ? (
+          <NuovoTicketCliente
+            sessione={sessione} attrezzature={attrezzature}
+            onAnnulla={()=>setNuovoAperto(false)}
+            onCreato={(t)=>{ setNuovoAperto(false); setTicket(prev=>[t,...prev]); setAperto(t); }}
+          />
+        ) : (
+          <>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
+              <div style={{fontFamily:F_DISPLAY,fontSize:18,fontWeight:600}}>I MIEI TICKET</div>
+              <button onClick={()=>setNuovoAperto(true)} style={S.btnP}>+ Nuovo ticket</button>
+            </div>
+            {caricando && <div style={{color:"#9AA3AB",fontSize:13}}>Caricamento…</div>}
+            {!caricando && ticket.length===0 && (
+              <div style={{textAlign:"center",padding:"2.5rem 1rem",color:"#9AA3AB",fontSize:13}}>
+                Nessun ticket ancora. Apri una richiesta se hai bisogno di assistenza.
+              </div>
+            )}
+            {ticket.map(t=>(
+              <div key={t.id} onClick={()=>setAperto(t)} style={{...S.card, borderLeft:`3px solid ${STATO_TICKET_COLORE[t.stato]||C.steel}`}}>
+                <div style={{fontFamily:F_MONO,fontSize:11,color:"#9AA3AB"}}>{t.numero}</div>
+                <div style={{fontWeight:600,fontSize:13.5,marginTop:2}}>{t.titolo}</div>
+                <div style={{fontSize:11.5,color:STATO_TICKET_COLORE[t.stato]||C.steel,fontWeight:600,marginTop:5}}>{t.stato}</div>
+              </div>
+            ))}
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function NuovoTicketCliente({ sessione, attrezzature, onAnnulla, onCreato }){
+  const accessToken = trovaAccessToken(sessione);
+  const [titolo, setTitolo] = useState("");
+  const [descrizione, setDescrizione] = useState("");
+  const [attrezzaturaId, setAttrezzaturaId] = useState("");
+  const [descrizioneLibera, setDescrizioneLibera] = useState("");
+  const [salvando, setSalvando] = useState(false);
+  const [errore, setErrore] = useState("");
+
+  async function salva(){
+    if(!titolo.trim()) return;
+    if(!sessione?.cliente_codice){ setErrore("Account non collegato a nessuna azienda — contatta Telos."); return; }
+    setSalvando(true); setErrore("");
+    try{
+      const payload = {
+        cliente_codice: sessione.cliente_codice,
+        titolo: titolo.trim(),
+        descrizione: descrizione.trim() || null,
+        attrezzatura_id: attrezzaturaId || null,
+        descrizione_libera_prodotto: attrezzaturaId ? null : (descrizioneLibera.trim() || null),
+        canale: "webapp",
+        creato_da_cliente: true,
+        priorita: "Normale",
+      };
+      const [creato] = await sbAuth("POST","ticket_assistenza","",payload,accessToken);
+      if(descrizione.trim()){
+        await sbAuth("POST","ticket_messaggi","",{
+          ticket_id: creato.id, autore_tipo:"cliente", autore_profilo_id: sessione?.user?.id || null,
+          testo: descrizione.trim(), visibile_al_cliente:true,
+        }, accessToken);
+      }
+      onCreato(creato);
+    }catch(err){
+      setErrore("Errore: "+err.message);
+    }
+    setSalvando(false);
+  }
+
+  return (
+    <div>
+      <button onClick={onAnnulla} style={{...S.btnS,marginBottom:14}}>← Torna ai ticket</button>
+      <div style={{fontFamily:F_DISPLAY,fontSize:16,fontWeight:600,marginBottom:14}}>NUOVA RICHIESTA</div>
+
+      <input value={titolo} onChange={e=>setTitolo(e.target.value)} placeholder="Oggetto della richiesta *" style={{...S.inp,marginBottom:8}} autoFocus/>
+      <textarea value={descrizione} onChange={e=>setDescrizione(e.target.value)} placeholder="Descrivi il problema o la richiesta…" rows={4} style={{...S.inp,marginBottom:14,resize:"vertical",fontFamily:F_BODY}}/>
+
+      <div style={S.eyebrow}>A quale attrezzatura si riferisce? (facoltativo)</div>
+      <select value={attrezzaturaId} onChange={e=>setAttrezzaturaId(e.target.value)} style={{...S.sel,width:"100%",marginBottom:8}}>
+        <option value="">— non la trovo / non riguarda un'attrezzatura specifica —</option>
+        {attrezzature.map(a=>(
+          <option key={a.id} value={a.id}>{a.marchio?`${a.marchio} `:""}{a.nome_prodotto}{a.numero_serie?` — S/N ${a.numero_serie}`:""}</option>
+        ))}
+      </select>
+      {!attrezzaturaId && (
+        <input value={descrizioneLibera} onChange={e=>setDescrizioneLibera(e.target.value)} placeholder="Se non la trovi, descrivi il prodotto (facoltativo)" style={{...S.inp,marginBottom:14}}/>
+      )}
+
+      {errore && <div style={{color:C.danger,fontSize:12.5,marginBottom:10}}>{errore}</div>}
+      <button onClick={salva} disabled={salvando||!titolo.trim()} style={{...S.btnAccent,width:"100%",padding:"12px",opacity:(salvando||!titolo.trim())?0.5:1}}>
+        {salvando?"Invio…":"Invia richiesta"}
+      </button>
+    </div>
+  );
+}
+
+function DettaglioTicketCliente({ ticket, sessione, onIndietro, onAggiornato }){
+  const accessToken = trovaAccessToken(sessione);
+  const mioId = sessione?.user?.id;
+  const [messaggi, setMessaggi] = useState([]);
+  const [caricando, setCaricando] = useState(true);
+  const [testo, setTesto] = useState("");
+  const [inviando, setInviando] = useState(false);
+  const [errore, setErrore] = useState("");
+
+  async function caricaMessaggi(){
+    setCaricando(true);
+    try{
+      const dati = await sbGetAuth("ticket_messaggi", `select=*&ticket_id=eq.${ticket.id}&order=created_at.asc`, accessToken);
+      setMessaggi(dati||[]);
+    }catch{ /* thread vuoto in caso di errore, non blocca il resto della pagina */ }
+    setCaricando(false);
+  }
+  useEffect(()=>{ caricaMessaggi(); },[ticket.id]);
+
+  async function invia(){
+    if(!testo.trim()) return;
+    setInviando(true); setErrore("");
+    try{
+      const payload = { ticket_id: ticket.id, autore_tipo:"cliente", autore_profilo_id: mioId, testo: testo.trim(), visibile_al_cliente:true };
+      const [msg] = await sbAuth("POST","ticket_messaggi","",payload,accessToken);
+      setMessaggi(prev=>[...prev,msg]);
+      setTesto("");
+    }catch(err){ setErrore("Errore invio: "+err.message); }
+    setInviando(false);
+  }
+
+  return (
+    <div>
+      <button onClick={onIndietro} style={{...S.btnS,marginBottom:14}}>← Torna ai ticket</button>
+      <div style={{fontFamily:F_MONO,fontSize:11,color:"#9AA3AB"}}>{ticket.numero}</div>
+      <div style={{fontFamily:F_DISPLAY,fontSize:18,fontWeight:600,marginTop:2}}>{ticket.titolo}</div>
+      <div style={{fontSize:12.5,fontWeight:600,color:STATO_TICKET_COLORE[ticket.stato]||C.steel,marginBottom:14}}>{ticket.stato}</div>
+
+      {ticket.stato==="Chiuso" && ticket.esito_chiusura && (
+        <div style={{...S.card,cursor:"default",background:"#F3F6FB",marginBottom:14}}>
+          <div style={{fontSize:11,color:C.steel,fontFamily:F_MONO,textTransform:"uppercase",letterSpacing:"0.05em",marginBottom:4}}>Esito</div>
+          <div style={{fontSize:13,whiteSpace:"pre-line"}}>{ticket.esito_chiusura}</div>
+        </div>
+      )}
+
+      <div style={{border:`1px solid ${C.paperLine}`,borderRadius:8,padding:12,minHeight:160,marginBottom:12,background:"#fff"}}>
+        {caricando && <div style={{color:"#9AA3AB",fontSize:12.5}}>Caricamento…</div>}
+        {!caricando && messaggi.length===0 && <div style={{color:"#9AA3AB",fontSize:12.5}}>Nessun messaggio ancora.</div>}
+        {messaggi.map(m=>{
+          const mio = m.autore_tipo==="cliente";
+          const etichetta = mio ? "Tu" : m.autore_tipo==="chatbot" ? "Assistente virtuale" : "Telos";
+          return (
+            <div key={m.id} style={{marginBottom:10,padding:"8px 10px",borderRadius:7,background: mio ? "rgba(87,206,202,0.12)" : "#F3F6FB", marginLeft: mio?"18%":0, marginRight: mio?0:"18%"}}>
+              <div style={{display:"flex",justifyContent:"space-between",fontSize:11,marginBottom:3,gap:8}}>
+                <span style={{fontWeight:700,color:C.ink}}>{etichetta}</span>
+                <span style={{color:"#9AA3AB",fontFamily:F_MONO,flexShrink:0}}>{new Date(m.created_at).toLocaleString("it-IT",{dateStyle:"short",timeStyle:"short"})}</span>
+              </div>
+              <div style={{fontSize:13,whiteSpace:"pre-line"}}>{m.testo}</div>
+            </div>
+          );
+        })}
+      </div>
+
+      {errore && <div style={{color:C.danger,fontSize:12.5,marginBottom:10}}>{errore}</div>}
+
+      {ticket.stato!=="Chiuso" ? (
+        <>
+          <textarea value={testo} onChange={e=>setTesto(e.target.value)} placeholder="Scrivi un messaggio…" rows={3} style={{...S.inp,marginBottom:8,resize:"vertical",fontFamily:F_BODY}}/>
+          <button onClick={invia} disabled={inviando||!testo.trim()} style={{...S.btnAccent,width:"100%",opacity:(inviando||!testo.trim())?0.5:1}}>{inviando?"Invio…":"Invia"}</button>
+        </>
+      ) : (
+        <div style={{fontSize:12,color:"#9AA3AB",textAlign:"center",padding:"8px 0"}}>Questo ticket è chiuso.</div>
       )}
     </div>
   );
