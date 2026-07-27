@@ -3908,14 +3908,14 @@ async function generaPreventivoPDF(righe, total, meta={}){
         </td>
         <td class="cella-num cella-qta">${r.qty||1}</td>
         ${finanziariaAttiva ? "" : `
-        <td class="cella-num">€${(r.listino||0).toFixed(2)}</td>
-        <td class="cella-num">€${r.netto.toFixed(2)}</td>
-        <td class="cella-num cella-tot">€${totRiga.toFixed(2)}</td>`}
+        <td class="cella-num">${(r.listino||0).toFixed(2)}</td>
+        <td class="cella-num">${r.netto.toFixed(2)}</td>
+        <td class="cella-num cella-tot">${totRiga.toFixed(2)}</td>`}
       </tr>`;
     }).join("");
     return `<table class="articoli">
       <thead><tr>
-        <th>Prodotto</th><th>Descrizione</th><th class="cella-num cella-qta">Qtà</th>${finanziariaAttiva ? "" : `<th class="cella-num">Listino</th><th class="cella-num">Netto</th><th class="cella-num">Totale</th>`}
+        <th>Prodotto</th><th>Descrizione</th><th class="cella-num cella-qta">Qtà</th>${finanziariaAttiva ? "" : `<th class="cella-num">LIST. €</th><th class="cella-num">NETTO €</th><th class="cella-num">TOT. €</th>`}
       </tr></thead>
       <tbody>${righeHtml}</tbody>
     </table>`;
@@ -3928,11 +3928,11 @@ async function generaPreventivoPDF(righe, total, meta={}){
     const finAttiva = s.finanziaria_importo!=null;
     return `<div class="totali-box">
       ${finAttiva ? `
-        <div class="tot-imponibile-minore">Totale (IVA esclusa): €${totaleSoluzione.toFixed(2)}</div>
+        <div class="tot-imponibile-minore">Totale (IVA esclusa): € ${totaleSoluzione.toFixed(2)}</div>
         <div class="rata-evidenziata">€${(s.finanziaria_rata||0).toFixed(2)} <span class="mesi">al mese × ${s.finanziaria_mesi||0} mesi</span></div>
         <div class="finanziamento-nota">Importo finanziato: €${(s.finanziaria_importo||0).toFixed(2)} (${s.finanziaria_iva_inclusa?"IVA inclusa":"IVA esclusa"})</div>
       ` : `
-        <div class="tot-imponibile">Totale (IVA esclusa): €${totaleSoluzione.toFixed(2)}</div>
+        <div class="tot-imponibile">Totale (IVA esclusa): € ${totaleSoluzione.toFixed(2)}</div>
       `}
     </div>`;
   }
@@ -3998,15 +3998,22 @@ async function generaPreventivoPDF(righe, total, meta={}){
   .pagina:last-child{page-break-after:auto}
 
   /* ── Copertina ── */
-  .cover{text-align:center;align-items:center;padding-top:0}
+  /* padding-bottom maggiorato (non solo padding-top:0) per sollevare il
+     blocco loghi-partner + dati aziendali un po' più in alto rispetto al
+     riferimento "Pagina X di Y" incollato a 4mm dal bordo inferiore:
+     oltre a dare respiro visivo, riduce lo spazio "pieno" disponibile ai
+     cover-spacer così l'altezza reale della pagina resta più comodamente
+     sotto la soglia dei 297mm+tolleranza che fa scattare la pagina
+     aggiuntiva (vedi TOLLERANZA_MM in generaPdfBlob). */
+  .cover{text-align:center;align-items:center;padding-top:0;padding-bottom:16mm}
   .cover-spacer{flex:1}
-  .cover-logo{width:58mm;margin-top:4mm;position:relative;left:-3mm}
+  .cover-logo{width:58mm;margin-top:2mm;position:relative;left:-3mm}
   .cover-cliente{font-size:32px;font-weight:700;margin-bottom:8px}
   .cover-referente{font-size:25px;font-weight:700;color:#162758}
   .cover-referente .cover-referente-tel{display:block;font-size:15px;font-weight:400;font-style:italic;color:#3A4248;margin-top:2px}
   .cover-chevron{width:52mm}
   .cover-titolo{font-size:28px;font-weight:700}
-  .cover-strip{width:calc(100% + 20mm);margin-left:-10mm;margin-right:-10mm;margin-bottom:9mm}
+  .cover-strip{width:calc(100% + 20mm);margin-left:-10mm;margin-right:-10mm;margin-bottom:5mm}
   .cover-contatti{font-size:13px;color:#162758;font-weight:700;line-height:1.8}
   .cover-contatti span{display:block;font-weight:400;color:#5B6770}
 
@@ -4024,25 +4031,25 @@ async function generaPreventivoPDF(righe, total, meta={}){
   .cliente-box .nome{font-weight:700;font-size:20px}
 
   table.articoli{width:100%;border-collapse:collapse;margin-bottom:20px;table-layout:fixed}
-  table.articoli thead th{background:#162758;color:#fff;padding:11px 12px;font-size:13px;text-align:left}
+  table.articoli thead th{background:#162758;color:#fff;padding:11px 10px;font-size:12px;text-align:left}
   table.articoli thead th.cella-num{text-align:right}
-  .riga-prodotto td{border-bottom:1px solid #E3E5EA;padding:14px 12px;vertical-align:top;font-size:14px}
+  .riga-prodotto td{border-bottom:1px solid #E3E5EA;padding:14px 10px;vertical-align:top;font-size:14px}
   .riga-alt td{background:#F3F6FB}
-  .cella-prodotto{width:15%;padding-right:6px}
+  .cella-prodotto{width:12%;padding-right:6px}
   .tag{display:inline-block;font-size:11px;font-weight:600;text-transform:uppercase;background:#EEF0F4;color:#5B6770;padding:3px 8px;border-radius:3px;margin-bottom:4px}
-  .prodotto-nome{font-weight:600;font-size:15.5px}
-  .prodotto-codice{font-family:monospace;font-size:11.5px;color:#9AA3AB;margin-top:3px}
+  .prodotto-nome{font-weight:600;font-size:14px}
+  .prodotto-codice{font-family:monospace;font-size:11px;color:#9AA3AB;margin-top:3px}
   .cella-descr{width:46%;padding-left:6px}
   .prodotto-img{width:100%;max-width:270px;height:210px;border-radius:6px;display:flex;align-items:center;justify-content:center;overflow:hidden;margin-top:10px}
   .prodotto-img img{max-width:100%;max-height:100%;object-fit:contain}
-  .caratteristiche-testo{font-size:14px;color:#7C879E;line-height:1.6;margin-top:8px}
-  .descr-testo{font-size:16px;font-weight:700;color:#3A4248;line-height:1.6}
-  .cella-num{text-align:right;white-space:nowrap;width:11%;font-size:18px}
+  .caratteristiche-testo{font-size:12px;color:#7C879E;line-height:1.55;margin-top:8px}
+  .descr-testo{font-size:13px;font-weight:700;color:#3A4248;line-height:1.5}
+  .cella-num{text-align:right;white-space:nowrap;width:12%;font-size:14px;padding-left:4px}
   .cella-qta{width:6%;font-size:16px}
-  .cella-tot{font-weight:700;color:#162758;font-size:22px}
+  .cella-tot{font-weight:700;color:#162758;font-size:16px}
 
   .totali-box{text-align:right;margin-top:10px}
-  .tot-imponibile{font-size:24px;font-weight:700;color:#162758}
+  .tot-imponibile{font-size:17px;font-weight:700;color:#162758}
   .tot-imponibile-minore{font-size:14px;font-weight:400;color:#9AA3AB;margin-bottom:7px}
   .rata-evidenziata{font-size:28px;font-weight:700;color:#162758}
   .rata-evidenziata .mesi{font-size:16px;font-weight:400;color:#5B6770}
@@ -4059,13 +4066,17 @@ async function generaPreventivoPDF(righe, total, meta={}){
   .footer-legale b{color:#5B6770}
 
   /* ── Pagina condizioni ── */
-  .condizioni h2{font-size:17px;color:#162758;margin-bottom:14px}
-  .condizioni h3{font-size:11.5px;color:#162758;margin-top:14px;margin-bottom:4px}
-  .condizioni p{font-size:10.5px;line-height:1.55;color:#3A4248}
-  .condizioni p.intro{font-style:italic;margin-bottom:14px}
-  .firma-box{margin-top:36px;border:1px solid #162758;border-radius:6px;padding:16px}
+  /* Spaziature ridotte rispetto alla versione precedente: il contenuto
+     (intro + 9 sezioni + riquadro firma) superava di un soffio i 297mm,
+     facendo scattare una pagina fisica aggiuntiva quasi vuota — vedi
+     TOLLERANZA_MM in generaPdfBlob. */
+  .condizioni h2{font-size:17px;color:#162758;margin-bottom:12px}
+  .condizioni h3{font-size:11.5px;color:#162758;margin-top:10px;margin-bottom:4px}
+  .condizioni p{font-size:10.5px;line-height:1.45;color:#3A4248}
+  .condizioni p.intro{font-style:italic;margin-bottom:12px}
+  .firma-box{margin-top:20px;border:1px solid #162758;border-radius:6px;padding:12px}
   .firma-box .titolo{font-weight:700;font-size:12px;margin-bottom:6px}
-  .firma-box .testo{font-size:10.5px;color:#3A4248;margin-bottom:36px}
+  .firma-box .testo{font-size:10.5px;color:#3A4248;margin-bottom:24px}
   .firma-linee{display:flex;justify-content:space-between;font-size:10px;color:#7C879E}
   .firma-linee div{width:45%;border-top:1px solid #232323;padding-top:4px}
   .firma-digitale img{max-width:200px;max-height:80px;display:block;margin-top:6px}
@@ -4092,11 +4103,11 @@ ${meta.includi_copertina!==false ? `
 ${paginaArticoliHtml("PROPOSTA ORDINE", righe, finanziariaFornitoreAttiva, `
     <div class="totali-box">
       ${finanziariaFornitoreAttiva ? `
-        <div class="tot-imponibile-minore">Totale (IVA esclusa): €${total.toFixed(2)}</div>
+        <div class="tot-imponibile-minore">Totale (IVA esclusa): € ${total.toFixed(2)}</div>
         <div class="rata-evidenziata">€${(meta.finanziaria_rata||0).toFixed(2)} <span class="mesi">al mese × ${meta.finanziaria_mesi} mesi</span></div>
         <div class="finanziamento-nota">Importo finanziato: €${meta.finanziaria_importo.toFixed(2)} (${meta.finanziaria_iva_inclusa?"IVA inclusa":"IVA esclusa"})</div>
       ` : `
-        <div class="tot-imponibile">Totale (IVA esclusa): €${total.toFixed(2)}</div>
+        <div class="tot-imponibile">Totale (IVA esclusa): € ${total.toFixed(2)}</div>
         ${finanziamentoHtml}
       `}
     </div>
