@@ -348,7 +348,14 @@ async function chiamaUtentiInfo(accessToken) {
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data?.error || `Edge Function ${res.status}`);
-  return data;
+  // Filtrato QUI, in un unico punto, invece che in ognuno dei tanti posti
+  // che chiamano questa funzione (referente Telos nei preventivi, tecnico
+  // assegnato negli interventi/ordini, assegnazione ticket…): tutte quelle
+  // tendine sono pensate per scegliere personale interno, mai un account
+  // "cliente" del portale esterno — che da qui in poi non vi comparirà mai
+  // più, anche in eventuali nuovi punti che in futuro useranno questa
+  // stessa funzione.
+  return { ...data, utenti: (data?.utenti || []).filter(u => u.ruolo !== "cliente") };
 }
 
 // ─── FINANZIAMENTO / NOLEGGIO ──────────────────────────────────────────────
