@@ -3994,7 +3994,7 @@ async function generaPreventivoPDF(righe, total, meta={}){
   *{box-sizing:border-box;margin:0;padding:0}
   html,body{width:210mm}
   body{font-family:Arial,sans-serif;color:#232323;font-size:15px}
-  .pagina{width:210mm;min-height:297mm;padding:7mm 12mm;page-break-after:always;display:flex;flex-direction:column}
+  .pagina{width:210mm;min-height:297mm;padding:6mm 9mm;page-break-after:always;display:flex;flex-direction:column}
   .pagina:last-child{page-break-after:auto}
 
   /* ── Copertina ── */
@@ -4017,9 +4017,9 @@ async function generaPreventivoPDF(righe, total, meta={}){
   .hd-content .badge-partner{height:38px}
   .riga-titolo{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;margin-bottom:10px}
   .titolo-ordine{font-size:30px;font-weight:700;color:#162758;white-space:nowrap}
-  .meta-box{display:grid;grid-template-columns:auto auto;column-gap:14px;row-gap:5px;font-size:15px;justify-content:end;flex-shrink:0}
+  .meta-box{display:grid;grid-template-columns:auto minmax(0,1fr);column-gap:14px;row-gap:5px;font-size:15px;justify-content:end;flex-shrink:0;max-width:65mm}
   .meta-box .etichetta{color:#7C879E;text-align:right}
-  .meta-box .valore{text-align:left;font-weight:600;white-space:nowrap}
+  .meta-box .valore{text-align:left;font-weight:600;white-space:normal;word-break:break-word}
   .cliente-box{font-size:17px;margin-bottom:14px}
   .cliente-box .nome{font-weight:700;font-size:20px}
 
@@ -4032,12 +4032,12 @@ async function generaPreventivoPDF(righe, total, meta={}){
   .tag{display:inline-block;font-size:11px;font-weight:600;text-transform:uppercase;background:#EEF0F4;color:#5B6770;padding:3px 8px;border-radius:3px;margin-bottom:4px}
   .prodotto-nome{font-weight:600;font-size:15.5px}
   .prodotto-codice{font-family:monospace;font-size:11.5px;color:#9AA3AB;margin-top:3px}
-  .cella-descr{width:37%;padding-left:6px}
+  .cella-descr{width:46%;padding-left:6px}
   .prodotto-img{width:100%;max-width:270px;height:210px;border-radius:6px;display:flex;align-items:center;justify-content:center;overflow:hidden;margin-top:10px}
   .prodotto-img img{max-width:100%;max-height:100%;object-fit:contain}
   .caratteristiche-testo{font-size:14px;color:#7C879E;line-height:1.6;margin-top:8px}
   .descr-testo{font-size:16px;font-weight:700;color:#3A4248;line-height:1.6}
-  .cella-num{text-align:right;white-space:nowrap;width:14%;font-size:18px}
+  .cella-num{text-align:right;white-space:nowrap;width:11%;font-size:18px}
   .cella-qta{width:6%;font-size:16px}
   .cella-tot{font-weight:700;color:#162758;font-size:22px}
 
@@ -4194,7 +4194,7 @@ async function generaPreventivoInterventoPDF(pv, meta={}){
   *{box-sizing:border-box;margin:0;padding:0}
   html,body{width:210mm}
   body{font-family:Arial,sans-serif;color:#232323;font-size:12.5px}
-  .pagina{width:210mm;min-height:297mm;padding:7mm 12mm;page-break-after:always;display:flex;flex-direction:column}
+  .pagina{width:210mm;min-height:297mm;padding:6mm 9mm;page-break-after:always;display:flex;flex-direction:column}
   .pagina:last-child{page-break-after:auto}
 
   .corpo-contenuto{flex:1}
@@ -4353,7 +4353,7 @@ async function generaRapportoInterventoPDF(i, meta={}){
   *{box-sizing:border-box;margin:0;padding:0}
   html,body{width:210mm}
   body{font-family:Arial,sans-serif;color:#232323;font-size:12.5px}
-  .pagina{width:210mm;min-height:297mm;padding:7mm 12mm;display:flex;flex-direction:column}
+  .pagina{width:210mm;min-height:297mm;padding:6mm 9mm;display:flex;flex-direction:column}
   .corpo-contenuto{flex:1}
   .hd-content{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;padding-bottom:6px;border-bottom:2px solid #162758}
   .hd-content .logo-telos-spa{height:34px}
@@ -7446,7 +7446,7 @@ function Ordini({ordini,setOrdini,preventivi,setPreventivi,setInterventi,catalog
   *{box-sizing:border-box;margin:0;padding:0}
   html,body{width:210mm}
   body{font-family:Arial,sans-serif;color:#232323;font-size:13px}
-  .pagina{width:210mm;min-height:297mm;padding:7mm 12mm;page-break-after:always}
+  .pagina{width:210mm;min-height:297mm;padding:6mm 9mm;page-break-after:always}
   .pagina:last-child{page-break-after:auto}
   .hd{display:flex;justify-content:space-between;margin-bottom:14px;padding-bottom:10px;border-bottom:2px solid #162758}
   .brand{font-size:22px;font-weight:700;color:#162758}
