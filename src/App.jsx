@@ -8875,6 +8875,29 @@ function DettaglioIntervento({ intervento, attrezzature, sessione, onIndietro, o
     (assistenze||[]).find(a=>a.id===intervento.assistenza_id)
   ,[assistenze, intervento.assistenza_id]);
 
+  // Solo per gli interventi generati da un ordine con installazione
+  // attiva (vedi creaInterventoInstallazione in Ordini): "intervento.articoli"
+  // porta l'elenco degli articoli da installare. Le righe sconto
+  // (SCONTO-PACCHETTO-…, SCONTO-ROTTAMAZIONE) non sono attrezzatura fisica
+  // e vanno escluse; ogni articolo viene "espanso" in tante unità quante
+  // la quantità, perché ciascuna può avere un proprio numero di serie.
+  const unitaInstallazione = useMemo(()=>{
+    if(intervento.tipo !== "installazione") return [];
+    const unita = [];
+    (intervento.articoli||[]).forEach(r=>{
+      if((r.cod||"").toUpperCase().startsWith("SCONTO-")) return;
+      const qty = r.qty || 1;
+      for(let i=0;i<qty;i++) unita.push({ cod:r.cod, mar:r.mar, nome:r.nome, indiceUnita:i, totaleUnita:qty });
+    });
+    return unita;
+  },[intervento.tipo, intervento.articoli]);
+  const [seriali, setSeriali] = useState(()=>unitaInstallazione.map(()=>({numero_serie:"",motivo:""})));
+  // Il numero di serie è richiesto ma non bloccante: basta la motivazione
+  // scritta se non è disponibile (deciso esplicitamente — vedi note del
+  // progetto). Nessuna unità → nulla da compilare, la chiusura non è
+  // condizionata (interventi non di installazione).
+  const serialiCompleti = unitaInstallazione.length===0 || seriali.every(s=>(s.numero_serie||"").trim() || (s.motivo||"").trim());
+
   async function salvaPatch(patch){
     setSalvando(true); setErrore("");
     try{
@@ -8918,7 +8941,9 @@ function DettaglioIntervento({ intervento, attrezzature, sessione, onIndietro, o
   }
   function chiudiIntervento(){
     if(!confermaLocale.firma_cliente && !confermaLocale.conferma_alt_nome) return;
-    salvaPatch({ stato:"Completato", completato_il:new Date().toISOString(), checklist, note: note.trim()||null });
+    if(!serialiCompleti) return;
+    salvaPatch({ stato:"Completato", completato_il:new Date().toISOString(), checklist, note: note.trim()||null })
+      .then(creaAttrezzatureDaInstallazione);
   }
   // Chiusura semplificata per le assistenze esterne: il rapporto
   // firmato (checklist + conferma cliente) è il modo in cui chiudiamo un
@@ -8928,11 +8953,42 @@ function DettaglioIntervento({ intervento, attrezzature, sessione, onIndietro, o
   // Se nel frattempo qualche informazione è comunque arrivata (conferma
   // cliente, checklist compilata) viene comunque salvata.
   function chiudiInterventoSemplice(){
+    if(!serialiCompleti) return;
     salvaPatch({
       stato:"Completato", completato_il:new Date().toISOString(),
       checklist, note: note.trim()||null,
       ...confermaLocale,
-    });
+    }).then(creaAttrezzatureDaInstallazione);
+  }
+  // Registra in "attrezzature" ogni unità effettivamente installata (vedi
+  // unitaInstallazione sopra) — numero di serie se compilato, altrimenti
+  // la motivazione scritta finisce in note_seriale_mancante così resta
+  // recuperabile in un secondo momento dalla scheda cliente. Un eventuale
+  // errore qui non deve nascondere che l'intervento è comunque stato
+  // chiuso correttamente: viene solo segnalato a parte.
+  async function creaAttrezzatureDaInstallazione(){
+    if(unitaInstallazione.length===0) return;
+    try{
+      const righe = unitaInstallazione.map((u,i)=>{
+        const numeroSerie = (seriali[i]?.numero_serie||"").trim();
+        return {
+          cliente_codice: intervento.cliente_codice,
+          prodotto_cod: u.cod || null,
+          nome_prodotto: u.nome,
+          marchio: u.mar || null,
+          numero_serie: numeroSerie || null,
+          note_seriale_mancante: numeroSerie ? null : ((seriali[i]?.motivo||"").trim() || null),
+          data_installazione: new Date().toISOString().slice(0,10),
+          origine: "da_intervento",
+          intervento_id: intervento.id,
+          ordine_id: intervento.ordine_id || null,
+          creato_da_nome: sessione?.nome || null,
+        };
+      });
+      await sbAuth("POST","attrezzature","",righe,accessToken);
+    }catch(err){
+      setErrore("Intervento chiuso, ma la registrazione automatica delle attrezzature ha dato errore: "+err.message);
+    }
   }
   function segnaFatturato(){
     salvaPatch({ inviato_fatturazione:true, inviato_fatturazione_data:new Date().toISOString() });
@@ -9178,14 +9234,42 @@ function DettaglioIntervento({ intervento, attrezzature, sessione, onIndietro, o
             </div>
           </div>
 
+          {unitaInstallazione.length>0 && (
+            <div style={{...S.card,cursor:"default",marginBottom:16,border:`1px solid ${serialiCompleti?C.paperLine:C.warn}`}}>
+              <div style={{fontSize:12.5,fontWeight:700,marginBottom:4}}>Numeri di serie attrezzature installate</div>
+              <div style={{fontSize:11.5,color:"#9AA3AB",marginBottom:10}}>Per ogni unità inserisci il numero di serie oppure, se non disponibile, il motivo — uno dei due è obbligatorio per chiudere l'intervento.</div>
+              {unitaInstallazione.map((u,i)=>(
+                <div key={i} style={{marginBottom:10,paddingBottom:10,borderBottom:i<unitaInstallazione.length-1?`1px solid ${C.paperLine}`:"none"}}>
+                  <div style={{fontSize:12.5,fontWeight:600,marginBottom:6}}>
+                    {u.mar?`${u.mar} `:""}{u.nome}{u.totaleUnita>1?` — unità ${u.indiceUnita+1}/${u.totaleUnita}`:""}
+                  </div>
+                  <input
+                    value={seriali[i]?.numero_serie||""}
+                    onChange={e=>setSeriali(prev=>prev.map((s,j)=>j===i?{...s,numero_serie:e.target.value}:s))}
+                    placeholder="Numero di serie"
+                    style={{...S.inp,marginBottom:(seriali[i]?.numero_serie||"").trim()?0:6}}
+                  />
+                  {!(seriali[i]?.numero_serie||"").trim() && (
+                    <input
+                      value={seriali[i]?.motivo||""}
+                      onChange={e=>setSeriali(prev=>prev.map((s,j)=>j===i?{...s,motivo:e.target.value}:s))}
+                      placeholder="Motivo mancata rilevazione numero di serie *"
+                      style={{...S.inp,border:`1px solid ${C.warn}`}}
+                    />
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+
           {perTelos ? (
             <>
               <SezioneConferma record={confermaLocale} editable={true} onAggiorna={aggiornaConferma}/>
               <div style={{fontSize:11.5,color:"#9AA3AB",marginBottom:10}}>Il rapporto firmato (checklist + conferma cliente) chiude l'intervento del personale interno.</div>
               <button
-                disabled={salvando || (!confermaLocale.firma_cliente && !confermaLocale.conferma_alt_nome)}
+                disabled={salvando || (!confermaLocale.firma_cliente && !confermaLocale.conferma_alt_nome) || !serialiCompleti}
                 onClick={chiudiIntervento}
-                style={{...S.btnAccent,width:"100%",padding:"13px",fontWeight:700,opacity:(confermaLocale.firma_cliente||confermaLocale.conferma_alt_nome)?1:0.5}}
+                style={{...S.btnAccent,width:"100%",padding:"13px",fontWeight:700,opacity:(confermaLocale.firma_cliente||confermaLocale.conferma_alt_nome)&&serialiCompleti?1:0.5}}
               >
                 {salvando?"…":"✓ Chiudi intervento"}
               </button>
@@ -9195,9 +9279,9 @@ function DettaglioIntervento({ intervento, attrezzature, sessione, onIndietro, o
               <div style={{fontSize:11.5,color:"#9AA3AB",marginBottom:10}}>Eseguito da un'assistenza esterna — la chiusura non richiede un rapporto firmato, che potremmo non ricevere dal fornitore. Se hai comunque una conferma del cliente puoi aggiungerla, non è obbligatoria.</div>
               <SezioneConferma record={confermaLocale} editable={true} onAggiorna={aggiornaConferma}/>
               <button
-                disabled={salvando}
+                disabled={salvando || !serialiCompleti}
                 onClick={chiudiInterventoSemplice}
-                style={{...S.btnAccent,width:"100%",padding:"13px",fontWeight:700,opacity:salvando?0.6:1}}
+                style={{...S.btnAccent,width:"100%",padding:"13px",fontWeight:700,opacity:(salvando||!serialiCompleti)?0.6:1}}
               >
                 {salvando?"…":"✓ Segna come concluso"}
               </button>
