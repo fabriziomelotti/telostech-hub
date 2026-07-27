@@ -2382,9 +2382,11 @@ function Clienti({sessione, preventivi, ordini, attrezzature, setAttrezzature, i
     try{
       const filtri = [];
       if(codiceOk) filtri.push(`codice=ilike.*${encodeURIComponent(codiceOk)}*`);
-      if(paroleRagione.length){
-        const piuLunga = [...paroleRagione].sort((a,b)=>b.length-a.length)[0];
-        filtri.push(`ragione_sociale=ilike.*${piuLunga.split("").map(c=>encodeURIComponent(c)).join("*")}*`);
+      for(const parola of paroleRagione){
+        const pattern = parola.length <= 6
+          ? parola.split("").map(c=>encodeURIComponent(c)).join("*")
+          : encodeURIComponent(parola);
+        filtri.push(`ragione_sociale=ilike.*${pattern}*`);
       }
       if(localita) filtri.push(`localita=eq.${encodeURIComponent(localita)}`);
       if(provincia) filtri.push(`provincia=eq.${encodeURIComponent(provincia)}`);
@@ -4373,6 +4375,11 @@ async function generaRapportoInterventoPDF(i, meta={}){
     <div class="info-box">
       <div class="lbl">Strumento</div>
       <div class="val">${meta.attrezzaturaNome || i.attrezzatura_testo}</div>
+    </div>` : ""}
+    ${(i.articoli && i.articoli.length>0) ? `
+    <div class="info-box">
+      <div class="lbl">Articoli installati</div>
+      <div class="val">${i.articoli.map(a=>`${a.mar?a.mar+" — ":""}${a.nome} (${codiceConPrecodice(meta.precodici,a.mar,a.cod)}) × ${a.qty||1}`).join("<br/>")}</div>
     </div>` : ""}
     <div class="info-box">
       <div class="lbl">Eseguito da</div>
@@ -9112,6 +9119,7 @@ function DettaglioIntervento({ intervento, attrezzature, sessione, onIndietro, o
                   await generaRapportoInterventoPDF(intervento, {
                     attrezzaturaNome: attrezzaturaCollegata?.nome_prodotto,
                     assistenzaNome: assistenzaAssegnata?.nome,
+                    precodici,
                   });
                 } finally { setGenerandoPdf(false); }
               }}

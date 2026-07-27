@@ -442,17 +442,28 @@ export function SelezioneCliente({ onSeleziona, clienteSelezionato, sessione }){
     setCaricando(true); setErrore(""); setCercato(true);
     try{
       // Filtri su colonne diverse: PostgREST li combina in AND di default,
-      // senza bisogno di or=/and=() — un parametro per colonna. Per la
-      // ragione sociale usiamo solo la parola più lunga (la più selettiva)
-      // con un carattere jolly tra ogni lettera: un filtro volutamente
-      // permissivo lato server, per non perdere candidati validi solo
-      // perché scritti con punteggiatura diversa — la precisione arriva
-      // subito dopo, verificando lato client TUTTE le parole (vedi sotto).
+      // senza bisogno di or=/and=() — un parametro per colonna. Anche
+      // ripetere lo stesso parametro "ragione_sociale" più volte (una per
+      // parola) si combina in AND: ogni parola cercata deve comparire.
+      //
+      // Per ogni parola: se è "lunga" (più di 6 caratteri, tipico di una
+      // parola vera come "morandi" o "pneumatici") usiamo una sottostringa
+      // precisa — selettiva e affidabile, esattamente come prima. Solo per
+      // le parole CORTE (tipiche delle sigle, es. "orvi" da "O.R.V.I.")
+      // usiamo un carattere jolly tra ogni lettera, perché lì la
+      // punteggiatura interna del dato salvato può interrompere altrimenti
+      // una sottostringa precisa. Usare il jolly-tra-lettere anche sulle
+      // parole lunghe (come facevamo prima) le rendeva TROPPO permissive:
+      // il filtro tornava talmente tanti candidati che quello giusto restava
+      // fuori dal limite di risultati, ancora prima di arrivare alla verifica
+      // rigorosa lato client più sotto.
       const filtri = [];
       if(codiceOk) filtri.push(`codice=ilike.*${encodeURIComponent(codiceOk)}*`);
-      if(paroleRagione.length){
-        const piuLunga = [...paroleRagione].sort((a,b)=>b.length-a.length)[0];
-        filtri.push(`ragione_sociale=ilike.*${piuLunga.split("").map(c=>encodeURIComponent(c)).join("*")}*`);
+      for(const parola of paroleRagione){
+        const pattern = parola.length <= 6
+          ? parola.split("").map(c=>encodeURIComponent(c)).join("*")
+          : encodeURIComponent(parola);
+        filtri.push(`ragione_sociale=ilike.*${pattern}*`);
       }
       if(localita) filtri.push(`localita=eq.${encodeURIComponent(localita)}`);
       if(provincia) filtri.push(`provincia=eq.${encodeURIComponent(provincia)}`);
@@ -463,10 +474,10 @@ export function SelezioneCliente({ onSeleziona, clienteSelezionato, sessione }){
       // Verifica rigorosa: il filtro lato server sopra è volutamente
       // permissivo (per non perdere "O.R.V.I." scritto "ORVI" o viceversa),
       // quindi può restituire candidati che in realtà non corrispondono
-      // (es. lettere o-r-v-i sparse in punti diversi della ragione sociale,
-      // senza essere davvero la sigla cercata). Qui si ributta fuori tutto
-      // ciò che, ripulito dalla punteggiatura, non contiene DAVVERO ogni
-      // parola cercata come sequenza contigua di caratteri.
+      // (per le parole corte, sigla-style — le parole lunghe sono già
+      // precise di loro). Qui si ributta fuori tutto ciò che, ripulito
+      // dalla punteggiatura, non contiene DAVVERO ogni parola cercata come
+      // sequenza contigua di caratteri.
       const filtrati = paroleRagione.length
         ? (dati||[]).filter(c => {
             const rip = soloAlfanumerico(c.ragione_sociale);
