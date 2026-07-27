@@ -138,13 +138,13 @@ const LOGO_TELOSTECH = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAsMAAAFXCA
 // ─── DATI DEMO ────────────────────────────────────────────────────────────────
 const RUOLI = {
   commerciale: {label:"Commerciale", initials:"MC", nome:"Marco Conti",
-    nav:["home","ai","prodotti","clienti","promemoria","preventivi","ordini"]},
+    nav:["home","ai","prodotti","clienti","promemoria","preventivi","ordini","ticket"]},
   tecnico: {label:"Tecnico", initials:"LR", nome:"Luca Rossi",
-    nav:["home","ai","interventi","clienti","promemoria","prodotti"]},
+    nav:["home","ai","interventi","ticket","clienti","promemoria","prodotti"]},
   responsabile: {label:"Responsabile", initials:"GF", nome:"Giovanni Ferri",
-    nav:["home","ai","prodotti","clienti","promemoria","preventivi","ordini","interventi","gestione"]},
+    nav:["home","ai","prodotti","clienti","promemoria","preventivi","ordini","interventi","ticket","gestione"]},
   admin: {label:"Admin", initials:"AM", nome:"Amministratore",
-    nav:["home","ai","prodotti","clienti","promemoria","preventivi","ordini","interventi","gestione","admin"]},
+    nav:["home","ai","prodotti","clienti","promemoria","preventivi","ordini","interventi","ticket","gestione","admin"]},
 };
 // ─── ICONE — set outline minimal (stile iOS/Apple, tratto sottile), al posto
 // delle emoji/simboli usati finora. Ogni icona è un semplice path SVG,
@@ -207,7 +207,7 @@ function Icon({ name, size=20, color="currentColor", strokeWidth=1.6 }){
 const NAV_META = {
   home:{icon:"home",label:"Dashboard"}, ai:{icon:"sparkle",label:"Assistente"}, prodotti:{icon:"grid",label:"Catalogo"},
   clienti:{icon:"users",label:"Clienti"}, promemoria:{icon:"flag",label:"Promemoria"}, preventivi:{icon:"document",label:"Preventivi"}, ordini:{icon:"box",label:"Ordini"},
-  interventi:{icon:"wrench",label:"Assistenza"},
+  interventi:{icon:"wrench",label:"Assistenza"}, ticket:{icon:"mail",label:"Ticket"},
   admin:{icon:"settings",label:"Admin"}, gestione:{icon:"tools",label:"Gestione"},
 };
 function navMobile(nav){ return nav.slice(0,4).concat(nav.length>4?["more"]:[]); }
@@ -524,6 +524,7 @@ export default function App(){
   const [interventi, setInterventi] = useState([]);
   const [promemoria, setPromemoria] = useState([]);
   const [interventoDaCompletare, setInterventoDaCompletare] = useState(null);
+  const [ticketDaAprire, setTicketDaAprire] = useState(null);
   const [msgs, setMsgs] = useState([]);
   const [msgInput, setMsgInput] = useState("");
   const [aiTyping, setAiTyping] = useState(false);
@@ -773,6 +774,7 @@ export default function App(){
           {area!=="ai" && (
             <button onClick={()=>setArea("ai")} style={{...S.btnP,padding:isMobile?"7px 11px":"8px 14px",fontSize:12,flexShrink:0,display:"flex",alignItems:"center",gap:6}}><Icon name="sparkle" size={14}/>{!isMobile&&"Assistente"}</button>
           )}
+          <NotificheBell sessione={sessione} onApriTicket={(id)=>{ setArea("ticket"); setTicketDaAprire(id); }}/>
         </div>
 
         <div style={S.content}>
@@ -784,6 +786,7 @@ export default function App(){
           {area==="preventivi" && <Preventivi cart={cart} setCart={setCart} preventivi={preventivi} setPreventivi={setPreventivi} setOrdini={setOrdini} setArea={setArea} ruolo={role} catalog={catalog} sessione={sessione} precodici={precodici} isMobile={isMobile}/>}
           {area==="ordini" && <Ordini ordini={ordini} setOrdini={setOrdini} preventivi={preventivi} setPreventivi={setPreventivi} setInterventi={setInterventi} catalog={catalog} sessione={sessione} ruolo={role} precodici={precodici} isMobile={isMobile}/>}
           {area==="interventi" && <Interventi interventi={interventi} setInterventi={setInterventi} attrezzature={attrezzature} sessione={sessione} setArea={setArea} interventoDaCompletare={interventoDaCompletare} setInterventoDaCompletare={setInterventoDaCompletare} catalog={catalog} ruolo={role} precodici={precodici} isMobile={isMobile}/>}
+          {area==="ticket" && <TicketAssistenza sessione={sessione} ruolo={role} ticketDaAprire={ticketDaAprire} setTicketDaAprire={setTicketDaAprire}/>}
           {area==="admin" && <PannelloAdmin ruolo={role} sessione={sessione}/>}
           {area==="gestione" && <PannelloGestione setCatalog={setCatalog} ruolo={role} sessione={sessione} catalog={catalog}/>}
         </div>
@@ -12098,6 +12101,8 @@ function PannelloAdmin({ ruolo, sessione }) {
       <ImportClienti ruolo={ruolo} sessione={sessione}/>
       <div style={{height:18}}/>
       <GestioneUtenti ruolo={ruolo} sessione={sessione}/>
+      <div style={{height:18}}/>
+      <GestioneTurniCompetenze ruolo={ruolo} sessione={sessione}/>
     </div>
   );
 }
@@ -12574,6 +12579,622 @@ function PannelloGestione({ setCatalog, ruolo, sessione, catalog }) {
         </div>
       )}
         </>
+      )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// NOTIFICHE IN-APP — campanella in header, polling leggero (nessun realtime
+// disponibile in questo stack: refresh periodico + al ritorno in focus)
+// ═══════════════════════════════════════════════════════════════════════════
+function NotificheBell({ sessione, onApriTicket }){
+  const accessToken = trovaAccessToken(sessione);
+  const mioId = sessione?.user?.id;
+  const [notifiche, setNotifiche] = useState([]);
+  const [aperto, setAperto] = useState(false);
+
+  async function carica(){
+    if(!accessToken || !mioId) return;
+    try{
+      const dati = await sbGetAuth("notifiche", `select=*&profilo_id=eq.${mioId}&order=created_at.desc&limit=20`, accessToken);
+      setNotifiche(dati||[]);
+    }catch{ /* silenzioso: la campanella non deve mai rompere il resto dell'app */ }
+  }
+
+  useEffect(()=>{
+    carica();
+    const interval = setInterval(carica, 45000);
+    const onVisibile = ()=>{ if(document.visibilityState==="visible") carica(); };
+    document.addEventListener("visibilitychange", onVisibile);
+    return ()=>{ clearInterval(interval); document.removeEventListener("visibilitychange", onVisibile); };
+  },[mioId, accessToken]);
+
+  const nonLette = notifiche.filter(n=>!n.letta).length;
+
+  async function apri(n){
+    setAperto(false);
+    if(!n.letta){
+      setNotifiche(prev=>prev.map(x=>x.id===n.id?{...x,letta:true}:x));
+      try{ await sbAuth("PATCH","notifiche",`id=eq.${n.id}`,{letta:true},accessToken); }catch{}
+    }
+    if(n.ticket_id && onApriTicket) onApriTicket(n.ticket_id);
+  }
+
+  async function segnaTutteLette(){
+    if(nonLette===0) return;
+    setNotifiche(prev=>prev.map(x=>({...x,letta:true})));
+    try{ await sbAuth("PATCH","notifiche",`profilo_id=eq.${mioId}&letta=eq.false`,{letta:true},accessToken); }catch{}
+  }
+
+  if(!mioId) return null;
+
+  return (
+    <div style={{position:"relative",flexShrink:0}}>
+      <button onClick={()=>setAperto(a=>!a)} style={{background:"none",border:"none",cursor:"pointer",position:"relative",padding:6,display:"flex"}}>
+        <Icon name="bell" size={19} color={C.charcoal}/>
+        {nonLette>0 && <span style={{position:"absolute",top:2,right:2,background:C.danger,color:"#fff",fontSize:9,fontWeight:700,borderRadius:8,minWidth:15,height:15,display:"flex",alignItems:"center",justifyContent:"center",padding:"0 3px"}}>{nonLette>9?"9+":nonLette}</span>}
+      </button>
+      {aperto && (
+        <div style={{position:"absolute",top:"100%",right:0,width:320,maxHeight:420,overflowY:"auto",background:"#fff",border:`1px solid ${C.paperLine}`,borderRadius:9,boxShadow:"0 8px 24px rgba(0,0,0,0.14)",zIndex:200,marginTop:6}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 12px",borderBottom:`1px solid ${C.paperLine}`}}>
+            <span style={{fontWeight:600,fontSize:13}}>Notifiche</span>
+            {nonLette>0 && <span onClick={segnaTutteLette} style={{fontSize:11,color:C.ink,cursor:"pointer",fontWeight:600}}>Segna tutte lette</span>}
+          </div>
+          {notifiche.length===0 && <div style={{padding:"20px 12px",textAlign:"center",color:"#9AA3AB",fontSize:12.5}}>Nessuna notifica</div>}
+          {notifiche.map(n=>(
+            <div key={n.id} onClick={()=>apri(n)} style={{padding:"10px 12px",borderBottom:`1px solid ${C.paperLine}`,cursor:"pointer",background:n.letta?"#fff":"rgba(87,206,202,0.07)"}}>
+              <div style={{fontSize:12.5,color:C.charcoal,fontWeight:n.letta?400:600}}>{n.testo}</div>
+              <div style={{fontSize:10.5,color:"#9AA3AB",marginTop:3,fontFamily:F_MONO}}>{new Date(n.created_at).toLocaleString("it-IT",{dateStyle:"short",timeStyle:"short"})}</div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// TICKET DI ASSISTENZA — lato staff: lista per stato + dettaglio con thread,
+// assegnazione, tecnici suggeriti e generazione intervento con un click.
+// ═══════════════════════════════════════════════════════════════════════════
+const STATI_TICKET = ["Aperto","In lavorazione","In attesa cliente","Risolto","Chiuso"];
+const PRIORITA_TICKET = ["Bassa","Normale","Alta","Urgente"];
+const TONO_STATO_TICKET = {"Aperto":C.danger,"In lavorazione":C.warn,"In attesa cliente":C.steel,"Risolto":C.ok,"Chiuso":C.steel};
+const TONO_PRIORITA_TICKET = {"Bassa":"steel","Normale":"steel","Alta":"warn","Urgente":"danger"};
+
+function TicketAssistenza({ sessione, ruolo, ticketDaAprire, setTicketDaAprire }){
+  const accessToken = trovaAccessToken(sessione);
+  const [ticket, setTicket] = useState([]);
+  const [clientiMap, setClientiMap] = useState({});
+  const [utenti, setUtenti] = useState([]);
+  const [caricando, setCaricando] = useState(true);
+  const [filtroStato, setFiltroStato] = useState("Aperto");
+  const [aperto, setAperto] = useState(null);
+  const [nuovoAperto, setNuovoAperto] = useState(false);
+
+  async function carica(){
+    setCaricando(true);
+    try{
+      const lista = await sbGetAuth("ticket_assistenza","select=*&order=created_at.desc&limit=300",accessToken);
+      setTicket(lista||[]);
+      const codici = [...new Set((lista||[]).map(t=>t.cliente_codice).filter(Boolean))];
+      if(codici.length){
+        const cl = await sbGetAuth("clienti", `select=codice,ragione_sociale,provincia&codice=in.(${codici.map(c=>encodeURIComponent(c)).join(",")})`, accessToken);
+        const mappa = {}; (cl||[]).forEach(c=>{ mappa[c.codice]=c; });
+        setClientiMap(mappa);
+      }
+    }catch(err){ console.warn("Ticket non raggiungibili:", err.message); }
+    setCaricando(false);
+  }
+
+  useEffect(()=>{ carica(); },[]);
+  useEffect(()=>{ chiamaUtentiInfo(accessToken).then(d=>setUtenti(d?.utenti||[])).catch(()=>setUtenti([])); },[]);
+
+  // Apertura diretta da una notifica cliccata in campanella
+  useEffect(()=>{
+    if(!ticketDaAprire || ticket.length===0) return;
+    const t = ticket.find(x=>x.id===ticketDaAprire);
+    if(t){ setAperto(t); setTicketDaAprire(null); }
+  },[ticketDaAprire, ticket]);
+
+  function nomeUtente(id){
+    const u = (utenti||[]).find(x=>x.id===id);
+    return u ? `${u.nome} ${u.cognome||""}`.trim() : null;
+  }
+
+  if(aperto){
+    return <DettaglioTicket
+      ticket={aperto} sessione={sessione} ruolo={ruolo} utenti={utenti}
+      clienteInfo={clientiMap[aperto.cliente_codice]}
+      onIndietro={()=>{ setAperto(null); carica(); }}
+      onAggiornato={(agg)=>{ setTicket(prev=>prev.map(x=>x.id===agg.id?agg:x)); setAperto(agg); }}
+    />;
+  }
+
+  if(nuovoAperto){
+    return <NuovoTicketStaff sessione={sessione} onAnnulla={()=>setNuovoAperto(false)} onCreato={()=>{ setNuovoAperto(false); carica(); }}/>;
+  }
+
+  const filtrati = ticket.filter(t=>t.stato===filtroStato);
+
+  return (
+    <div>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14,flexWrap:"wrap",gap:10}}>
+        <div style={{fontFamily:F_DISPLAY,fontSize:18,fontWeight:600}}>TICKET DI ASSISTENZA</div>
+        <button onClick={()=>setNuovoAperto(true)} style={S.btnP}>+ Nuovo ticket</button>
+      </div>
+
+      <div style={{display:"flex",gap:6,marginBottom:14,flexWrap:"wrap"}}>
+        {STATI_TICKET.map(s=>{
+          const n = ticket.filter(t=>t.stato===s).length;
+          return (
+            <div key={s} onClick={()=>setFiltroStato(s)} style={{
+              padding:"7px 12px",borderRadius:20,fontSize:12.5,cursor:"pointer",fontWeight:600,
+              background: filtroStato===s ? C.ink : "#fff", color: filtroStato===s ? "#fff" : C.charcoal,
+              border:`1px solid ${filtroStato===s?C.ink:C.paperLine}`,
+            }}>{s}{n>0 ? ` (${n})` : ""}</div>
+          );
+        })}
+      </div>
+
+      {caricando && <div style={{color:"#9AA3AB",fontSize:13}}>Caricamento…</div>}
+      {!caricando && filtrati.length===0 && <div style={{color:"#9AA3AB",fontSize:13,padding:"2rem 0",textAlign:"center"}}>Nessun ticket in stato «{filtroStato}»</div>}
+
+      {filtrati.map(t=>{
+        const cl = clientiMap[t.cliente_codice];
+        const inAttesaRisposta = t.ultimo_messaggio_da === "cliente";
+        return (
+          <div key={t.id} onClick={()=>setAperto(t)} style={{...S.card, borderLeft:`3px solid ${TONO_STATO_TICKET[t.stato]||C.steel}`}}>
+            <div style={{display:"flex",justifyContent:"space-between",gap:8}}>
+              <div style={{minWidth:0}}>
+                <div style={{fontFamily:F_MONO,fontSize:11,color:"#9AA3AB"}}>{t.numero}</div>
+                <div style={{fontWeight:600,fontSize:13.5,marginTop:2}}>{t.titolo}</div>
+                <div style={{fontSize:12,color:C.steel,marginTop:2}}>{cl?.ragione_sociale || t.cliente_codice}</div>
+              </div>
+              <div style={{textAlign:"right",flexShrink:0}}>
+                <Tag tone={TONO_PRIORITA_TICKET[t.priorita]}>{t.priorita}</Tag>
+                {inAttesaRisposta && <div style={{fontSize:10.5,color:C.danger,fontWeight:700,marginTop:6}}>● in attesa di risposta</div>}
+              </div>
+            </div>
+            {t.assegnato_a && <div style={{fontSize:11.5,color:"#9AA3AB",marginTop:6}}>Assegnato a {nomeUtente(t.assegnato_a) || "—"}</div>}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// Creazione ticket da parte dello staff (canale "interno") — riusa la
+// ricerca cliente strutturata già in uso altrove (SelezioneCliente, da
+// ClientiComponenti.jsx), non l'anagrafica libera: un ticket richiede
+// sempre un cliente_codice valido, quindi qui non ammettiamo il cliente
+// "a mano" come invece fanno preventivi/ordini.
+function NuovoTicketStaff({ sessione, onAnnulla, onCreato }){
+  const accessToken = trovaAccessToken(sessione);
+  const [clienteScelto, setClienteScelto] = useState(null);
+  const [titolo, setTitolo] = useState("");
+  const [descrizione, setDescrizione] = useState("");
+  const [marchio, setMarchio] = useState("");
+  const [categoria, setCategoria] = useState("");
+  const [priorita, setPriorita] = useState("Normale");
+  const [salvando, setSalvando] = useState(false);
+  const [errore, setErrore] = useState("");
+
+  async function salva(){
+    if(!clienteScelto?.codice || !titolo.trim()) return;
+    setSalvando(true); setErrore("");
+    try{
+      const payload = {
+        cliente_codice: clienteScelto.codice,
+        titolo: titolo.trim(),
+        descrizione: descrizione.trim() || null,
+        marchio: marchio.trim() || null,
+        categoria: categoria.trim() || null,
+        priorita,
+        canale: "interno",
+        creato_da_profilo_id: sessione?.user?.id || null,
+        creato_da_cliente: false,
+      };
+      const [creato] = await sbAuth("POST","ticket_assistenza","",payload,accessToken);
+      if(descrizione.trim()){
+        await sbAuth("POST","ticket_messaggi","",{
+          ticket_id: creato.id, autore_tipo:"staff", autore_profilo_id: sessione?.user?.id || null,
+          testo: descrizione.trim(), visibile_al_cliente: true,
+        }, accessToken);
+      }
+      onCreato(creato);
+    }catch(err){
+      setErrore("Errore: "+err.message);
+    }
+    setSalvando(false);
+  }
+
+  return (
+    <div>
+      <button onClick={onAnnulla} style={{...S.btnS,marginBottom:14}}>← Torna ai ticket</button>
+      <div style={{fontFamily:F_DISPLAY,fontSize:16,fontWeight:600,marginBottom:14}}>NUOVO TICKET</div>
+
+      <div style={S.eyebrow}>Cliente</div>
+      {clienteScelto ? (
+        <div style={{...S.card,cursor:"default",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+          <span style={{fontWeight:600,fontSize:13.5}}>{clienteScelto.ragione_sociale}</span>
+          <span onClick={()=>setClienteScelto(null)} style={{fontSize:12,color:C.ink,cursor:"pointer",fontWeight:600}}>Cambia</span>
+        </div>
+      ) : (
+        <SelezioneCliente sessione={sessione} onSeleziona={setClienteScelto}/>
+      )}
+
+      {clienteScelto && <>
+        <div style={{height:14}}/>
+        <input value={titolo} onChange={e=>setTitolo(e.target.value)} placeholder="Titolo del ticket *" style={{...S.inp,marginBottom:8}}/>
+        <textarea value={descrizione} onChange={e=>setDescrizione(e.target.value)} placeholder="Descrizione (diventa il primo messaggio del thread)" rows={4} style={{...S.inp,marginBottom:8,resize:"vertical",fontFamily:F_BODY}}/>
+        <div style={{display:"flex",gap:8,marginBottom:8}}>
+          <input value={marchio} onChange={e=>setMarchio(e.target.value)} placeholder="Marchio (facoltativo)" style={{...S.inp,flex:1}}/>
+          <input value={categoria} onChange={e=>setCategoria(e.target.value)} placeholder="Categoria (facoltativo)" style={{...S.inp,flex:1}}/>
+        </div>
+        <select value={priorita} onChange={e=>setPriorita(e.target.value)} style={{...S.sel,marginBottom:14}}>
+          {PRIORITA_TICKET.map(p=><option key={p} value={p}>{p}</option>)}
+        </select>
+        {errore && <div style={{color:C.danger,fontSize:12.5,marginBottom:10}}>{errore}</div>}
+        <button onClick={salva} disabled={salvando||!titolo.trim()} style={{...S.btnAccent,opacity:(salvando||!titolo.trim())?0.5:1}}>
+          {salvando?"Creazione…":"Crea ticket"}
+        </button>
+      </>}
+    </div>
+  );
+}
+
+// Dettaglio ticket: thread bidirezionale (con note interne), campi
+// stato/priorità/assegnazione modificabili al volo, pannello "tecnici
+// suggeriti" (stesso motore usato dal trigger di notifica in DB: match
+// marchio+categoria, evidenziando chi copre anche la provincia del
+// cliente) e generazione dell'Intervento collegato con un click.
+function DettaglioTicket({ ticket, sessione, ruolo, utenti, clienteInfo, onIndietro, onAggiornato }){
+  const accessToken = trovaAccessToken(sessione);
+  const mioId = sessione?.user?.id;
+  const [messaggi, setMessaggi] = useState([]);
+  const [caricandoMsg, setCaricandoMsg] = useState(true);
+  const [testo, setTesto] = useState("");
+  const [notaInterna, setNotaInterna] = useState(false);
+  const [inviando, setInviando] = useState(false);
+  const [suggeriti, setSuggeriti] = useState([]);
+  const [generandoIntervento, setGenerandoIntervento] = useState(false);
+  const [salvandoCampo, setSalvandoCampo] = useState(false);
+
+  async function caricaMessaggi(){
+    setCaricandoMsg(true);
+    try{
+      const dati = await sbGetAuth("ticket_messaggi", `select=*&ticket_id=eq.${ticket.id}&order=created_at.asc`, accessToken);
+      setMessaggi(dati||[]);
+    }catch{ /* thread vuoto in caso di errore, non blocca il resto della pagina */ }
+    setCaricandoMsg(false);
+  }
+  useEffect(()=>{ caricaMessaggi(); },[ticket.id]);
+
+  useEffect(()=>{
+    if(!ticket.marchio || !ticket.categoria){ setSuggeriti([]); return; }
+    sbGetAuth("competenze_tecnico", `select=profilo_id&marchio=eq.${encodeURIComponent(ticket.marchio)}&categoria=eq.${encodeURIComponent(ticket.categoria)}`, accessToken)
+      .then(async righe=>{
+        const ids = [...new Set((righe||[]).map(r=>r.profilo_id))];
+        if(ids.length===0){ setSuggeriti([]); return; }
+        let province = [];
+        try{ province = await sbGetAuth("tecnico_province", `select=profilo_id,provincia&profilo_id=in.(${ids.join(",")})`, accessToken); }catch{}
+        const provinciaCliente = clienteInfo?.provincia;
+        const lista = ids.map(id=>{
+          const u = (utenti||[]).find(x=>x.id===id);
+          const matchProvincia = !!(provinciaCliente && (province||[]).some(p=>p.profilo_id===id && p.provincia===provinciaCliente));
+          return { id, nome: u?`${u.nome} ${u.cognome||""}`.trim():id, matchProvincia };
+        }).sort((a,b)=>(b.matchProvincia?1:0)-(a.matchProvincia?1:0));
+        setSuggeriti(lista);
+      }).catch(()=>setSuggeriti([]));
+  },[ticket.marchio, ticket.categoria, clienteInfo?.provincia, utenti]);
+
+  async function aggiornaCampo(campo, valore){
+    setSalvandoCampo(true);
+    try{
+      const [agg] = await sbAuth("PATCH","ticket_assistenza",`id=eq.${ticket.id}`,{[campo]:valore},accessToken);
+      onAggiornato(agg);
+    }catch(err){ alert("Errore: "+err.message); }
+    setSalvandoCampo(false);
+  }
+
+  async function invia(){
+    if(!testo.trim()) return;
+    setInviando(true);
+    try{
+      const eraNotaInterna = notaInterna;
+      const payload = {
+        ticket_id: ticket.id, autore_tipo:"staff", autore_profilo_id: mioId,
+        testo: testo.trim(), visibile_al_cliente: !eraNotaInterna,
+      };
+      const [msg] = await sbAuth("POST","ticket_messaggi","",payload,accessToken);
+      setMessaggi(prev=>[...prev,msg]);
+      setTesto(""); setNotaInterna(false);
+      if(ticket.stato==="Aperto" && !eraNotaInterna) aggiornaCampo("stato","In lavorazione");
+    }catch(err){ alert("Errore invio: "+err.message); }
+    setInviando(false);
+  }
+
+  async function generaIntervento(){
+    if(!window.confirm("Generare un Intervento tecnico collegato a questo ticket?")) return;
+    setGenerandoIntervento(true);
+    try{
+      const nomeCliente = clienteInfo?.ragione_sociale || ticket.cliente_codice;
+      const payload = {
+        titolo: `${ticket.titolo} — ${nomeCliente}`,
+        tipo: "intervento_tecnico",
+        cliente_codice: ticket.cliente_codice,
+        cliente_nome: nomeCliente,
+        stato: "Richiesto",
+        priorita: ({Bassa:"bassa",Normale:"media",Alta:"alta",Urgente:"alta"})[ticket.priorita] || "media",
+        note: `Generato dal ticket ${ticket.numero}.${ticket.descrizione?`\n\n${ticket.descrizione}`:""}`,
+        attrezzatura_id: ticket.attrezzatura_id || null,
+        attrezzatura_testo: ticket.attrezzatura_id ? null : (ticket.descrizione_libera_prodotto || null),
+        creato_da_nome: sessione?.nome || null,
+      };
+      const [intervento] = await sbAuth("POST","interventi","",payload,accessToken);
+      const [agg] = await sbAuth("PATCH","ticket_assistenza",`id=eq.${ticket.id}`,{intervento_collegato_id:intervento.id, stato:"In lavorazione"},accessToken);
+      await sbAuth("POST","ticket_messaggi","",{
+        ticket_id: ticket.id, autore_tipo:"sistema",
+        testo:`Generato l'intervento «${intervento.titolo||""}» — visibile al cliente.`, visibile_al_cliente:true,
+      },accessToken);
+      onAggiornato(agg);
+      caricaMessaggi();
+    }catch(err){ alert("Errore: "+err.message); }
+    setGenerandoIntervento(false);
+  }
+
+  function nomeUtente(id){
+    const u = (utenti||[]).find(x=>x.id===id);
+    return u ? `${u.nome} ${u.cognome||""}`.trim() : null;
+  }
+
+  return (
+    <div>
+      <button onClick={onIndietro} style={{...S.btnS,marginBottom:14}}>← Torna ai ticket</button>
+
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:14,marginBottom:14,flexWrap:"wrap"}}>
+        <div>
+          <div style={{fontFamily:F_MONO,fontSize:11,color:"#9AA3AB"}}>{ticket.numero}</div>
+          <div style={{fontFamily:F_DISPLAY,fontSize:18,fontWeight:600}}>{ticket.titolo}</div>
+          <div style={{fontSize:12.5,color:C.steel,marginTop:2}}>
+            {clienteInfo?.ragione_sociale || ticket.cliente_codice}
+            {ticket.marchio?` · ${ticket.marchio}`:""}{ticket.categoria?` / ${ticket.categoria}`:""}
+          </div>
+        </div>
+        <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+          <select value={ticket.stato} onChange={e=>aggiornaCampo("stato",e.target.value)} disabled={salvandoCampo} style={S.sel}>
+            {STATI_TICKET.map(s=><option key={s} value={s}>{s}</option>)}
+          </select>
+          <select value={ticket.priorita} onChange={e=>aggiornaCampo("priorita",e.target.value)} disabled={salvandoCampo} style={S.sel}>
+            {PRIORITA_TICKET.map(p=><option key={p} value={p}>{p}</option>)}
+          </select>
+        </div>
+      </div>
+
+      <div style={{display:"flex",gap:16,flexWrap:"wrap",alignItems:"flex-start"}}>
+        <div style={{flex:2,minWidth:300}}>
+          <div style={{border:`1px solid ${C.paperLine}`,borderRadius:8,padding:12,minHeight:160,marginBottom:12,background:"#fff"}}>
+            {caricandoMsg && <div style={{color:"#9AA3AB",fontSize:12.5}}>Caricamento…</div>}
+            {!caricandoMsg && messaggi.length===0 && <div style={{color:"#9AA3AB",fontSize:12.5}}>Nessun messaggio ancora.</div>}
+            {messaggi.map(m=>{
+              const etichetta = m.autore_tipo==="cliente" ? "Cliente" : m.autore_tipo==="chatbot" ? "Assistente virtuale" : m.autore_tipo==="sistema" ? "Sistema" : (nomeUtente(m.autore_profilo_id) || "Staff");
+              return (
+                <div key={m.id} style={{marginBottom:10,padding:"8px 10px",borderRadius:7,background: m.visibile_al_cliente ? "#F3F6FB" : "rgba(217,164,65,0.10)", border: m.visibile_al_cliente ? "none" : `1px solid ${C.warn}`}}>
+                  <div style={{display:"flex",justifyContent:"space-between",fontSize:11,marginBottom:3,gap:8}}>
+                    <span style={{fontWeight:700,color:C.ink}}>{etichetta}{!m.visibile_al_cliente && " · nota interna"}</span>
+                    <span style={{color:"#9AA3AB",fontFamily:F_MONO,flexShrink:0}}>{new Date(m.created_at).toLocaleString("it-IT",{dateStyle:"short",timeStyle:"short"})}</span>
+                  </div>
+                  <div style={{fontSize:13,whiteSpace:"pre-line"}}>{m.testo}</div>
+                </div>
+              );
+            })}
+          </div>
+
+          <textarea value={testo} onChange={e=>setTesto(e.target.value)} placeholder="Scrivi un messaggio…" rows={3} style={{...S.inp,marginBottom:8,resize:"vertical",fontFamily:F_BODY}}/>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:10}}>
+            <label style={{display:"flex",alignItems:"center",gap:6,fontSize:12.5,color:C.steel,cursor:"pointer"}}>
+              <input type="checkbox" checked={notaInterna} onChange={e=>setNotaInterna(e.target.checked)}/>
+              Nota interna (non visibile al cliente)
+            </label>
+            <button onClick={invia} disabled={inviando||!testo.trim()} style={{...S.btnAccent,opacity:(inviando||!testo.trim())?0.5:1}}>{inviando?"Invio…":"Invia"}</button>
+          </div>
+        </div>
+
+        <div style={{flex:1,minWidth:240}}>
+          <div style={S.eyebrow}>Assegnato a</div>
+          <select value={ticket.assegnato_a||""} onChange={e=>aggiornaCampo("assegnato_a", e.target.value||null)} disabled={salvandoCampo} style={{...S.sel,width:"100%",marginBottom:14}}>
+            <option value="">— non assegnato —</option>
+            {(utenti||[]).map(u=><option key={u.id} value={u.id}>{u.nome} {u.cognome||""}</option>)}
+          </select>
+
+          {suggeriti.length>0 && <>
+            <div style={S.eyebrow}>Tecnici suggeriti</div>
+            {suggeriti.map(s=>(
+              <div key={s.id} onClick={()=>aggiornaCampo("assegnato_a",s.id)} style={{...S.card,padding:"8px 10px",marginBottom:6,display:"flex",justifyContent:"space-between",alignItems:"center",gap:8}}>
+                <span style={{fontSize:12.5,fontWeight:600}}>{s.nome}</span>
+                <Tag tone={s.matchProvincia?"ok":"steel"}>{s.matchProvincia?"competenza + zona":"competenza"}</Tag>
+              </div>
+            ))}
+          </>}
+
+          <div style={{height:8}}/>
+          {ticket.intervento_collegato_id ? (
+            <div style={{...S.card,cursor:"default",background:"#F3F6FB"}}>
+              <div style={{fontSize:12,color:C.steel}}>Intervento collegato</div>
+              <div style={{fontSize:12.5,fontWeight:600,marginTop:2}}>già generato</div>
+            </div>
+          ) : (
+            <button onClick={generaIntervento} disabled={generandoIntervento} style={{...S.btnP,width:"100%"}}>
+              {generandoIntervento?"Generazione…":"🔧 Genera intervento"}
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ADMIN — turni call center, competenze tecnici, province tecnici: i dati
+// su cui lavora il motore di instradamento automatico dei ticket (vedi
+// trigger trg_notifica_nuovo_ticket nella migrazione #25).
+// ═══════════════════════════════════════════════════════════════════════════
+const GIORNI_SETTIMANA_LABEL = {1:"Lunedì",2:"Martedì",3:"Mercoledì",4:"Giovedì",5:"Venerdì"};
+
+function GestioneTurniCompetenze({ sessione, ruolo }){
+  const accessToken = trovaAccessToken(sessione);
+  const [tab, setTab] = useState("turni");
+  const [utenti, setUtenti] = useState([]);
+  const [turni, setTurni] = useState([]);
+  const [competenze, setCompetenze] = useState([]);
+  const [province, setProvince] = useState([]);
+  const [caricando, setCaricando] = useState(true);
+  const [msg, setMsg] = useState("");
+
+  async function caricaTutto(){
+    setCaricando(true);
+    try{
+      const [u, t, c, p] = await Promise.all([
+        chiamaUtentiInfo(accessToken).then(d=>d?.utenti||[]),
+        sbGetAuth("turni_callcenter","select=*",accessToken),
+        sbGetAuth("competenze_tecnico","select=*&order=marchio.asc",accessToken),
+        sbGetAuth("tecnico_province","select=*&order=provincia.asc",accessToken),
+      ]);
+      setUtenti(u); setTurni(t||[]); setCompetenze(c||[]); setProvince(p||[]);
+    }catch(err){ setMsg("Errore nel caricamento: "+err.message); }
+    setCaricando(false);
+  }
+  useEffect(()=>{ if(ruolo==="admin") caricaTutto(); },[ruolo]);
+
+  if(ruolo!=="admin"){
+    return (
+      <div style={{...S.card,cursor:"default"}}>
+        <div style={{fontFamily:F_DISPLAY,fontSize:16,fontWeight:600}}>Ticket — instradamento</div>
+        <div style={{fontSize:12.5,color:C.steel,marginTop:6}}>Funzione riservata al ruolo <b>Admin</b>.</div>
+      </div>
+    );
+  }
+
+  function nomeUtente(id){
+    const u = utenti.find(x=>x.id===id);
+    return u ? `${u.nome} ${u.cognome||""}`.trim() : id;
+  }
+
+  async function impostaTurnista(giorno, profiloId){
+    try{
+      if(!profiloId){
+        await sbAuth("DELETE","turni_callcenter",`giorno_settimana=eq.${giorno}`,null,accessToken);
+        setTurni(prev=>prev.filter(t=>t.giorno_settimana!==giorno));
+        return;
+      }
+      const esistente = turni.find(t=>t.giorno_settimana===giorno);
+      if(esistente){
+        const [agg] = await sbAuth("PATCH","turni_callcenter",`giorno_settimana=eq.${giorno}`,{profilo_id:profiloId,attivo:true},accessToken);
+        setTurni(prev=>prev.map(t=>t.giorno_settimana===giorno?agg:t));
+      } else {
+        const [creato] = await sbAuth("POST","turni_callcenter","",{giorno_settimana:giorno,profilo_id:profiloId,attivo:true},accessToken);
+        setTurni(prev=>[...prev,creato]);
+      }
+    }catch(err){ setMsg("Errore: "+err.message); }
+  }
+
+  const [ctProfilo,setCtProfilo] = useState(""); const [ctMarchio,setCtMarchio] = useState(""); const [ctCategoria,setCtCategoria] = useState("");
+  async function aggiungiCompetenza(){
+    if(!ctProfilo||!ctMarchio.trim()||!ctCategoria.trim()) return;
+    try{
+      const [creata] = await sbAuth("POST","competenze_tecnico","",{profilo_id:ctProfilo,marchio:ctMarchio.trim(),categoria:ctCategoria.trim()},accessToken);
+      setCompetenze(prev=>[...prev,creata]);
+      setCtMarchio(""); setCtCategoria("");
+    }catch(err){ setMsg("Errore: "+err.message); }
+  }
+  async function rimuoviCompetenza(id){
+    try{ await sbAuth("DELETE","competenze_tecnico",`id=eq.${id}`,null,accessToken); setCompetenze(prev=>prev.filter(c=>c.id!==id)); }
+    catch(err){ setMsg("Errore: "+err.message); }
+  }
+
+  const [tpProfilo,setTpProfilo] = useState(""); const [tpProvincia,setTpProvincia] = useState("");
+  async function aggiungiProvincia(){
+    if(!tpProfilo||!tpProvincia.trim()) return;
+    try{
+      const [creata] = await sbAuth("POST","tecnico_province","",{profilo_id:tpProfilo,provincia:tpProvincia.trim().toUpperCase()},accessToken);
+      setProvince(prev=>[...prev,creata]);
+      setTpProvincia("");
+    }catch(err){ setMsg("Errore: "+err.message); }
+  }
+  async function rimuoviProvincia(id){
+    try{ await sbAuth("DELETE","tecnico_province",`id=eq.${id}`,null,accessToken); setProvince(prev=>prev.filter(p=>p.id!==id)); }
+    catch(err){ setMsg("Errore: "+err.message); }
+  }
+
+  return (
+    <div style={{...S.card,cursor:"default"}}>
+      <div style={{fontFamily:F_DISPLAY,fontSize:16,fontWeight:600,marginBottom:10}}>Ticket — instradamento</div>
+      <div style={{display:"flex",gap:6,marginBottom:14,flexWrap:"wrap"}}>
+        {[["turni","Turni call center"],["competenze","Competenze tecnici"],["province","Province tecnici"]].map(([id,label])=>(
+          <div key={id} onClick={()=>setTab(id)} style={{padding:"6px 11px",borderRadius:16,fontSize:12,cursor:"pointer",fontWeight:600,
+            background:tab===id?C.ink:"#fff",color:tab===id?"#fff":C.charcoal,border:`1px solid ${tab===id?C.ink:C.paperLine}`}}>{label}</div>
+        ))}
+      </div>
+
+      {msg && <div style={{color:C.danger,fontSize:12.5,marginBottom:10}}>{msg}</div>}
+      {caricando && <div style={{color:"#9AA3AB",fontSize:13}}>Caricamento…</div>}
+
+      {!caricando && tab==="turni" && (
+        <div>
+          {[1,2,3,4,5].map(g=>{
+            const t = turni.find(x=>x.giorno_settimana===g);
+            return (
+              <div key={g} style={{display:"flex",alignItems:"center",gap:10,marginBottom:8}}>
+                <span style={{width:90,fontSize:12.5,fontWeight:600,flexShrink:0}}>{GIORNI_SETTIMANA_LABEL[g]}</span>
+                <select value={t?.profilo_id||""} onChange={e=>impostaTurnista(g,e.target.value||null)} style={{...S.sel,flex:1}}>
+                  <option value="">— nessun turnista —</option>
+                  {utenti.map(u=><option key={u.id} value={u.id}>{u.nome} {u.cognome||""}</option>)}
+                </select>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {!caricando && tab==="competenze" && (
+        <div>
+          <div style={{display:"flex",gap:8,marginBottom:12,flexWrap:"wrap"}}>
+            <select value={ctProfilo} onChange={e=>setCtProfilo(e.target.value)} style={{...S.sel,flex:1,minWidth:140}}>
+              <option value="">Tecnico…</option>
+              {utenti.map(u=><option key={u.id} value={u.id}>{u.nome} {u.cognome||""}</option>)}
+            </select>
+            <input value={ctMarchio} onChange={e=>setCtMarchio(e.target.value)} placeholder="Marchio" style={{...S.inp,flex:1,minWidth:120}}/>
+            <input value={ctCategoria} onChange={e=>setCtCategoria(e.target.value)} placeholder="Categoria" style={{...S.inp,flex:1,minWidth:120}}/>
+            <button onClick={aggiungiCompetenza} style={S.btnP}>+ Aggiungi</button>
+          </div>
+          {competenze.map(c=>(
+            <div key={c.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"7px 10px",borderBottom:`1px solid ${C.paperLine}`,fontSize:12.5}}>
+              <span>{nomeUtente(c.profilo_id)} — <b>{c.marchio}</b> / {c.categoria}</span>
+              <span onClick={()=>rimuoviCompetenza(c.id)} style={{color:C.danger,cursor:"pointer",fontSize:11}}>Rimuovi</span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {!caricando && tab==="province" && (
+        <div>
+          <div style={{display:"flex",gap:8,marginBottom:12,flexWrap:"wrap"}}>
+            <select value={tpProfilo} onChange={e=>setTpProfilo(e.target.value)} style={{...S.sel,flex:1,minWidth:140}}>
+              <option value="">Tecnico…</option>
+              {utenti.map(u=><option key={u.id} value={u.id}>{u.nome} {u.cognome||""}</option>)}
+            </select>
+            <input value={tpProvincia} onChange={e=>setTpProvincia(e.target.value.toUpperCase())} placeholder="Sigla prov. (es. TO)" maxLength={2} style={{...S.inp,flex:1,minWidth:120}}/>
+            <button onClick={aggiungiProvincia} style={S.btnP}>+ Aggiungi</button>
+          </div>
+          {province.map(p=>(
+            <div key={p.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"7px 10px",borderBottom:`1px solid ${C.paperLine}`,fontSize:12.5}}>
+              <span>{nomeUtente(p.profilo_id)} — <b>{p.provincia}</b></span>
+              <span onClick={()=>rimuoviProvincia(p.id)} style={{color:C.danger,cursor:"pointer",fontSize:11}}>Rimuovi</span>
+            </div>
+          ))}
+        </div>
       )}
     </div>
   );
