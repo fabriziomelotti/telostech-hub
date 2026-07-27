@@ -786,8 +786,8 @@ export default function App(){
           {area==="preventivi" && <Preventivi cart={cart} setCart={setCart} preventivi={preventivi} setPreventivi={setPreventivi} setOrdini={setOrdini} setArea={setArea} ruolo={role} catalog={catalog} sessione={sessione} precodici={precodici} isMobile={isMobile}/>}
           {area==="ordini" && <Ordini ordini={ordini} setOrdini={setOrdini} preventivi={preventivi} setPreventivi={setPreventivi} setInterventi={setInterventi} catalog={catalog} sessione={sessione} ruolo={role} precodici={precodici} isMobile={isMobile}/>}
           {area==="interventi" && <Interventi interventi={interventi} setInterventi={setInterventi} attrezzature={attrezzature} sessione={sessione} setArea={setArea} interventoDaCompletare={interventoDaCompletare} setInterventoDaCompletare={setInterventoDaCompletare} catalog={catalog} ruolo={role} precodici={precodici} isMobile={isMobile}/>}
-          {area==="ticket" && <TicketAssistenza sessione={sessione} ruolo={role} ticketDaAprire={ticketDaAprire} setTicketDaAprire={setTicketDaAprire}/>}
-          {area==="admin" && <PannelloAdmin ruolo={role} sessione={sessione}/>}
+          {area==="ticket" && <TicketAssistenza sessione={sessione} ruolo={role} ticketDaAprire={ticketDaAprire} setTicketDaAprire={setTicketDaAprire} catalog={catalog}/>}
+          {area==="admin" && <PannelloAdmin ruolo={role} sessione={sessione} catalog={catalog}/>}
           {area==="gestione" && <PannelloGestione setCatalog={setCatalog} ruolo={role} sessione={sessione} catalog={catalog}/>}
         </div>
 
@@ -12094,7 +12094,7 @@ function FormPacchetto({ pacchetto, catalog, accessToken, ruolo, onSalvato, onAn
 // gestione utenti. Tutto il resto (catalogo, prezzi, listini, categorie,
 // logistica) si trova ora in GESTIONE (vedi PannelloGestione), visibile
 // anche al responsabile.
-function PannelloAdmin({ ruolo, sessione }) {
+function PannelloAdmin({ ruolo, sessione, catalog }) {
   return (
     <div>
       <div style={{fontFamily:F_DISPLAY,fontSize:18,fontWeight:600,marginBottom:18}}>AMMINISTRAZIONE</div>
@@ -12102,7 +12102,7 @@ function PannelloAdmin({ ruolo, sessione }) {
       <div style={{height:18}}/>
       <GestioneUtenti ruolo={ruolo} sessione={sessione}/>
       <div style={{height:18}}/>
-      <GestioneTurniCompetenze ruolo={ruolo} sessione={sessione}/>
+      <GestioneTurniCompetenze ruolo={ruolo} sessione={sessione} catalog={catalog}/>
     </div>
   );
 }
@@ -12658,12 +12658,21 @@ function NotificheBell({ sessione, onApriTicket }){
 // TICKET DI ASSISTENZA — lato staff: lista per stato + dettaglio con thread,
 // assegnazione, tecnici suggeriti e generazione intervento con un click.
 // ═══════════════════════════════════════════════════════════════════════════
+// Marchi/categorie realmente in uso nel catalogo, per le tendine di
+// selezione (ticket, competenze tecnico) — evita valori scritti a mano in
+// modo incoerente, stesso principio già usato per l'anagrafica attrezzature.
+function marchiECategorieDaCatalogo(catalog){
+  const marchi = [...new Set((catalog||[]).map(p=>p.mar).filter(Boolean))].sort((a,b)=>a.localeCompare(b));
+  const categorie = [...new Set((catalog||[]).map(p=>p.cat).filter(Boolean))].sort((a,b)=>a.localeCompare(b));
+  return { marchi, categorie };
+}
+
 const STATI_TICKET = ["Aperto","In lavorazione","In attesa cliente","Risolto","Chiuso"];
 const PRIORITA_TICKET = ["Bassa","Normale","Alta","Urgente"];
 const TONO_STATO_TICKET = {"Aperto":C.danger,"In lavorazione":C.warn,"In attesa cliente":C.steel,"Risolto":C.ok,"Chiuso":C.steel};
 const TONO_PRIORITA_TICKET = {"Bassa":"steel","Normale":"steel","Alta":"warn","Urgente":"danger"};
 
-function TicketAssistenza({ sessione, ruolo, ticketDaAprire, setTicketDaAprire }){
+function TicketAssistenza({ sessione, ruolo, ticketDaAprire, setTicketDaAprire, catalog }){
   const accessToken = trovaAccessToken(sessione);
   const [ticket, setTicket] = useState([]);
   const [clientiMap, setClientiMap] = useState({});
@@ -12705,7 +12714,7 @@ function TicketAssistenza({ sessione, ruolo, ticketDaAprire, setTicketDaAprire }
 
   if(aperto){
     return <DettaglioTicket
-      ticket={aperto} sessione={sessione} ruolo={ruolo} utenti={utenti}
+      ticket={aperto} sessione={sessione} ruolo={ruolo} utenti={utenti} catalog={catalog}
       clienteInfo={clientiMap[aperto.cliente_codice]}
       onIndietro={()=>{ setAperto(null); carica(); }}
       onAggiornato={(agg)=>{ setTicket(prev=>prev.map(x=>x.id===agg.id?agg:x)); setAperto(agg); }}
@@ -12713,7 +12722,7 @@ function TicketAssistenza({ sessione, ruolo, ticketDaAprire, setTicketDaAprire }
   }
 
   if(nuovoAperto){
-    return <NuovoTicketStaff sessione={sessione} onAnnulla={()=>setNuovoAperto(false)} onCreato={()=>{ setNuovoAperto(false); carica(); }}/>;
+    return <NuovoTicketStaff sessione={sessione} catalog={catalog} onAnnulla={()=>setNuovoAperto(false)} onCreato={()=>{ setNuovoAperto(false); carica(); }}/>;
   }
 
   const filtrati = ticket.filter(t=>t.stato===filtroStato);
@@ -12770,8 +12779,9 @@ function TicketAssistenza({ sessione, ruolo, ticketDaAprire, setTicketDaAprire }
 // ClientiComponenti.jsx), non l'anagrafica libera: un ticket richiede
 // sempre un cliente_codice valido, quindi qui non ammettiamo il cliente
 // "a mano" come invece fanno preventivi/ordini.
-function NuovoTicketStaff({ sessione, onAnnulla, onCreato }){
+function NuovoTicketStaff({ sessione, catalog, onAnnulla, onCreato }){
   const accessToken = trovaAccessToken(sessione);
+  const { marchi, categorie } = useMemo(()=>marchiECategorieDaCatalogo(catalog),[catalog]);
   const [clienteScelto, setClienteScelto] = useState(null);
   const [titolo, setTitolo] = useState("");
   const [descrizione, setDescrizione] = useState("");
@@ -12830,8 +12840,14 @@ function NuovoTicketStaff({ sessione, onAnnulla, onCreato }){
         <input value={titolo} onChange={e=>setTitolo(e.target.value)} placeholder="Titolo del ticket *" style={{...S.inp,marginBottom:8}}/>
         <textarea value={descrizione} onChange={e=>setDescrizione(e.target.value)} placeholder="Descrizione (diventa il primo messaggio del thread)" rows={4} style={{...S.inp,marginBottom:8,resize:"vertical",fontFamily:F_BODY}}/>
         <div style={{display:"flex",gap:8,marginBottom:8}}>
-          <input value={marchio} onChange={e=>setMarchio(e.target.value)} placeholder="Marchio (facoltativo)" style={{...S.inp,flex:1}}/>
-          <input value={categoria} onChange={e=>setCategoria(e.target.value)} placeholder="Categoria (facoltativo)" style={{...S.inp,flex:1}}/>
+          <select value={marchio} onChange={e=>setMarchio(e.target.value)} style={{...S.sel,flex:1}}>
+            <option value="">Marchio (facoltativo)</option>
+            {marchi.map(m=><option key={m} value={m}>{m}</option>)}
+          </select>
+          <select value={categoria} onChange={e=>setCategoria(e.target.value)} style={{...S.sel,flex:1}}>
+            <option value="">Categoria (facoltativa)</option>
+            {categorie.map(c=><option key={c} value={c}>{c}</option>)}
+          </select>
         </div>
         <select value={priorita} onChange={e=>setPriorita(e.target.value)} style={{...S.sel,marginBottom:14}}>
           {PRIORITA_TICKET.map(p=><option key={p} value={p}>{p}</option>)}
@@ -12850,9 +12866,10 @@ function NuovoTicketStaff({ sessione, onAnnulla, onCreato }){
 // suggeriti" (stesso motore usato dal trigger di notifica in DB: match
 // marchio+categoria, evidenziando chi copre anche la provincia del
 // cliente) e generazione dell'Intervento collegato con un click.
-function DettaglioTicket({ ticket, sessione, ruolo, utenti, clienteInfo, onIndietro, onAggiornato }){
+function DettaglioTicket({ ticket, sessione, ruolo, utenti, catalog, clienteInfo, onIndietro, onAggiornato }){
   const accessToken = trovaAccessToken(sessione);
   const mioId = sessione?.user?.id;
+  const { marchi, categorie } = useMemo(()=>marchiECategorieDaCatalogo(catalog),[catalog]);
   const [messaggi, setMessaggi] = useState([]);
   const [caricandoMsg, setCaricandoMsg] = useState(true);
   const [testo, setTesto] = useState("");
@@ -12861,6 +12878,8 @@ function DettaglioTicket({ ticket, sessione, ruolo, utenti, clienteInfo, onIndie
   const [suggeriti, setSuggeriti] = useState([]);
   const [generandoIntervento, setGenerandoIntervento] = useState(false);
   const [salvandoCampo, setSalvandoCampo] = useState(false);
+  const [chiusuraInCorso, setChiusuraInCorso] = useState(false);
+  const [esitoChiusura, setEsitoChiusura] = useState("");
 
   async function caricaMessaggi(){
     setCaricandoMsg(true);
@@ -12895,6 +12914,29 @@ function DettaglioTicket({ ticket, sessione, ruolo, utenti, clienteInfo, onIndie
     try{
       const [agg] = await sbAuth("PATCH","ticket_assistenza",`id=eq.${ticket.id}`,{[campo]:valore},accessToken);
       onAggiornato(agg);
+    }catch(err){ alert("Errore: "+err.message); }
+    setSalvandoCampo(false);
+  }
+
+  // Chiudere un ticket richiede sempre un esito finale in archivio — invece
+  // di chiudere subito al cambio select, apriamo un piccolo pannello che
+  // blocca la conferma finché il testo non è compilato.
+  function chiediChiusura(){
+    setEsitoChiusura(ticket.esito_chiusura || "");
+    setChiusuraInCorso(true);
+  }
+  async function confermaChiusura(){
+    if(!esitoChiusura.trim()) return;
+    setSalvandoCampo(true);
+    try{
+      const [agg] = await sbAuth("PATCH","ticket_assistenza",`id=eq.${ticket.id}`,{stato:"Chiuso", esito_chiusura: esitoChiusura.trim()},accessToken);
+      await sbAuth("POST","ticket_messaggi","",{
+        ticket_id: ticket.id, autore_tipo:"sistema", visibile_al_cliente:true,
+        testo:`Ticket chiuso — esito: ${esitoChiusura.trim()}`,
+      },accessToken);
+      onAggiornato(agg);
+      caricaMessaggi();
+      setChiusuraInCorso(false);
     }catch(err){ alert("Errore: "+err.message); }
     setSalvandoCampo(false);
   }
@@ -12964,13 +13006,52 @@ function DettaglioTicket({ ticket, sessione, ruolo, utenti, clienteInfo, onIndie
           </div>
         </div>
         <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
-          <select value={ticket.stato} onChange={e=>aggiornaCampo("stato",e.target.value)} disabled={salvandoCampo} style={S.sel}>
+          <select value={ticket.stato} onChange={e=>{
+            const nuovo = e.target.value;
+            if(nuovo==="Chiuso") chiediChiusura(); else aggiornaCampo("stato",nuovo);
+          }} disabled={salvandoCampo} style={S.sel}>
             {STATI_TICKET.map(s=><option key={s} value={s}>{s}</option>)}
           </select>
           <select value={ticket.priorita} onChange={e=>aggiornaCampo("priorita",e.target.value)} disabled={salvandoCampo} style={S.sel}>
             {PRIORITA_TICKET.map(p=><option key={p} value={p}>{p}</option>)}
           </select>
         </div>
+      </div>
+
+      {chiusuraInCorso && (
+        <div style={{...S.card,cursor:"default",border:`1px solid ${C.ink}`,marginBottom:14}}>
+          <div style={{fontWeight:600,fontSize:13,marginBottom:6}}>Esito di chiusura</div>
+          <div style={{fontSize:12,color:C.steel,marginBottom:8}}>Obbligatorio: resta in archivio insieme al ticket.</div>
+          <textarea value={esitoChiusura} onChange={e=>setEsitoChiusura(e.target.value)} rows={3} placeholder="Come è stato risolto / motivo della chiusura…" style={{...S.inp,marginBottom:10,resize:"vertical",fontFamily:F_BODY}} autoFocus/>
+          <div style={{display:"flex",gap:8}}>
+            <button onClick={confermaChiusura} disabled={salvandoCampo||!esitoChiusura.trim()} style={{...S.btnAccent,opacity:(salvandoCampo||!esitoChiusura.trim())?0.5:1}}>Conferma chiusura</button>
+            <button onClick={()=>setChiusuraInCorso(false)} style={S.btnS}>Annulla</button>
+          </div>
+        </div>
+      )}
+
+      {ticket.stato==="Chiuso" && ticket.esito_chiusura && (
+        <div style={{...S.card,cursor:"default",background:"#F3F6FB",marginBottom:14}}>
+          <div style={{fontSize:11,color:C.steel,fontFamily:F_MONO,textTransform:"uppercase",letterSpacing:"0.05em",marginBottom:4}}>Esito di chiusura</div>
+          <div style={{fontSize:13,whiteSpace:"pre-line"}}>{ticket.esito_chiusura}</div>
+        </div>
+      )}
+
+      <div style={{...S.card,cursor:"default",marginBottom:14}}>
+        <div style={S.eyebrow}>Categorizzazione</div>
+        <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+          <select value={ticket.marchio||""} onChange={e=>aggiornaCampo("marchio", e.target.value||null)} disabled={salvandoCampo} style={{...S.sel,flex:1,minWidth:140}}>
+            <option value="">Marchio non impostato</option>
+            {marchi.map(m=><option key={m} value={m}>{m}</option>)}
+          </select>
+          <select value={ticket.categoria||""} onChange={e=>aggiornaCampo("categoria", e.target.value||null)} disabled={salvandoCampo} style={{...S.sel,flex:1,minWidth:140}}>
+            <option value="">Categoria non impostata</option>
+            {categorie.map(c=><option key={c} value={c}>{c}</option>)}
+          </select>
+        </div>
+        {ticket.descrizione_libera_prodotto && (
+          <div style={{fontSize:12,color:C.steel,marginTop:8}}>Prodotto indicato dal cliente: <i>{ticket.descrizione_libera_prodotto}</i></div>
+        )}
       </div>
 
       <div style={{display:"flex",gap:16,flexWrap:"wrap",alignItems:"flex-start"}}>
@@ -13043,8 +13124,9 @@ function DettaglioTicket({ ticket, sessione, ruolo, utenti, clienteInfo, onIndie
 // ═══════════════════════════════════════════════════════════════════════════
 const GIORNI_SETTIMANA_LABEL = {1:"Lunedì",2:"Martedì",3:"Mercoledì",4:"Giovedì",5:"Venerdì"};
 
-function GestioneTurniCompetenze({ sessione, ruolo }){
+function GestioneTurniCompetenze({ sessione, ruolo, catalog }){
   const accessToken = trovaAccessToken(sessione);
+  const { marchi, categorie } = useMemo(()=>marchiECategorieDaCatalogo(catalog),[catalog]);
   const [tab, setTab] = useState("turni");
   const [utenti, setUtenti] = useState([]);
   const [turni, setTurni] = useState([]);
@@ -13165,8 +13247,14 @@ function GestioneTurniCompetenze({ sessione, ruolo }){
               <option value="">Tecnico…</option>
               {utenti.map(u=><option key={u.id} value={u.id}>{u.nome} {u.cognome||""}</option>)}
             </select>
-            <input value={ctMarchio} onChange={e=>setCtMarchio(e.target.value)} placeholder="Marchio" style={{...S.inp,flex:1,minWidth:120}}/>
-            <input value={ctCategoria} onChange={e=>setCtCategoria(e.target.value)} placeholder="Categoria" style={{...S.inp,flex:1,minWidth:120}}/>
+            <select value={ctMarchio} onChange={e=>setCtMarchio(e.target.value)} style={{...S.sel,flex:1,minWidth:120}}>
+              <option value="">Marchio…</option>
+              {marchi.map(m=><option key={m} value={m}>{m}</option>)}
+            </select>
+            <select value={ctCategoria} onChange={e=>setCtCategoria(e.target.value)} style={{...S.sel,flex:1,minWidth:120}}>
+              <option value="">Categoria…</option>
+              {categorie.map(c=><option key={c} value={c}>{c}</option>)}
+            </select>
             <button onClick={aggiungiCompetenza} style={S.btnP}>+ Aggiungi</button>
           </div>
           {competenze.map(c=>(
