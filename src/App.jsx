@@ -3558,7 +3558,7 @@ async function generaPdfBlob(htmlContenuto){
     const pagine = Array.from(corpo.querySelectorAll(".pagina"));
     const daCatturare = pagine.length ? pagine : [corpo];
 
-    const FATTORE_MINIMO = 0.65; // non scendere sotto il 65% del carattere originale, per restare leggibile
+    const FATTORE_MINIMO = 1; // disattivato: il contenuto troppo lungo per una pagina va sempre alla pagina successiva a piena dimensione (vedi ripiego più sotto), non si rimpicciolisce più — un font più grande impostato nel CSS restava altrimenti "invisibile", perché il rimpicciolimento automatico lo compensava sempre riportandolo alla stessa dimensione finale
     const TOLLERANZA_MM = 2; // margine per non scattare su pagine essenzialmente già a misura (es. la copertina, con arrotondamenti del layout flessibile)
     const OBIETTIVO_MM = A4_ALTEZZA_MM - 3; // puntiamo leggermente sotto i 297mm, per avere margine contro arrotondamenti nella cattura successiva
     const MARGINE_INFERIORE_FOOTER_MM = 8; // spazio dal bordo inferiore del foglio
@@ -4017,9 +4017,9 @@ async function generaPreventivoPDF(righe, total, meta={}){
   .hd-content .badge-partner{height:38px}
   .riga-titolo{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;margin-bottom:10px}
   .titolo-ordine{font-size:30px;font-weight:700;color:#162758;white-space:nowrap}
-  .meta-box{display:grid;grid-template-columns:auto minmax(0,1fr);column-gap:14px;row-gap:5px;font-size:15px;justify-content:end;flex-shrink:0;max-width:65mm}
+  .meta-box{display:grid;grid-template-columns:auto auto;column-gap:14px;row-gap:5px;font-size:15px;justify-content:end;flex-shrink:0}
   .meta-box .etichetta{color:#7C879E;text-align:right}
-  .meta-box .valore{text-align:left;font-weight:600;white-space:normal;word-break:break-word}
+  .meta-box .valore{text-align:left;font-weight:600;white-space:nowrap}
   .cliente-box{font-size:17px;margin-bottom:14px}
   .cliente-box .nome{font-weight:700;font-size:20px}
 
