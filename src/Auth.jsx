@@ -4,7 +4,9 @@ import { useState, useEffect, useRef } from "react";
 // AUTENTICAZIONE — Supabase Auth via REST (nessuna libreria esterna)
 // Login con email + password; il RUOLO viene letto dalla tabella `profili`.
 //
-// MFA (TOTP, obbligatorio per tutti gli utenti):
+// MFA (TOTP, obbligatorio per lo staff Telos — commerciale/tecnico/
+// responsabile/admin; il ruolo "cliente" del portale esterno ne è esente,
+// vedi elaboraAutenticazione più sotto):
 // Ci appoggiamo al livello di garanzia nativo di Supabase Auth (claim "aal"
 // dentro l'access token): aal1 = solo password, aal2 = password + secondo
 // fattore verificato. La sessione persistita in localStorage (STORAGE_KEY)
@@ -233,6 +235,23 @@ export function useAuth(){
   // una schermata MFA (aal1 — dispositivo nuovo o login da zero). Ritorna
   // true se la sessione è definitiva, false se resta in sospeso su MFA.
   async function elaboraAutenticazione(auth){
+    // Il ruolo "cliente" (portale esterno) è esentato dall'MFA obbligatorio:
+    // vede solo i ticket della propria azienda, non i dati sensibili che
+    // l'MFA protegge per lo staff (prezzi, anagrafica clienti, preventivi…)
+    // — richiedere un'app authenticator a un referente cliente è un
+    // attrito sproporzionato rispetto a cosa protegge in questo caso. Il
+    // ruolo va quindi saputo PRIMA di decidere se fermarsi su una
+    // schermata MFA, non dopo: se questa lettura anticipata fallisce (rete
+    // assente, ecc.) si ricade semplicemente sul flusso normale sotto, che
+    // in ogni caso fallirà più avanti con un errore chiaro se il profilo
+    // davvero non esiste.
+    let profiloAnticipato = null;
+    try{ profiloAnticipato = await leggiProfilo(auth.access_token, auth.user.id); }catch{ /* vedi commento sopra */ }
+    if(profiloAnticipato?.ruolo === "cliente"){
+      await finalizzaSessione(auth);
+      return true;
+    }
+
     const livello = decodificaAal(auth.access_token);
     if(livello === "aal2"){
       await finalizzaSessione(auth);
