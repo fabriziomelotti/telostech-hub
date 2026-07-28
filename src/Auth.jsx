@@ -127,7 +127,12 @@ async function mfaRegistra(access_token){
   const res = await fetch(`${SUPABASE_URL}/auth/v1/factors`, {
     method: "POST",
     headers: { "apikey": SUPABASE_ANON_KEY, "Authorization": `Bearer ${access_token}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ factor_type: "totp", friendly_name: "Telos Tech Hub" }),
+    // "issuer" è ciò che l'app authenticator mostra come nome del servizio
+    // (Google Authenticator, Authy, ecc. lo usano per etichettare la voce) —
+    // "friendly_name" invece è solo un'etichetta interna lato Supabase, non
+    // arriva all'app authenticator. Senza issuer esplicito, Supabase lo
+    // deduce dal progetto (spesso illeggibile, es. "localhost").
+    body: JSON.stringify({ factor_type: "totp", friendly_name: "Telos Tech Hub", issuer: "Telos Tech Hub" }),
   });
   const data = await res.json();
   if(!res.ok) throw new Error(data?.error_description || data?.msg || data?.message || "Impossibile avviare la registrazione del secondo fattore");
