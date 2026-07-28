@@ -61,8 +61,16 @@ function configuraPWA(){
       link.rel = "apple-touch-icon"; link.href = "/apple-touch-icon.png";
       document.head.appendChild(link);
     }
+    // Registrata dopo il "load" (non subito al mount): su iOS, un Service
+    // Worker che si registra proprio mentre l'utente tocca un campo appena
+    // aperta l'app può, in rari casi, far sì che la tastiera non compaia al
+    // primo tocco pur selezionando il campo — bug noto della piattaforma
+    // sulle webapp installate su Home Screen. Rimandarla a pagina già
+    // caricata riduce la finestra in cui può capitare.
     if("serviceWorker" in navigator){
-      navigator.serviceWorker.register("/sw.js").catch(()=>{});
+      const registra = () => navigator.serviceWorker.register("/sw.js").catch(()=>{});
+      if(document.readyState === "complete") registra();
+      else window.addEventListener("load", registra, { once:true });
     }
   }catch{ /* PWA è un miglioramento, mai bloccante per il resto dell'app */ }
 }
@@ -12937,8 +12945,15 @@ function NotificheBell({ sessione, onApriTicket }){
   // quella esistente se c'è, per non rifare inutilmente il giro ad ogni
   // apertura dell'app.
   async function iscriviPush(forzaRinnovo){
+    // ── DIAGNOSTICA TEMPORANEA ──
+    // Gli alert() qui sotto servono solo per capire dove si ferma
+    // l'iscrizione push su un dispositivo senza accesso alla console
+    // (iPhone senza Mac collegato via cavo). Vanno tolti appena trovata
+    // la causa: sono invasivi apposta, per essere leggibili senza strumenti.
     try{
-      if(!("serviceWorker" in navigator) || !("PushManager" in window)) return;
+      if(!("serviceWorker" in navigator) || !("PushManager" in window)){
+        alert("Debug: PushManager non disponibile su questo browser."); return;
+      }
       const registration = await navigator.serviceWorker.ready;
       let subscription = await registration.pushManager.getSubscription();
       if(subscription && forzaRinnovo){
@@ -12948,10 +12963,15 @@ function NotificheBell({ sessione, onApriTicket }){
         subscription = null;
       }
       if(!subscription){
-        subscription = await registration.pushManager.subscribe({
-          userVisibleOnly: true,
-          applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY),
-        });
+        try{
+          subscription = await registration.pushManager.subscribe({
+            userVisibleOnly: true,
+            applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY),
+          });
+        }catch(errSub){
+          alert("Debug: PushManager.subscribe() fallito — "+(errSub?.name||"")+": "+(errSub?.message||errSub));
+          return;
+        }
       }
       const json = subscription.toJSON();
       try{
@@ -12962,8 +12982,9 @@ function NotificheBell({ sessione, onApriTicket }){
           auth: json.keys.auth,
           user_agent: navigator.userAgent,
         }, accessToken);
-      }catch{ /* già iscritto con lo stesso endpoint (vincolo unique) — va bene così */ }
-    }catch(err){ console.warn("Iscrizione push non riuscita:", err.message); }
+        alert("Debug: sottoscrizione salvata correttamente su push_subscriptions.");
+      }catch(errPost){ alert("Debug: salvataggio su push_subscriptions fallito — "+(errPost?.message||errPost)); }
+    }catch(err){ alert("Debug: errore generale iscriviPush — "+(err?.name||"")+": "+(err?.message||err)); }
   }
 
   // Se il permesso è già "granted" da una sessione precedente (il browser
