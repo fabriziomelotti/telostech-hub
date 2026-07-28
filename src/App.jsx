@@ -3191,19 +3191,11 @@ function ClienteDettaglio({cliente, onIndietro, preventivi, ordini, attrezzature
   // teniamo un valore locale inizializzato da cliente e lo aggiorniamo dopo
   // ogni salvataggio riuscito — tornando alla lista e ricercando si vede
   // comunque il dato persistito vero.
-  const [categoriaCliente,setCategoriaCliente] = useState(cliente.categoria || "");
   const [agenteId,setAgenteId] = useState(cliente.agente_profilo_id || "");
-  const [categorieEsistenti,setCategorieEsistenti] = useState([]);
   const [utentiCommerciali,setUtentiCommerciali] = useState([]);
   const [salvandoCampo,setSalvandoCampo] = useState(false);
 
   useEffect(()=>{
-    sbGetAuth("clienti", "select=categoria&limit=5000", accessToken)
-      .then(dati=>{
-        const set = new Set();
-        (dati||[]).forEach(c=>{ if(c.categoria) set.add(c.categoria); });
-        setCategorieEsistenti([...set].sort((a,b)=>a.localeCompare(b)));
-      }).catch(()=>{});
     chiamaUtentiInfo(accessToken)
       .then(d=>setUtentiCommerciali((d?.utenti||[]).filter(u=>u.ruolo==="commerciale")))
       .catch(()=>setUtentiCommerciali([]));
@@ -3374,43 +3366,13 @@ function ClienteDettaglio({cliente, onIndietro, preventivi, ordini, attrezzature
             ["Partita IVA", cliente.partita_iva],
             ["Codice fiscale", cliente.codice_fiscale],
             ["Filiale di riferimento", cliente.filiale],
+            ["Categoria", cliente.categoria],
           ].filter(([,v])=>v).map(([lbl,v])=>(
             <div key={lbl} style={{display:"flex",justifyContent:"space-between",padding:"10px 4px",borderBottom:`1px solid ${C.paperLine}`,fontSize:13}}>
               <span style={{color:C.steel}}>{lbl}</span>
               <span style={{fontWeight:600,textAlign:"right"}}>{v}</span>
             </div>
           ))}
-
-          {/* Categoria — testo libero già importato dall'Excel: qui è
-              modificabile scegliendo tra i valori già in uso altrove o
-              scrivendone uno nuovo, stesso meccanismo di CampoSelezionabile
-              usato per la tipologia prodotto. */}
-          <div style={{padding:"10px 4px",borderBottom:`1px solid ${C.paperLine}`}}>
-            <div style={{fontSize:13,color:C.steel,marginBottom:6}}>Categoria</div>
-            <select
-              value={categorieEsistenti.includes(categoriaCliente) ? categoriaCliente : "__nuovo__"}
-              disabled={salvandoCampo}
-              onChange={e=>{
-                const v = e.target.value==="__nuovo__" ? "" : e.target.value;
-                if(e.target.value!=="__nuovo__") salvaCampoCliente("categoria", v, setCategoriaCliente);
-                else setCategoriaCliente("");
-              }}
-              style={{...S.inp,fontSize:13,padding:"8px 10px"}}
-            >
-              <option value="__nuovo__">— nessuna / nuova categoria —</option>
-              {categoriaCliente && !categorieEsistenti.includes(categoriaCliente) && <option value={categoriaCliente}>{categoriaCliente} (attuale)</option>}
-              {categorieEsistenti.map(c=>(<option key={c} value={c}>{c}</option>))}
-            </select>
-            {!categorieEsistenti.includes(categoriaCliente) && (
-              <input
-                value={categoriaCliente}
-                onChange={e=>setCategoriaCliente(e.target.value)}
-                onBlur={()=>salvaCampoCliente("categoria", categoriaCliente.trim(), setCategoriaCliente)}
-                placeholder="Scrivi una nuova categoria…"
-                style={{...S.inp,fontSize:13,padding:"8px 10px",marginTop:6}}
-              />
-            )}
-          </div>
 
           {/* Agente di riferimento — collegamento vero a un account
               commerciale (agente_profilo_id), non più solo il nome scritto
@@ -13411,6 +13373,56 @@ function marchiECategorieDaCatalogo(catalog){
   return { marchi, categorie };
 }
 
+// Tipologia del ticket — sostituisce il titolo libero con una scelta
+// fissa tra 4 casi ricorrenti, ciascuno con una spiegazione mostrata sotto
+// la tendina così chi apre il ticket (staff o cliente) sceglie quello giusto
+// senza doverlo indovinare dal nome.
+const TIPI_TICKET = [
+  { valore: "Contatto a cliente", descrizione: "Richiesta di contattare il cliente direttamente." },
+  { valore: "Ricambio per attrezzatura", descrizione: "Richiesta di un particolare ricambio/accessorio da identificare (es. caricabatterie per tablet diagnosi)." },
+  { valore: "Segnalazione guasto", descrizione: "Richiesta di presa in carico per un guasto su un'attrezzatura." },
+  { valore: "Identificazione prodotto", descrizione: "Richiesta di un cliente per un prodotto complessivo da ricercare a catalogo, che non si riesce a identificare da soli." },
+];
+
+// Selettore foto condiviso tra creazione ticket staff e cliente: anteprime
+// locali (nessun upload finché non si conferma l'invio del ticket), con
+// possibilità di rimuovere prima di inviare.
+function SelettoreFotoTicket({ foto, onAggiungi, onRimuovi }){
+  return (
+    <div style={{marginBottom:14}}>
+      <div style={{fontSize:12,color:C.steel,marginBottom:6}}>Foto allegate (facoltativo)</div>
+      {foto.length>0 && (
+        <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:8}}>
+          {foto.map((f,i)=>(
+            <div key={i} style={{position:"relative"}}>
+              <img src={URL.createObjectURL(f)} alt="" style={{width:64,height:64,objectFit:"cover",borderRadius:6,border:`1px solid ${C.paperLine}`}}/>
+              <button onClick={()=>onRimuovi(i)} style={{position:"absolute",top:-6,right:-6,width:20,height:20,borderRadius:"50%",background:C.danger,color:"#fff",border:"none",fontSize:12,cursor:"pointer",lineHeight:1,padding:0}}>✕</button>
+            </div>
+          ))}
+        </div>
+      )}
+      <label style={{display:"inline-block",cursor:"pointer"}}>
+        <input type="file" accept="image/*" multiple onChange={onAggiungi} style={{display:"none"}}/>
+        <span style={S.btnS}>📷 Aggiungi foto</span>
+      </label>
+    </div>
+  );
+}
+
+// Carica in sequenza le foto scelte in fase di apertura ticket sul bucket
+// dedicato, restituendo l'elenco di URL pubblici da salvare in
+// ticket_messaggi.allegati.
+async function caricaFotoTicket(foto, prefisso, accessToken){
+  const urls = [];
+  for(const file of foto){
+    const estensione = (file.name.split(".").pop()||"jpg").toLowerCase().replace(/[^a-z0-9]/g,"")||"jpg";
+    const path = `${prefisso||"ticket"}-${Date.now()}-${Math.random().toString(36).slice(2,8)}.${estensione}`;
+    const url = await sbUploadStorage("ticket-allegati", path, file, accessToken);
+    urls.push(url);
+  }
+  return urls;
+}
+
 const STATI_TICKET = ["Aperto","In lavorazione","In attesa cliente","Risolto","Chiuso"];
 const PRIORITA_TICKET = ["Bassa","Normale","Alta","Urgente"];
 const TONO_STATO_TICKET = {"Aperto":C.danger,"In lavorazione":C.warn,"In attesa cliente":C.steel,"Risolto":C.ok,"Chiuso":C.steel};
@@ -13527,21 +13539,28 @@ function NuovoTicketStaff({ sessione, catalog, onAnnulla, onCreato }){
   const accessToken = trovaAccessToken(sessione);
   const { marchi, categorie } = useMemo(()=>marchiECategorieDaCatalogo(catalog),[catalog]);
   const [clienteScelto, setClienteScelto] = useState(null);
-  const [titolo, setTitolo] = useState("");
+  const [tipo, setTipo] = useState("");
   const [descrizione, setDescrizione] = useState("");
   const [marchio, setMarchio] = useState("");
   const [categoria, setCategoria] = useState("");
   const [priorita, setPriorita] = useState("Normale");
+  const [foto, setFoto] = useState([]);
   const [salvando, setSalvando] = useState(false);
   const [errore, setErrore] = useState("");
 
+  function aggiungiFoto(e){
+    setFoto(prev=>[...prev, ...Array.from(e.target.files||[])]);
+    e.target.value = "";
+  }
+  function rimuoviFoto(i){ setFoto(prev=>prev.filter((_,idx)=>idx!==i)); }
+
   async function salva(){
-    if(!clienteScelto?.codice || !titolo.trim()) return;
+    if(!clienteScelto?.codice || !tipo) return;
     setSalvando(true); setErrore("");
     try{
       const payload = {
         cliente_codice: clienteScelto.codice,
-        titolo: titolo.trim(),
+        titolo: tipo,
         descrizione: descrizione.trim() || null,
         marchio: marchio.trim() || null,
         categoria: categoria.trim() || null,
@@ -13551,11 +13570,15 @@ function NuovoTicketStaff({ sessione, catalog, onAnnulla, onCreato }){
         creato_da_cliente: false,
       };
       const [creato] = await sbAuth("POST","ticket_assistenza","",payload,accessToken);
-      if(descrizione.trim()){
-        await sbAuth("POST","ticket_messaggi","",{
+      if(descrizione.trim() || foto.length>0){
+        const [msg] = await sbAuth("POST","ticket_messaggi","",{
           ticket_id: creato.id, autore_tipo:"staff", autore_profilo_id: sessione?.user?.id || null,
-          testo: descrizione.trim(), visibile_al_cliente: true,
+          testo: descrizione.trim() || "📎 Foto allegate", visibile_al_cliente: true,
         }, accessToken);
+        if(foto.length>0){
+          const urls = await caricaFotoTicket(foto, creato.numero, accessToken);
+          await sbAuth("PATCH","ticket_messaggi",`id=eq.${msg.id}`,{allegati: urls},accessToken);
+        }
       }
       onCreato(creato);
     }catch(err){
@@ -13581,8 +13604,17 @@ function NuovoTicketStaff({ sessione, catalog, onAnnulla, onCreato }){
 
       {clienteScelto && <>
         <div style={{height:14}}/>
-        <input value={titolo} onChange={e=>setTitolo(e.target.value)} placeholder="Titolo del ticket *" style={{...S.inp,marginBottom:8}}/>
+        <select value={tipo} onChange={e=>setTipo(e.target.value)} style={{...S.sel,width:"100%",marginBottom:6}}>
+          <option value="">Tipologia del ticket *</option>
+          {TIPI_TICKET.map(t=><option key={t.valore} value={t.valore}>{t.valore}</option>)}
+        </select>
+        {tipo && (
+          <div style={{fontSize:11.5,color:C.steel,marginBottom:10,fontStyle:"italic"}}>
+            {TIPI_TICKET.find(t=>t.valore===tipo)?.descrizione}
+          </div>
+        )}
         <textarea value={descrizione} onChange={e=>setDescrizione(e.target.value)} placeholder="Descrizione (diventa il primo messaggio del thread)" rows={4} style={{...S.inp,marginBottom:8,resize:"vertical",fontFamily:F_BODY}}/>
+        <SelettoreFotoTicket foto={foto} onAggiungi={aggiungiFoto} onRimuovi={rimuoviFoto}/>
         <div style={{display:"flex",gap:8,marginBottom:8}}>
           <select value={marchio} onChange={e=>setMarchio(e.target.value)} style={{...S.sel,flex:1}}>
             <option value="">Marchio (facoltativo)</option>
@@ -13597,7 +13629,7 @@ function NuovoTicketStaff({ sessione, catalog, onAnnulla, onCreato }){
           {PRIORITA_TICKET.map(p=><option key={p} value={p}>{p}</option>)}
         </select>
         {errore && <div style={{color:C.danger,fontSize:12.5,marginBottom:10}}>{errore}</div>}
-        <button onClick={salva} disabled={salvando||!titolo.trim()} style={{...S.btnAccent,opacity:(salvando||!titolo.trim())?0.5:1}}>
+        <button onClick={salva} disabled={salvando||!tipo} style={{...S.btnAccent,opacity:(salvando||!tipo)?0.5:1}}>
           {salvando?"Creazione…":"Crea ticket"}
         </button>
       </>}
@@ -13613,6 +13645,11 @@ function NuovoTicketStaff({ sessione, catalog, onAnnulla, onCreato }){
 function DettaglioTicket({ ticket, sessione, ruolo, utenti, catalog, clienteInfo, onIndietro, onAggiornato }){
   const accessToken = trovaAccessToken(sessione);
   const mioId = sessione?.user?.id;
+  // Un commerciale può creare un ticket, ma dopo la creazione lo segue solo
+  // in consultazione: stato, chi lo ha preso in carico, fino alla chiusura
+  // — nessun'altra modifica possibile (né risposte, né riassegnazione, né
+  // ricategorizzazione, né generazione intervento).
+  const soloLettura = ruolo==="commerciale";
   const { marchi, categorie } = useMemo(()=>marchiECategorieDaCatalogo(catalog),[catalog]);
   const [messaggi, setMessaggi] = useState([]);
   const [caricandoMsg, setCaricandoMsg] = useState(true);
@@ -13624,6 +13661,7 @@ function DettaglioTicket({ ticket, sessione, ruolo, utenti, catalog, clienteInfo
   const [salvandoCampo, setSalvandoCampo] = useState(false);
   const [chiusuraInCorso, setChiusuraInCorso] = useState(false);
   const [esitoChiusura, setEsitoChiusura] = useState("");
+  const [eliminando, setEliminando] = useState(false);
 
   async function caricaMessaggi(sfondo){
     if(!sfondo) setCaricandoMsg(true);
@@ -13749,6 +13787,22 @@ function DettaglioTicket({ ticket, sessione, ruolo, utenti, catalog, clienteInfo
     setGenerandoIntervento(false);
   }
 
+  // Eliminazione disponibile a qualunque membro dello staff, ma solo se il
+  // ticket non è "In lavorazione" — una volta preso in carico va chiuso
+  // con un esito, non cancellato. Stesso vincolo imposto anche lato RLS
+  // (migrazione #36), questo controllo in UI è solo per un feedback
+  // immediato, non l'unica barriera.
+  async function eliminaTicket(){
+    if(ticket.stato==="In lavorazione") return;
+    if(!window.confirm(`Eliminare definitivamente il ticket ${ticket.numero}? L'azione non si può annullare.`)) return;
+    setEliminando(true);
+    try{
+      await sbAuth("DELETE","ticket_assistenza",`id=eq.${ticket.id}`,null,accessToken);
+      onIndietro();
+    }catch(err){ alert("Errore: "+err.message); }
+    setEliminando(false);
+  }
+
   function nomeUtente(id){
     const u = (utenti||[]).find(x=>x.id===id);
     return u ? `${u.nome} ${u.cognome||""}`.trim() : null;
@@ -13756,7 +13810,17 @@ function DettaglioTicket({ ticket, sessione, ruolo, utenti, catalog, clienteInfo
 
   return (
     <div>
-      <button onClick={onIndietro} style={{...S.btnS,marginBottom:14}}>← Torna ai ticket</button>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14,flexWrap:"wrap",gap:8}}>
+        <button onClick={onIndietro} style={S.btnS}>← Torna ai ticket</button>
+        <button
+          onClick={eliminaTicket}
+          disabled={eliminando||ticket.stato==="In lavorazione"}
+          title={ticket.stato==="In lavorazione" ? "Non eliminabile mentre è in lavorazione" : "Elimina definitivamente questo ticket"}
+          style={{...S.btnS, color:C.danger, borderColor: ticket.stato==="In lavorazione"?C.paperLine:C.danger, opacity:(eliminando||ticket.stato==="In lavorazione")?0.45:1, cursor:(eliminando||ticket.stato==="In lavorazione")?"not-allowed":"pointer"}}
+        >
+          {eliminando?"…":"🗑 Elimina ticket"}
+        </button>
+      </div>
 
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:14,marginBottom:14,flexWrap:"wrap"}}>
         <div>
@@ -13767,17 +13831,24 @@ function DettaglioTicket({ ticket, sessione, ruolo, utenti, catalog, clienteInfo
             {ticket.marchio?` · ${ticket.marchio}`:""}{ticket.categoria?` / ${ticket.categoria}`:""}
           </div>
         </div>
-        <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
-          <select value={ticket.stato} onChange={e=>{
-            const nuovo = e.target.value;
-            if(nuovo==="Chiuso") chiediChiusura(); else aggiornaCampo("stato",nuovo);
-          }} disabled={salvandoCampo} style={S.sel}>
-            {STATI_TICKET.map(s=><option key={s} value={s}>{s}</option>)}
-          </select>
-          <select value={ticket.priorita} onChange={e=>aggiornaCampo("priorita",e.target.value)} disabled={salvandoCampo} style={S.sel}>
-            {PRIORITA_TICKET.map(p=><option key={p} value={p}>{p}</option>)}
-          </select>
-        </div>
+        {soloLettura ? (
+          <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center"}}>
+            <Tag tone={TONO_PRIORITA_TICKET[ticket.priorita]}>{ticket.priorita}</Tag>
+            <span style={{fontSize:12.5,fontWeight:700,color:TONO_STATO_TICKET?.[ticket.stato]||C.ink}}>{ticket.stato}</span>
+          </div>
+        ) : (
+          <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+            <select value={ticket.stato} onChange={e=>{
+              const nuovo = e.target.value;
+              if(nuovo==="Chiuso") chiediChiusura(); else aggiornaCampo("stato",nuovo);
+            }} disabled={salvandoCampo} style={S.sel}>
+              {STATI_TICKET.map(s=><option key={s} value={s}>{s}</option>)}
+            </select>
+            <select value={ticket.priorita} onChange={e=>aggiornaCampo("priorita",e.target.value)} disabled={salvandoCampo} style={S.sel}>
+              {PRIORITA_TICKET.map(p=><option key={p} value={p}>{p}</option>)}
+            </select>
+          </div>
+        )}
       </div>
 
       {chiusuraInCorso && (
@@ -13801,16 +13872,22 @@ function DettaglioTicket({ ticket, sessione, ruolo, utenti, catalog, clienteInfo
 
       <div style={{...S.card,cursor:"default",marginBottom:14}}>
         <div style={S.eyebrow}>Categorizzazione</div>
-        <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
-          <select value={ticket.marchio||""} onChange={e=>aggiornaCampo("marchio", e.target.value||null)} disabled={salvandoCampo} style={{...S.sel,flex:1,minWidth:140}}>
-            <option value="">Marchio non impostato</option>
-            {marchi.map(m=><option key={m} value={m}>{m}</option>)}
-          </select>
-          <select value={ticket.categoria||""} onChange={e=>aggiornaCampo("categoria", e.target.value||null)} disabled={salvandoCampo} style={{...S.sel,flex:1,minWidth:140}}>
-            <option value="">Categoria non impostata</option>
-            {categorie.map(c=><option key={c} value={c}>{c}</option>)}
-          </select>
-        </div>
+        {soloLettura ? (
+          <div style={{fontSize:13,color:(ticket.marchio||ticket.categoria)?C.charcoal:"#9AA3AB"}}>
+            {ticket.marchio||ticket.categoria ? [ticket.marchio,ticket.categoria].filter(Boolean).join(" / ") : "Non ancora categorizzato"}
+          </div>
+        ) : (
+          <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+            <select value={ticket.marchio||""} onChange={e=>aggiornaCampo("marchio", e.target.value||null)} disabled={salvandoCampo} style={{...S.sel,flex:1,minWidth:140}}>
+              <option value="">Marchio non impostato</option>
+              {marchi.map(m=><option key={m} value={m}>{m}</option>)}
+            </select>
+            <select value={ticket.categoria||""} onChange={e=>aggiornaCampo("categoria", e.target.value||null)} disabled={salvandoCampo} style={{...S.sel,flex:1,minWidth:140}}>
+              <option value="">Categoria non impostata</option>
+              {categorie.map(c=><option key={c} value={c}>{c}</option>)}
+            </select>
+          </div>
+        )}
         {ticket.descrizione_libera_prodotto && (
           <div style={{fontSize:12,color:C.steel,marginTop:8}}>Prodotto indicato dal cliente: <i>{ticket.descrizione_libera_prodotto}</i></div>
         )}
@@ -13830,29 +13907,46 @@ function DettaglioTicket({ ticket, sessione, ruolo, utenti, catalog, clienteInfo
                     <span style={{color:"#9AA3AB",fontFamily:F_MONO,flexShrink:0}}>{new Date(m.created_at).toLocaleString("it-IT",{dateStyle:"short",timeStyle:"short"})}</span>
                   </div>
                   <div style={{fontSize:13,whiteSpace:"pre-line"}}>{m.testo}</div>
+                  {Array.isArray(m.allegati) && m.allegati.length>0 && (
+                    <div style={{display:"flex",gap:6,flexWrap:"wrap",marginTop:8}}>
+                      {m.allegati.map((url,i)=>(
+                        <a key={i} href={url} target="_blank" rel="noopener noreferrer">
+                          <img src={url} alt="" style={{width:64,height:64,objectFit:"cover",borderRadius:6,border:`1px solid ${C.paperLine}`}}/>
+                        </a>
+                      ))}
+                    </div>
+                  )}
                 </div>
               );
             })}
           </div>
 
-          <textarea value={testo} onChange={e=>setTesto(e.target.value)} placeholder="Scrivi un messaggio…" rows={3} style={{...S.inp,marginBottom:8,resize:"vertical",fontFamily:F_BODY}}/>
-          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:10}}>
-            <label style={{display:"flex",alignItems:"center",gap:6,fontSize:12.5,color:C.steel,cursor:"pointer"}}>
-              <input type="checkbox" checked={notaInterna} onChange={e=>setNotaInterna(e.target.checked)}/>
-              Nota interna (non visibile al cliente)
-            </label>
-            <button onClick={invia} disabled={inviando||!testo.trim()} style={{...S.btnAccent,opacity:(inviando||!testo.trim())?0.5:1}}>{inviando?"Invio…":"Invia"}</button>
-          </div>
+          {!soloLettura && <>
+            <textarea value={testo} onChange={e=>setTesto(e.target.value)} placeholder="Scrivi un messaggio…" rows={3} style={{...S.inp,marginBottom:8,resize:"vertical",fontFamily:F_BODY}}/>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:10}}>
+              <label style={{display:"flex",alignItems:"center",gap:6,fontSize:12.5,color:C.steel,cursor:"pointer"}}>
+                <input type="checkbox" checked={notaInterna} onChange={e=>setNotaInterna(e.target.checked)}/>
+                Nota interna (non visibile al cliente)
+              </label>
+              <button onClick={invia} disabled={inviando||!testo.trim()} style={{...S.btnAccent,opacity:(inviando||!testo.trim())?0.5:1}}>{inviando?"Invio…":"Invia"}</button>
+            </div>
+          </>}
         </div>
 
         <div style={{flex:1,minWidth:240}}>
           <div style={S.eyebrow}>Assegnato a</div>
-          <select value={ticket.assegnato_a||""} onChange={e=>aggiornaCampo("assegnato_a", e.target.value||null)} disabled={salvandoCampo} style={{...S.sel,width:"100%",marginBottom:14}}>
-            <option value="">— non assegnato —</option>
-            {(utenti||[]).map(u=><option key={u.id} value={u.id}>{u.nome} {u.cognome||""}</option>)}
-          </select>
+          {soloLettura ? (
+            <div style={{...S.card,cursor:"default",marginBottom:14,padding:"9px 12px"}}>
+              <span style={{fontSize:13,fontWeight:600}}>{nomeUtente(ticket.assegnato_a) || "— non ancora assegnato —"}</span>
+            </div>
+          ) : (
+            <select value={ticket.assegnato_a||""} onChange={e=>aggiornaCampo("assegnato_a", e.target.value||null)} disabled={salvandoCampo} style={{...S.sel,width:"100%",marginBottom:14}}>
+              <option value="">— non assegnato —</option>
+              {(utenti||[]).map(u=><option key={u.id} value={u.id}>{u.nome} {u.cognome||""}</option>)}
+            </select>
+          )}
 
-          {suggeriti.length>0 && <>
+          {!soloLettura && suggeriti.length>0 && <>
             <div style={S.eyebrow}>Tecnici suggeriti</div>
             {suggeriti.map(s=>(
               <div key={s.id} onClick={()=>aggiornaCampo("assegnato_a",s.id)} style={{...S.card,padding:"8px 10px",marginBottom:6,display:"flex",justifyContent:"space-between",alignItems:"center",gap:8}}>
@@ -13868,7 +13962,7 @@ function DettaglioTicket({ ticket, sessione, ruolo, utenti, catalog, clienteInfo
               <div style={{fontSize:12,color:C.steel}}>Intervento collegato</div>
               <div style={{fontSize:12.5,fontWeight:600,marginTop:2}}>già generato</div>
             </div>
-          ) : (
+          ) : !soloLettura && (
             <button onClick={generaIntervento} disabled={generandoIntervento} style={{...S.btnP,width:"100%"}}>
               {generandoIntervento?"Generazione…":"🔧 Genera intervento"}
             </button>
@@ -14182,21 +14276,28 @@ function PortaleCliente({ sessione, logout, G }){
 
 function NuovoTicketCliente({ sessione, attrezzature, onAnnulla, onCreato }){
   const accessToken = trovaAccessToken(sessione);
-  const [titolo, setTitolo] = useState("");
+  const [tipo, setTipo] = useState("");
   const [descrizione, setDescrizione] = useState("");
   const [attrezzaturaId, setAttrezzaturaId] = useState("");
   const [descrizioneLibera, setDescrizioneLibera] = useState("");
+  const [foto, setFoto] = useState([]);
   const [salvando, setSalvando] = useState(false);
   const [errore, setErrore] = useState("");
 
+  function aggiungiFoto(e){
+    setFoto(prev=>[...prev, ...Array.from(e.target.files||[])]);
+    e.target.value = "";
+  }
+  function rimuoviFoto(i){ setFoto(prev=>prev.filter((_,idx)=>idx!==i)); }
+
   async function salva(){
-    if(!titolo.trim()) return;
+    if(!tipo) return;
     if(!sessione?.cliente_codice){ setErrore("Account non collegato a nessuna azienda — contatta Telos."); return; }
     setSalvando(true); setErrore("");
     try{
       const payload = {
         cliente_codice: sessione.cliente_codice,
-        titolo: titolo.trim(),
+        titolo: tipo,
         descrizione: descrizione.trim() || null,
         attrezzatura_id: attrezzaturaId || null,
         descrizione_libera_prodotto: attrezzaturaId ? null : (descrizioneLibera.trim() || null),
@@ -14205,11 +14306,15 @@ function NuovoTicketCliente({ sessione, attrezzature, onAnnulla, onCreato }){
         priorita: "Normale",
       };
       const [creato] = await sbAuth("POST","ticket_assistenza","",payload,accessToken);
-      if(descrizione.trim()){
-        await sbAuth("POST","ticket_messaggi","",{
+      if(descrizione.trim() || foto.length>0){
+        const [msg] = await sbAuth("POST","ticket_messaggi","",{
           ticket_id: creato.id, autore_tipo:"cliente", autore_profilo_id: sessione?.user?.id || null,
-          testo: descrizione.trim(), visibile_al_cliente:true,
+          testo: descrizione.trim() || "📎 Foto allegate", visibile_al_cliente:true,
         }, accessToken);
+        if(foto.length>0){
+          const urls = await caricaFotoTicket(foto, creato.numero, accessToken);
+          await sbAuth("PATCH","ticket_messaggi",`id=eq.${msg.id}`,{allegati: urls},accessToken);
+        }
       }
       onCreato(creato);
     }catch(err){
@@ -14223,8 +14328,18 @@ function NuovoTicketCliente({ sessione, attrezzature, onAnnulla, onCreato }){
       <button onClick={onAnnulla} style={{...S.btnS,fontSize:14,padding:"9px 14px",marginBottom:16}}>← Torna ai ticket</button>
       <div style={{fontFamily:F_DISPLAY,fontSize:19,fontWeight:600,marginBottom:16}}>NUOVA RICHIESTA</div>
 
-      <input value={titolo} onChange={e=>setTitolo(e.target.value)} placeholder="Oggetto della richiesta *" style={{...S.inp,fontSize:16,padding:"12px 13px",marginBottom:10}} autoFocus/>
+      <select value={tipo} onChange={e=>setTipo(e.target.value)} style={{...S.sel,fontSize:16,padding:"12px 13px",width:"100%",marginBottom:6}}>
+        <option value="">Tipo di richiesta *</option>
+        {TIPI_TICKET.map(t=><option key={t.valore} value={t.valore}>{t.valore}</option>)}
+      </select>
+      {tipo && (
+        <div style={{fontSize:13,color:C.steel,marginBottom:10,fontStyle:"italic"}}>
+          {TIPI_TICKET.find(t=>t.valore===tipo)?.descrizione}
+        </div>
+      )}
       <textarea value={descrizione} onChange={e=>setDescrizione(e.target.value)} placeholder="Descrivi il problema o la richiesta…" rows={4} style={{...S.inp,fontSize:16,padding:"12px 13px",marginBottom:16,resize:"vertical",fontFamily:F_BODY}}/>
+
+      <SelettoreFotoTicket foto={foto} onAggiungi={aggiungiFoto} onRimuovi={rimuoviFoto}/>
 
       <div style={{...S.eyebrow,fontSize:13}}>A quale attrezzatura si riferisce? (facoltativo)</div>
       <select value={attrezzaturaId} onChange={e=>setAttrezzaturaId(e.target.value)} style={{...S.sel,fontSize:15,padding:"11px 12px",width:"100%",marginBottom:10}}>
@@ -14238,7 +14353,7 @@ function NuovoTicketCliente({ sessione, attrezzature, onAnnulla, onCreato }){
       )}
 
       {errore && <div style={{color:C.danger,fontSize:14,marginBottom:12}}>{errore}</div>}
-      <button onClick={salva} disabled={salvando||!titolo.trim()} style={{...S.btnAccent,width:"100%",fontSize:16,padding:"14px",opacity:(salvando||!titolo.trim())?0.5:1}}>
+      <button onClick={salva} disabled={salvando||!tipo} style={{...S.btnAccent,width:"100%",fontSize:16,padding:"14px",opacity:(salvando||!tipo)?0.5:1}}>
         {salvando?"Invio…":"Invia richiesta"}
       </button>
     </div>
@@ -14319,6 +14434,15 @@ function DettaglioTicketCliente({ ticket, sessione, onIndietro, onAggiornato }){
                 <span style={{color:"#9AA3AB",fontFamily:F_MONO,flexShrink:0}}>{new Date(m.created_at).toLocaleString("it-IT",{dateStyle:"short",timeStyle:"short"})}</span>
               </div>
               <div style={{fontSize:15.5,lineHeight:1.5,whiteSpace:"pre-line"}}>{m.testo}</div>
+              {Array.isArray(m.allegati) && m.allegati.length>0 && (
+                <div style={{display:"flex",gap:8,flexWrap:"wrap",marginTop:10}}>
+                  {m.allegati.map((url,i)=>(
+                    <a key={i} href={url} target="_blank" rel="noopener noreferrer">
+                      <img src={url} alt="" style={{width:76,height:76,objectFit:"cover",borderRadius:8,border:`1px solid ${C.paperLine}`}}/>
+                    </a>
+                  ))}
+                </div>
+              )}
             </div>
           );
         })}
