@@ -13075,11 +13075,22 @@ function NotificheBell({ sessione, onApriTicket }){
         // Impostazioni del telefono. Qui ci limitiamo a spiegarlo, il
         // pulsante "Attiva notifiche" non servirebbe a nulla in questo stato.
         <span
-          title="Notifiche bloccate — riattivale da Impostazioni → Notifiche sul telefono"
+          title="Notifiche bloccate — riattivale dalle impostazioni del browser o del dispositivo (su desktop: icona del lucchetto nella barra indirizzi)"
           style={{fontSize:10.5,color:C.danger,fontWeight:600,whiteSpace:"nowrap",cursor:"help"}}
         >
           🔕 Notifiche bloccate
         </span>
+      )}
+      {/* DEBUG TEMPORANEO — permesso già concesso da prima: nessuno dei due
+          stati sopra compare, quindi non c'è modo di ririchiamare
+          l'iscrizione a mano. Questo pulsantino forza il test in qualsiasi
+          momento, con gli stessi alert diagnostici di iscriviPush, senza
+          dover chiudere e riaprire l'app sperando di coglierlo al volo.
+          Va tolto insieme agli alert quando risolto. */}
+      {permessoNotifiche==="granted" && (
+        <button onClick={()=>iscriviPush(true)} title="Debug: rifà l'iscrizione push da zero" style={{background:"none",border:`1px solid ${C.paperLine}`,borderRadius:14,padding:"4px 9px",fontSize:11,color:C.steel,cursor:"pointer",fontWeight:600,whiteSpace:"nowrap"}}>
+          🔧 Ritesta push
+        </button>
       )}
       <button onClick={()=>setAperto(a=>!a)} style={{background:"none",border:"none",cursor:"pointer",position:"relative",padding:6,display:"flex"}}>
         <Icon name="bell" size={19} color={C.charcoal}/>
