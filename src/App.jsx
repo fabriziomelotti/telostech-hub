@@ -12915,7 +12915,7 @@ function NotificheBell({ sessione, onApriTicket }){
     try{
       const esito = await Notification.requestPermission();
       setPermessoNotifiche(esito);
-      if(esito === "granted") await iscriviPush();
+      if(esito === "granted") await iscriviPush(true);
     }catch{ /* ignora: resta comunque il badge in pagina */ }
   }
 
@@ -12924,11 +12924,29 @@ function NotificheBell({ sessione, onApriTicket }){
   // registrato in configuraPWA) e salva l'iscrizione in
   // "push_subscriptions" — da lì in poi l'Edge Function "invia-push" può
   // raggiungerlo anche a pagina chiusa, non solo mentre l'app è aperta.
-  async function iscriviPush(){
+  //
+  // forzaRinnovo=true (tocco esplicito su "Attiva notifiche"): butta via
+  // un'eventuale sottoscrizione già presente e ne crea sempre una nuova.
+  // Serve perché su iOS, se il permesso era stato concesso PRIMA di essere
+  // nella PWA installata correttamente (schermata Home, non Safari), il
+  // telefono può aver salvato una sottoscrizione "silenziosamente rotta"
+  // che risulta comunque presente — riusarla (invece di rifarla da zero)
+  // è proprio il motivo per cui il push in background non arriva pur
+  // avendo dato il permesso. forzaRinnovo=false (ricontrollo automatico
+  // silenzioso al mount, permesso già "granted" da prima) riusa invece
+  // quella esistente se c'è, per non rifare inutilmente il giro ad ogni
+  // apertura dell'app.
+  async function iscriviPush(forzaRinnovo){
     try{
       if(!("serviceWorker" in navigator) || !("PushManager" in window)) return;
       const registration = await navigator.serviceWorker.ready;
       let subscription = await registration.pushManager.getSubscription();
+      if(subscription && forzaRinnovo){
+        const vecchioEndpoint = subscription.endpoint;
+        try{ await subscription.unsubscribe(); }catch{}
+        try{ await sbAuth("DELETE","push_subscriptions",`endpoint=eq.${encodeURIComponent(vecchioEndpoint)}`,null,accessToken); }catch{}
+        subscription = null;
+      }
       if(!subscription){
         subscription = await registration.pushManager.subscribe({
           userVisibleOnly: true,
@@ -12953,7 +12971,7 @@ function NotificheBell({ sessione, onApriTicket }){
   // altrimenti un cambio di service worker o una sottoscrizione scaduta
   // lascerebbe l'utente senza push pur avendo già dato il permesso.
   useEffect(()=>{
-    if(permessoNotifiche === "granted" && mioId) iscriviPush();
+    if(permessoNotifiche === "granted" && mioId) iscriviPush(false);
   },[permessoNotifiche, mioId]);
 
   async function carica(){
