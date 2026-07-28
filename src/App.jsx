@@ -11,6 +11,85 @@ const SUPABASE_URL = "https://trexrsxfjcysbigrjiwg.supabase.co";
 // (Supabase permette di disattivarle solo insieme). Stesso ruolo, stesso
 // posto nel codice — solo il valore è cambiato.
 const SUPABASE_ANON_KEY = "sb_publishable_p5wsUvOwpGTxGd3TQ9BPTg_mZyhk6JN";
+// Chiave PUBBLICA VAPID (la privata resta solo come secret dell'Edge
+// Function "invia-push", non deve mai comparire nel bundle client).
+const VAPID_PUBLIC_KEY = "BLh5Qa4t7TLGpRfUuAW6gQXDnHMpDZrB91to_F5rsNoZCJO8OiVun805cUhf4yfhkYU0xyLBJSKbvOH6zrEHbsM";
+
+// PushManager.subscribe() vuole la chiave applicationServerKey come
+// Uint8Array, non come stringa base64url — conversione standard.
+function urlBase64ToUint8Array(base64String){
+  const padding = "=".repeat((4 - base64String.length % 4) % 4);
+  const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
+  const rawData = window.atob(base64);
+  const outputArray = new Uint8Array(rawData.length);
+  for (let i = 0; i < rawData.length; i++) outputArray[i] = rawData.charCodeAt(i);
+  return outputArray;
+}
+
+// Registra il service worker e inietta manifest/meta PWA nel <head> — fatto
+// via JS invece che modificando index.html, così non serve toccare quel
+// file: nessun rischio di comprometterlo alla cieca. Chiamata una sola
+// volta al mount di App(), prima ancora del login (innocuo se già loggato).
+function configuraPWA(){
+  try{
+    if(!document.querySelector('link[rel="manifest"]')){
+      const link = document.createElement("link");
+      link.rel = "manifest"; link.href = "/manifest.json";
+      document.head.appendChild(link);
+    }
+    if(!document.querySelector('meta[name="theme-color"]')){
+      const meta = document.createElement("meta");
+      meta.name = "theme-color"; meta.content = "#162758";
+      document.head.appendChild(meta);
+    }
+    if(!document.querySelector('meta[name="apple-mobile-web-app-capable"]')){
+      const meta = document.createElement("meta");
+      meta.name = "apple-mobile-web-app-capable"; meta.content = "yes";
+      document.head.appendChild(meta);
+    }
+    // "viewport-fit=cover" è ciò che rende utilizzabili gli env(safe-area-*)
+    // sotto — senza, safe-area-inset-top vale sempre 0 anche su dispositivi
+    // con notch. Aggiunto in coda: se index.html ne dichiara già uno senza
+    // questa opzione, il browser usa l'ultimo <meta viewport> del documento.
+    if(!document.querySelector('meta[name="viewport"][content*="viewport-fit"]')){
+      const meta = document.createElement("meta");
+      meta.name = "viewport"; meta.content = "width=device-width, initial-scale=1, viewport-fit=cover";
+      document.head.appendChild(meta);
+    }
+    if(!document.querySelector('link[rel="apple-touch-icon"]')){
+      const link = document.createElement("link");
+      link.rel = "apple-touch-icon"; link.href = "/apple-touch-icon.png";
+      document.head.appendChild(link);
+    }
+    if("serviceWorker" in navigator){
+      navigator.serviceWorker.register("/sw.js").catch(()=>{});
+    }
+  }catch{ /* PWA è un miglioramento, mai bloccante per il resto dell'app */ }
+}
+
+// Su iPhone/iPad Safari non supporta le notifiche push fuori da una PWA
+// installata sulla schermata Home — vincolo di Apple, non aggirabile da
+// codice. Rileva la situazione per mostrare all'utente la guida giusta
+// invece di un pulsante "Attiva notifiche" che su quel dispositivo non
+// potrebbe funzionare comunque.
+function suggerisciInstallazioneIOS(){
+  const ua = window.navigator.userAgent;
+  const isIOS = /iPad|iPhone|iPod/.test(ua) && !window.MSStream;
+  const isStandalone = window.navigator.standalone === true
+    || (window.matchMedia && window.matchMedia("(display-mode: standalone)").matches);
+  return isIOS && !isStandalone;
+}
+
+function BannerInstallaIOS(){
+  const [mostra, setMostra] = useState(()=>suggerisciInstallazioneIOS());
+  if(!mostra) return null;
+  return (
+    <div style={{background:"#FCEFD1",color:"#6B4E00",padding:"9px 14px",fontSize:12,display:"flex",alignItems:"center",justifyContent:"space-between",gap:12,borderBottom:"1px solid #E8D9A8"}}>
+      <span>📲 Su iPhone/iPad le notifiche funzionano solo se aggiungi questa pagina alla schermata Home: tocca <b>Condividi</b> (il riquadro con la freccia in su) e poi <b>"Aggiungi a Home"</b>.</span>
+      <span onClick={()=>setMostra(false)} style={{cursor:"pointer",fontWeight:700,flexShrink:0}}>✕</span>
+    </div>
+  );
+}
 
 const sbHeaders = {
   "apikey": SUPABASE_ANON_KEY,
@@ -211,7 +290,7 @@ function Icon({ name, size=20, color="currentColor", strokeWidth=1.6 }){
 }
 
 const NAV_META = {
-  home:{icon:"home",label:"Dashboard"}, ai:{icon:"sparkle",label:"Assistente"}, prodotti:{icon:"grid",label:"Catalogo"},
+  home:{icon:"home",label:"Dashboard"}, ai:{icon:"sparkle",label:"TESSA"}, prodotti:{icon:"grid",label:"Catalogo"},
   clienti:{icon:"users",label:"Clienti"}, promemoria:{icon:"flag",label:"Promemoria"}, preventivi:{icon:"document",label:"Preventivi"}, ordini:{icon:"box",label:"Ordini"},
   interventi:{icon:"wrench",label:"Assistenza"}, ticket:{icon:"mail",label:"Ticket"},
   admin:{icon:"settings",label:"Admin"}, gestione:{icon:"tools",label:"Gestione"},
@@ -548,6 +627,8 @@ export default function App(){
   const [nuovaVersione, setNuovaVersione] = useState(false);
   const [precodici, setPrecodici] = useState({}); // { TEXA: "TEX", GEATEK: "GEA", ... }
 
+  useEffect(()=>{ configuraPWA(); },[]);
+
   useEffect(()=>{
     const check=()=>setIsMobile(window.innerWidth < 860);
     check();
@@ -718,7 +799,7 @@ export default function App(){
     if(l.includes("preventivo")) return "Apri Catalogo per selezionare gli articoli, poi genera il documento da Preventivi.";
     if(l.includes("rapporto")) return "Vai su Rapporto tecnico per la compilazione guidata con checklist.";
     if(l.includes("cliente")) return "Apri Clienti — puoi cercare per ragione sociale o numero di serie del prodotto.";
-    return `Assistente non raggiungibile al momento (${(cat||CATALOG).length} articoli indicizzati). Riprova tra poco.`;
+    return `TESSA non raggiungibile al momento (${(cat||CATALOG).length} articoli indicizzati). Riprova tra poco.`;
   }
 
   if(authLoading) return (
@@ -774,6 +855,7 @@ export default function App(){
       )}
 
       <div style={S.main}>
+        <BannerInstallaIOS/>
         <div style={S.topbar}>
           {isMobile && (
             <div style={{display:"flex",alignItems:"center",gap:8,flexShrink:0}}>
@@ -800,7 +882,7 @@ export default function App(){
             </span>
           )}
           {area!=="ai" && (
-            <button onClick={()=>setArea("ai")} style={{...S.btnP,padding:isMobile?"7px 11px":"8px 14px",fontSize:12,flexShrink:0,display:"flex",alignItems:"center",gap:6}}><Icon name="sparkle" size={14}/>{!isMobile&&"Assistente"}</button>
+            <button onClick={()=>setArea("ai")} style={{...S.btnP,padding:isMobile?"7px 11px":"8px 14px",fontSize:12,flexShrink:0,display:"flex",alignItems:"center",gap:6}}><Icon name="sparkle" size={14}/>{!isMobile&&"TESSA"}</button>
           )}
           <NotificheBell sessione={sessione} onApriTicket={(id)=>{ setArea("ticket"); setTicketDaAprire(id); }}/>
         </div>
@@ -1019,7 +1101,7 @@ function Home({r,role,setArea,isMobile,preventivi,interventi,promemoria,sessione
           ["prodotti","▣","Catalogo"],
           ["clienti","◉","Clienti"],
           ["promemoria","⚑","Promemoria",contaPromemoria],
-          ["ai","✦","Assistente"],
+          ["ai","✦","TESSA"],
           [isT?"interventi":"preventivi",isT?"⚒":"▤",isT?"Assistenza":"Preventivo"]
         ].map(([id,icon,lbl,badge])=>(
           <div key={id} onClick={()=>setArea(id)} style={{
@@ -1049,7 +1131,7 @@ function AIChat({msgs,msgInput,setMsgInput,sendMsg,aiTyping}){
       <div style={{flex:1,overflowY:"auto",display:"flex",flexDirection:"column",gap:10,paddingBottom:8}}>
         <div style={{display:"flex",gap:9}}>
           <div style={{width:26,height:26,borderRadius:5,background:C.ink,display:"flex",alignItems:"center",justifyContent:"center",fontSize:12,color:C.cyan,flexShrink:0}}>✦</div>
-          <div style={{background:"#fff",border:`1px solid ${C.paperLine}`,borderRadius:"3px 10px 10px 10px",padding:"10px 13px",fontSize:13,maxWidth:"82%",lineHeight:1.55}}>Assistente Telos Tech. Chiedi su prodotti, preventivi, rapporti tecnici o clienti.</div>
+          <div style={{background:"#fff",border:`1px solid ${C.paperLine}`,borderRadius:"3px 10px 10px 10px",padding:"10px 13px",fontSize:13,maxWidth:"82%",lineHeight:1.55}}>Sono TESSA, l'assistente Telos Tech. Chiedi su prodotti, preventivi, rapporti tecnici o clienti.</div>
         </div>
         {msgs.map((m,i)=>(
           <div key={i} style={{display:"flex",gap:9,justifyContent:m.role==="user"?"flex-end":"flex-start"}}>
@@ -12833,8 +12915,46 @@ function NotificheBell({ sessione, onApriTicket }){
     try{
       const esito = await Notification.requestPermission();
       setPermessoNotifiche(esito);
+      if(esito === "granted") await iscriviPush();
     }catch{ /* ignora: resta comunque il badge in pagina */ }
   }
+
+  // Iscrizione push reale: registra questo dispositivo/browser presso il
+  // servizio push del sistema operativo (tramite il Service Worker già
+  // registrato in configuraPWA) e salva l'iscrizione in
+  // "push_subscriptions" — da lì in poi l'Edge Function "invia-push" può
+  // raggiungerlo anche a pagina chiusa, non solo mentre l'app è aperta.
+  async function iscriviPush(){
+    try{
+      if(!("serviceWorker" in navigator) || !("PushManager" in window)) return;
+      const registration = await navigator.serviceWorker.ready;
+      let subscription = await registration.pushManager.getSubscription();
+      if(!subscription){
+        subscription = await registration.pushManager.subscribe({
+          userVisibleOnly: true,
+          applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY),
+        });
+      }
+      const json = subscription.toJSON();
+      try{
+        await sbAuth("POST","push_subscriptions","",{
+          profilo_id: mioId,
+          endpoint: json.endpoint,
+          p256dh: json.keys.p256dh,
+          auth: json.keys.auth,
+          user_agent: navigator.userAgent,
+        }, accessToken);
+      }catch{ /* già iscritto con lo stesso endpoint (vincolo unique) — va bene così */ }
+    }catch(err){ console.warn("Iscrizione push non riuscita:", err.message); }
+  }
+
+  // Se il permesso è già "granted" da una sessione precedente (il browser
+  // lo ricorda), ri-verifica/ri-crea l'iscrizione push silenziosamente —
+  // altrimenti un cambio di service worker o una sottoscrizione scaduta
+  // lascerebbe l'utente senza push pur avendo già dato il permesso.
+  useEffect(()=>{
+    if(permessoNotifiche === "granted" && mioId) iscriviPush();
+  },[permessoNotifiche, mioId]);
 
   async function carica(){
     if(!accessToken || !mioId) return;
@@ -12864,6 +12984,16 @@ function NotificheBell({ sessione, onApriTicket }){
   },[mioId, accessToken]);
 
   const nonLette = notifiche.filter(n=>!n.letta).length;
+
+  // Sincronizza il pallino/numero sull'icona (Badge API) anche quando il
+  // conteggio cambia mentre l'app è aperta in primo piano — il push in
+  // background lo imposta già da solo (vedi sw.js), qui copriamo il caso
+  // "l'utente segna come letto stando dentro l'app".
+  useEffect(()=>{
+    if(!("setAppBadge" in navigator)) return;
+    if(nonLette>0) navigator.setAppBadge(nonLette).catch(()=>{});
+    else if("clearAppBadge" in navigator) navigator.clearAppBadge().catch(()=>{});
+  },[nonLette]);
 
   async function apri(n){
     setAperto(false);
@@ -13628,12 +13758,30 @@ function PortaleCliente({ sessione, logout, G }){
   return (
     <div style={{minHeight:"100dvh",background:C.paper,fontFamily:F_BODY,color:C.charcoal,fontSize:16}}>
       <style>{G}</style>
-      <div style={{height:58,borderBottom:`1px solid ${C.paperLine}`,display:"flex",alignItems:"center",padding:"0 16px",gap:10,background:"#fff",position:"sticky",top:0,zIndex:50}}>
-        <Logo variant="telostech" height={26}/>
-        <div style={{flex:1,fontSize:14,color:C.steel,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{sessione?.nome}</div>
-        <NotificheBell sessione={sessione} onApriTicket={(id)=>setTicketDaAprire(id)}/>
-        <button onClick={logout} style={{...S.btnS,fontSize:14,padding:"9px 14px"}}>Esci</button>
+      {/* position:fixed invece di sticky — su Safari/iOS (soprattutto da
+          webapp aggiunta a Home Screen) la sticky si è mostrata inaffidabile:
+          header non visibile finché non si scrolla, e comunque non fermo.
+          Fixed è supportato in modo molto più uniforme su mobile. Il
+          padding-top con env(safe-area-inset-top) evita che l'header finisca
+          sotto la notch/status bar quando l'app gira a schermo intero. */}
+      <div style={{
+        position:"fixed", top:0, left:0, right:0, zIndex:100,
+        height:"calc(58px + env(safe-area-inset-top, 0px))",
+        paddingTop:"env(safe-area-inset-top, 0px)",
+        borderBottom:`1px solid ${C.paperLine}`, background:"#fff",
+        boxShadow:"0 1px 3px rgba(0,0,0,0.06)",
+      }}>
+        <div style={{height:58,display:"flex",alignItems:"center",padding:"0 16px",gap:10}}>
+          <Logo variant="telostech" height={26}/>
+          <div style={{flex:1,fontSize:14,color:C.steel,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{sessione?.nome}</div>
+          <NotificheBell sessione={sessione} onApriTicket={(id)=>setTicketDaAprire(id)}/>
+          <button onClick={logout} style={{...S.btnS,fontSize:14,padding:"9px 14px"}}>Esci</button>
+        </div>
       </div>
+      {/* Spacer: l'header fixed è fuori dal flusso normale, questo blocco
+          vuoto gli riserva lo spazio così il contenuto sotto non ci finisce nascosto. */}
+      <div style={{height:"calc(58px + env(safe-area-inset-top, 0px))"}}/>
+      <BannerInstallaIOS/>
 
       <div style={{maxWidth:640,margin:"0 auto",padding:16}}>
         {errore && <div style={{color:C.danger,fontSize:14,marginBottom:12}}>{errore}</div>}
