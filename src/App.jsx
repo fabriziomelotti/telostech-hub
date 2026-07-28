@@ -68,13 +68,7 @@ function configuraPWA(){
     // sulle webapp installate su Home Screen. Rimandarla a pagina già
     // caricata riduce la finestra in cui può capitare.
     if("serviceWorker" in navigator){
-      // DEBUG TEMPORANEO: alert invece di ignorare in silenzio un eventuale
-      // fallimento della registrazione stessa (distinto dal "non diventa
-      // mai pronto" che si vede più avanti in iscriviPush) — va tolto
-      // insieme agli altri alert diagnostici quando risolto.
-      const registra = () => navigator.serviceWorker.register("/sw.js").catch(err=>{
-        try{ alert("Debug: registrazione service worker fallita — "+(err?.name||"")+": "+(err?.message||err)); }catch{}
-      });
+      const registra = () => navigator.serviceWorker.register("/sw.js").catch(()=>{});
       if(document.readyState === "complete") registra();
       else window.addEventListener("load", registra, { once:true });
     }
@@ -12951,24 +12945,16 @@ function NotificheBell({ sessione, onApriTicket }){
   // quella esistente se c'è, per non rifare inutilmente il giro ad ogni
   // apertura dell'app.
   async function iscriviPush(forzaRinnovo){
-    // ── DIAGNOSTICA TEMPORANEA ──
-    // Gli alert() qui sotto servono solo per capire dove si ferma
-    // l'iscrizione push su un dispositivo senza accesso alla console
-    // (iPhone senza Mac collegato via cavo). Vanno tolti appena trovata
-    // la causa: sono invasivi apposta, per essere leggibili senza strumenti.
     try{
-      if(!("serviceWorker" in navigator) || !("PushManager" in window)){
-        alert("Debug: PushManager non disponibile su questo browser."); return;
-      }
-      // navigator.serviceWorker.ready non si risolve mai se il service
-      // worker non arriva a registrarsi (es. /sw.js non raggiungibile) —
-      // senza un limite di tempo, tutta la funzione resterebbe bloccata in
-      // silenzio, senza nessun errore visibile. Il timeout la trasforma in
-      // un errore leggibile.
+      if(!("serviceWorker" in navigator) || !("PushManager" in window)) return;
+      // navigator.serviceWorker.ready non si risolverebbe mai se il service
+      // worker non arrivasse a registrarsi (es. /sw.js non raggiungibile) —
+      // il timeout evita che l'iscrizione resti bloccata in silenzio a
+      // tempo indeterminato.
       const registration = await Promise.race([
         navigator.serviceWorker.ready,
         new Promise((_, reject) => setTimeout(
-          () => reject(new Error("timeout: il service worker non è mai diventato pronto entro 6 secondi — probabile che /sw.js non sia raggiungibile")),
+          () => reject(new Error("timeout: service worker non pronto entro 6 secondi")),
           6000
         )),
       ]);
@@ -12980,15 +12966,10 @@ function NotificheBell({ sessione, onApriTicket }){
         subscription = null;
       }
       if(!subscription){
-        try{
-          subscription = await registration.pushManager.subscribe({
-            userVisibleOnly: true,
-            applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY),
-          });
-        }catch(errSub){
-          alert("Debug: PushManager.subscribe() fallito — "+(errSub?.name||"")+": "+(errSub?.message||errSub));
-          return;
-        }
+        subscription = await registration.pushManager.subscribe({
+          userVisibleOnly: true,
+          applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY),
+        });
       }
       const json = subscription.toJSON();
       try{
@@ -12999,9 +12980,8 @@ function NotificheBell({ sessione, onApriTicket }){
           auth: json.keys.auth,
           user_agent: navigator.userAgent,
         }, accessToken);
-        alert("Debug: sottoscrizione salvata correttamente su push_subscriptions.");
-      }catch(errPost){ alert("Debug: salvataggio su push_subscriptions fallito — "+(errPost?.message||errPost)); }
-    }catch(err){ alert("Debug: errore generale iscriviPush — "+(err?.name||"")+": "+(err?.message||err)); }
+      }catch{ /* già iscritto con lo stesso endpoint (vincolo unique) — va bene così */ }
+    }catch(err){ console.warn("Iscrizione push non riuscita:", err.message); }
   }
 
   // Se il permesso è già "granted" da una sessione precedente (il browser
@@ -13086,17 +13066,6 @@ function NotificheBell({ sessione, onApriTicket }){
         >
           🔕 Notifiche bloccate
         </span>
-      )}
-      {/* DEBUG TEMPORANEO — permesso già concesso da prima: nessuno dei due
-          stati sopra compare, quindi non c'è modo di ririchiamare
-          l'iscrizione a mano. Questo pulsantino forza il test in qualsiasi
-          momento, con gli stessi alert diagnostici di iscriviPush, senza
-          dover chiudere e riaprire l'app sperando di coglierlo al volo.
-          Va tolto insieme agli alert quando risolto. */}
-      {permessoNotifiche==="granted" && (
-        <button onClick={()=>iscriviPush(true)} title="Debug: rifà l'iscrizione push da zero" style={{background:"none",border:`1px solid ${C.paperLine}`,borderRadius:14,padding:"4px 9px",fontSize:11,color:C.steel,cursor:"pointer",fontWeight:600,whiteSpace:"nowrap"}}>
-          🔧 Ritesta push
-        </button>
       )}
       <button onClick={()=>setAperto(a=>!a)} style={{background:"none",border:"none",cursor:"pointer",position:"relative",padding:6,display:"flex"}}>
         <Icon name="bell" size={19} color={C.charcoal}/>
