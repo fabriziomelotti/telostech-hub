@@ -5358,6 +5358,24 @@ function Preventivi({cart,setCart,preventivi,setPreventivi,setOrdini,setArea,ruo
   const [erroreSync,setErroreSync]=useState("");
   const [utentiTelos,setUtentiTelos]=useState(null); // null=non caricato, [] o [...]
   const [erroreUtentiTelos,setErroreUtentiTelos]=useState("");
+  // Ricerca + filtro data sull'archivio "Confermati in ordine" — cresce nel
+  // tempo, serve poter restringere per cliente e per intervallo di date
+  // per sfogliarlo rapidamente (stesso principio usato per gli Ordini Evasi).
+  const [ricercaCodiceConfermati,setRicercaCodiceConfermati]=useState("");
+  const [ricercaClienteConfermati,setRicercaClienteConfermati]=useState("");
+  const [ricercaDataDaConfermati,setRicercaDataDaConfermati]=useState("");
+  const [ricercaDataAConfermati,setRicercaDataAConfermati]=useState("");
+  const [filtriConfermati,setFiltriConfermati]=useState(null); // null = nessun filtro attivo
+  function eseguiRicercaConfermati(){
+    const codice = ricercaCodiceConfermati.trim();
+    const cliente = normalizzaRagioneSociale(ricercaClienteConfermati);
+    const dataDa = ricercaDataDaConfermati, dataA = ricercaDataAConfermati;
+    if(!codice && !cliente && !dataDa && !dataA){ setFiltriConfermati(null); return; }
+    setFiltriConfermati({codice, cliente, dataDa, dataA});
+  }
+  function pulisciRicercaConfermati(){
+    setRicercaCodiceConfermati(""); setRicercaClienteConfermati(""); setRicercaDataDaConfermati(""); setRicercaDataAConfermati(""); setFiltriConfermati(null);
+  }
   const total=cart.reduce((s,p)=>s+p.netto,0);
   const accessToken = trovaAccessToken(sessione);
 
@@ -5887,14 +5905,12 @@ function Preventivi({cart,setCart,preventivi,setPreventivi,setOrdini,setArea,ruo
     );
   }
 
-  if(view==="da-gestire" || view==="in-ordine"){
-    const stato = view==="da-gestire" ? "Inviato" : "Convertito in ordine";
-    const titolo = view==="da-gestire" ? "Da gestire" : "Confermati in ordine";
-    const elenco = preventivi.filter(p=>p.stato===stato);
+  if(view==="da-gestire"){
+    const elenco = preventivi.filter(p=>p.stato==="Inviato");
     return (
       <div>
         <button onClick={()=>setView("home")} style={{...S.btnS,marginBottom:14}}>← Preventivi</button>
-        <div style={S.eyebrow}>{titolo} ({elenco.length})</div>
+        <div style={S.eyebrow}>Da gestire ({elenco.length})</div>
         {elenco.length===0 && <div style={{fontSize:12.5,color:"#9AA3AB",padding:"8px 0"}}>Nessun preventivo qui.</div>}
         {elenco.map(p=>(
           <div key={p.id} onClick={()=>{setSelId(p.id);setView("dettaglio");}} style={{...S.card,cursor:"pointer",display:"flex",justifyContent:"space-between",alignItems:"center",gap:10}}>
@@ -5902,6 +5918,72 @@ function Preventivi({cart,setCart,preventivi,setPreventivi,setOrdini,setArea,ruo
               <div className="tnum" style={{fontSize:10.5,color:"#9AA3AB",fontFamily:F_MONO}}>{codicePreventivo(p)}</div>
               <div style={{fontWeight:600,fontSize:13.5,marginTop:2}}>{p.cliente || "Cliente non specificato"}</div>
               <div style={{fontSize:11.5,color:"#8A929A",marginTop:1}}>{p.righe.length} articol{p.righe.length===1?"o":"i"}</div>
+            </div>
+            <div style={{textAlign:"right",flexShrink:0}}>
+              <div className="tnum" style={{fontWeight:700,fontSize:14,fontFamily:F_MONO}}>€{p.val.toLocaleString("it-IT")}</div>
+              <Tag tone={STATO_COLORE[p.stato]||"steel"} style={{marginTop:5}}>{p.stato}</Tag>
+            </div>
+          </div>
+        ))}
+      </div>
+    );
+  }
+
+  if(view==="in-ordine"){
+    // Archivio "Confermati in ordine": cresce nel tempo — ricerca per
+    // cliente + filtro per intervallo di date (sulla data di conferma se
+    // disponibile, altrimenti sulla data di creazione del preventivo).
+    const confermati = preventivi.filter(p=>p.stato==="Convertito in ordine");
+    const confermatiFiltrati = !filtriConfermati ? confermati : confermati.filter(p=>{
+      const {codice, cliente, dataDa, dataA} = filtriConfermati;
+      if(codice && !(p.cliente_codice||"").toLowerCase().includes(codice.toLowerCase())) return false;
+      if(cliente && !corrispondeRicerca(cliente, [p.cliente])) return false;
+      if(dataDa || dataA){
+        const d = (p.aggiornato_il || p.creato_il || "").slice(0,10);
+        if(!d) return false;
+        if(dataDa && d<dataDa) return false;
+        if(dataA && d>dataA) return false;
+      }
+      return true;
+    });
+    return (
+      <div>
+        <button onClick={()=>setView("home")} style={{...S.btnS,marginBottom:14}}>← Preventivi</button>
+        <div style={S.eyebrow}>Confermati in ordine ({confermati.length})</div>
+        {confermati.length>0 && (
+          <div style={{...S.card,cursor:"default",marginTop:14,marginBottom:14}}>
+            <div style={{display:"flex",gap:8,marginBottom:8,flexWrap:"wrap"}}>
+              <input
+                value={ricercaCodiceConfermati} onChange={e=>setRicercaCodiceConfermati(e.target.value)}
+                onKeyDown={e=>{ if(e.key==="Enter"){ e.preventDefault(); eseguiRicercaConfermati(); } }}
+                placeholder="Codice cliente" style={{...S.inp,flex:"1 1 140px"}}
+              />
+              <input
+                value={ricercaClienteConfermati} onChange={e=>setRicercaClienteConfermati(e.target.value)}
+                onKeyDown={e=>{ if(e.key==="Enter"){ e.preventDefault(); eseguiRicercaConfermati(); } }}
+                placeholder="Ragione sociale" style={{...S.inp,flex:"1 1 200px"}}
+              />
+            </div>
+            <div style={{display:"flex",gap:8,marginBottom:8,flexWrap:"wrap",alignItems:"center"}}>
+              <label style={{fontSize:11,fontFamily:F_MONO,color:"#9AA3AB",textTransform:"uppercase",letterSpacing:"0.05em"}}>Dal</label>
+              <input type="date" value={ricercaDataDaConfermati} onChange={e=>setRicercaDataDaConfermati(e.target.value)} style={{...S.inp,flex:"1 1 140px"}}/>
+              <label style={{fontSize:11,fontFamily:F_MONO,color:"#9AA3AB",textTransform:"uppercase",letterSpacing:"0.05em"}}>Al</label>
+              <input type="date" value={ricercaDataAConfermati} onChange={e=>setRicercaDataAConfermati(e.target.value)} style={{...S.inp,flex:"1 1 140px"}}/>
+            </div>
+            <div style={{display:"flex",gap:8}}>
+              <button onClick={eseguiRicercaConfermati} style={{...S.btnAccent,padding:"9px 16px",fontSize:12.5}}>🔍 Cerca</button>
+              {filtriConfermati && <button onClick={pulisciRicercaConfermati} style={{...S.btnS,padding:"9px 16px",fontSize:12.5}}>Pulisci</button>}
+            </div>
+          </div>
+        )}
+        {confermati.length===0 && <div style={{fontSize:12.5,color:"#9AA3AB",padding:"8px 0"}}>Nessun preventivo qui.</div>}
+        {confermati.length>0 && confermatiFiltrati.length===0 && <div style={{fontSize:12.5,color:"#9AA3AB",padding:"8px 0"}}>Nessun preventivo trovato con questi filtri.</div>}
+        {confermatiFiltrati.map(p=>(
+          <div key={p.id} onClick={()=>{setSelId(p.id);setView("dettaglio");}} style={{...S.card,cursor:"pointer",display:"flex",justifyContent:"space-between",alignItems:"center",gap:10}}>
+            <div style={{minWidth:0}}>
+              <div className="tnum" style={{fontSize:10.5,color:"#9AA3AB",fontFamily:F_MONO}}>{codicePreventivo(p)}</div>
+              <div style={{fontWeight:600,fontSize:13.5,marginTop:2}}>{p.cliente || "Cliente non specificato"}</div>
+              <div style={{fontSize:11.5,color:"#8A929A",marginTop:1}}>{p.righe.length} articol{p.righe.length===1?"o":"i"} · {(p.aggiornato_il||p.creato_il) ? new Date(p.aggiornato_il||p.creato_il).toLocaleDateString("it-IT") : ""}</div>
             </div>
             <div style={{textAlign:"right",flexShrink:0}}>
               <div className="tnum" style={{fontWeight:700,fontSize:14,fontFamily:F_MONO}}>€{p.val.toLocaleString("it-IT")}</div>
@@ -6918,7 +7000,8 @@ function ListaPreventivi({preventivi,onApri,sessione}){
 
   const daCompletare = filtra(preventivi.filter(p=>p.stato==="Bozza"));
   const daGestire = filtra(preventivi.filter(p=>p.stato==="Inviato"));
-  const inOrdine = filtra(preventivi.filter(p=>p.stato==="Convertito in ordine"));
+  // I preventivi già "Convertito in ordine" NON compaiono qui: hanno una
+  // ricerca dedicata nella tile "Confermati in ordine" (con filtro data).
   // Preventivo il cui ordine collegato è stato sospeso (vedi Ordini →
   // Sospendi/Riattiva) — resta visibile qui finché l'ordine non riparte.
   const sospesi = filtra(preventivi.filter(p=>p.stato==="Sospeso"));
@@ -6928,7 +7011,7 @@ function ListaPreventivi({preventivi,onApri,sessione}){
   const daRecuperare = filtra(preventivi.filter(p=>p.stato==="Saltato" && p.motivo_saltato_tipo==="rimandata" && p.promemoria_recupero))
     .sort((a,b)=>new Date(a.promemoria_recupero)-new Date(b.promemoria_recupero));
 
-  const totaleVisibile = daCompletare.length+daGestire.length+inOrdine.length+sospesi.length+daRecuperare.length;
+  const totaleVisibile = daCompletare.length+daGestire.length+sospesi.length+daRecuperare.length;
 
   function rigaPreventivo(p){
     return (
@@ -7005,7 +7088,6 @@ function ListaPreventivi({preventivi,onApri,sessione}){
 
       {sezione("Da completare", daCompletare)}
       {sezione("Da gestire", daGestire)}
-      {sezione("In ordine", inOrdine)}
       {sezione("Sospesi", sospesi)}
       {daRecuperare.length>0 && (
         <div style={{marginBottom:24}}>
@@ -7127,6 +7209,24 @@ function Ordini({ordini,setOrdini,preventivi,setPreventivi,setInterventi,catalog
   }
   function pulisciRicercaOrdini(){
     setRicercaCodiceOrdine(""); setRicercaClienteOrdine(""); setTerminiCercatiOrdine(null);
+  }
+  // Ricerca + filtro data sull'archivio "Evasi" — stesso principio, ma
+  // qui serve anche sfogliare lo storico per intervallo di date (l'archivio
+  // cresce nel tempo ed è quello con più bisogno di essere ristretto in fretta).
+  const [ricercaCodiceEvasi,setRicercaCodiceEvasi]=useState("");
+  const [ricercaClienteEvasi,setRicercaClienteEvasi]=useState("");
+  const [ricercaDataDaEvasi,setRicercaDataDaEvasi]=useState("");
+  const [ricercaDataAEvasi,setRicercaDataAEvasi]=useState("");
+  const [filtriEvasi,setFiltriEvasi]=useState(null); // null = nessun filtro attivo
+  function eseguiRicercaEvasi(){
+    const codice = ricercaCodiceEvasi.trim();
+    const cliente = normalizzaRagioneSociale(ricercaClienteEvasi);
+    const dataDa = ricercaDataDaEvasi, dataA = ricercaDataAEvasi;
+    if(!codice && !cliente && !dataDa && !dataA){ setFiltriEvasi(null); return; }
+    setFiltriEvasi({codice, cliente, dataDa, dataA});
+  }
+  function pulisciRicercaEvasi(){
+    setRicercaCodiceEvasi(""); setRicercaClienteEvasi(""); setRicercaDataDaEvasi(""); setRicercaDataAEvasi(""); setFiltriEvasi(null);
   }
   // "Cerca ordini" resta uno strumento sui soli ordini non ancora presi in
   // carico (stato "Inviato") — non su tutto lo storico. Vale per qualsiasi
@@ -8232,14 +8332,12 @@ ${o.firma_cliente ? `
     );
   }
 
-  if(vista==="da-gestire" || vista==="confermati"){
-    const stato = vista==="da-gestire" ? "In gestione" : "Evaso";
-    const titolo = vista==="da-gestire" ? "In gestione" : "Evasi";
-    const elenco = ordini.filter(o=>o.stato===stato);
+  if(vista==="da-gestire"){
+    const elenco = ordini.filter(o=>o.stato==="In gestione");
     return (
       <div>
         <button onClick={()=>setVista("home")} style={{...S.btnS,marginBottom:14}}>← Ordini</button>
-        <div style={S.eyebrow}>{titolo} ({elenco.length})</div>
+        <div style={S.eyebrow}>In gestione ({elenco.length})</div>
         {elenco.length===0 && <div style={{fontSize:12.5,color:"#9AA3AB",padding:"8px 0"}}>Nessun ordine qui.</div>}
         {elenco.map(o=>(
           <div key={o.id} onClick={()=>setSelId(o.id)} style={{...S.card,cursor:"pointer",display:"flex",justifyContent:"space-between",alignItems:"center",gap:10}}>
@@ -8247,6 +8345,72 @@ ${o.firma_cliente ? `
               <div className="tnum" style={{fontSize:10.5,color:"#9AA3AB",fontFamily:F_MONO}}>{codiceOrdine(o)}</div>
               <div style={{fontWeight:600,fontSize:13.5,marginTop:2}}>{o.cliente}</div>
               <div style={{fontSize:11.5,color:"#8A929A",marginTop:1}}>{o.righe.length} articol{o.righe.length===1?"o":"i"}</div>
+            </div>
+            <div style={{textAlign:"right",flexShrink:0}}>
+              <div className="tnum" style={{fontWeight:700,fontSize:14,fontFamily:F_MONO}}>€{o.val.toLocaleString("it-IT")}</div>
+              <Tag tone={toneOrdine(o.stato)} style={{marginTop:5}}>{o.stato}</Tag>
+            </div>
+          </div>
+        ))}
+      </div>
+    );
+  }
+
+  if(vista==="confermati"){
+    // Archivio "Evasi": può crescere molto — ricerca per cliente + filtro
+    // per intervallo di date (sulla data di evasione se disponibile,
+    // altrimenti sulla data di creazione dell'ordine).
+    const evasi = ordini.filter(o=>o.stato==="Evaso");
+    const evasiFiltrati = !filtriEvasi ? evasi : evasi.filter(o=>{
+      const {codice, cliente, dataDa, dataA} = filtriEvasi;
+      if(codice && !(o.cliente_codice||"").toLowerCase().includes(codice.toLowerCase())) return false;
+      if(cliente && !corrispondeRicerca(cliente, [o.cliente])) return false;
+      if(dataDa || dataA){
+        const d = (o.aggiornato_il || o.creato_il || "").slice(0,10);
+        if(!d) return false;
+        if(dataDa && d<dataDa) return false;
+        if(dataA && d>dataA) return false;
+      }
+      return true;
+    });
+    return (
+      <div>
+        <button onClick={()=>setVista("home")} style={{...S.btnS,marginBottom:14}}>← Ordini</button>
+        <div style={S.eyebrow}>Evasi ({evasi.length})</div>
+        {evasi.length>0 && (
+          <div style={{...S.card,cursor:"default",marginTop:14,marginBottom:14}}>
+            <div style={{display:"flex",gap:8,marginBottom:8,flexWrap:"wrap"}}>
+              <input
+                value={ricercaCodiceEvasi} onChange={e=>setRicercaCodiceEvasi(e.target.value)}
+                onKeyDown={e=>{ if(e.key==="Enter"){ e.preventDefault(); eseguiRicercaEvasi(); } }}
+                placeholder="Codice cliente" style={{...S.inp,flex:"1 1 140px"}}
+              />
+              <input
+                value={ricercaClienteEvasi} onChange={e=>setRicercaClienteEvasi(e.target.value)}
+                onKeyDown={e=>{ if(e.key==="Enter"){ e.preventDefault(); eseguiRicercaEvasi(); } }}
+                placeholder="Ragione sociale" style={{...S.inp,flex:"1 1 200px"}}
+              />
+            </div>
+            <div style={{display:"flex",gap:8,marginBottom:8,flexWrap:"wrap",alignItems:"center"}}>
+              <label style={{fontSize:11,fontFamily:F_MONO,color:"#9AA3AB",textTransform:"uppercase",letterSpacing:"0.05em"}}>Dal</label>
+              <input type="date" value={ricercaDataDaEvasi} onChange={e=>setRicercaDataDaEvasi(e.target.value)} style={{...S.inp,flex:"1 1 140px"}}/>
+              <label style={{fontSize:11,fontFamily:F_MONO,color:"#9AA3AB",textTransform:"uppercase",letterSpacing:"0.05em"}}>Al</label>
+              <input type="date" value={ricercaDataAEvasi} onChange={e=>setRicercaDataAEvasi(e.target.value)} style={{...S.inp,flex:"1 1 140px"}}/>
+            </div>
+            <div style={{display:"flex",gap:8}}>
+              <button onClick={eseguiRicercaEvasi} style={{...S.btnAccent,padding:"9px 16px",fontSize:12.5}}>🔍 Cerca</button>
+              {filtriEvasi && <button onClick={pulisciRicercaEvasi} style={{...S.btnS,padding:"9px 16px",fontSize:12.5}}>Pulisci</button>}
+            </div>
+          </div>
+        )}
+        {evasi.length===0 && <div style={{fontSize:12.5,color:"#9AA3AB",padding:"8px 0"}}>Nessun ordine qui.</div>}
+        {evasi.length>0 && evasiFiltrati.length===0 && <div style={{fontSize:12.5,color:"#9AA3AB",padding:"8px 0"}}>Nessun ordine trovato con questi filtri.</div>}
+        {evasiFiltrati.map(o=>(
+          <div key={o.id} onClick={()=>setSelId(o.id)} style={{...S.card,cursor:"pointer",display:"flex",justifyContent:"space-between",alignItems:"center",gap:10}}>
+            <div style={{minWidth:0}}>
+              <div className="tnum" style={{fontSize:10.5,color:"#9AA3AB",fontFamily:F_MONO}}>{codiceOrdine(o)}</div>
+              <div style={{fontWeight:600,fontSize:13.5,marginTop:2}}>{o.cliente}</div>
+              <div style={{fontSize:11.5,color:"#8A929A",marginTop:1}}>{o.righe.length} articol{o.righe.length===1?"o":"i"} · {(o.aggiornato_il||o.creato_il) ? new Date(o.aggiornato_il||o.creato_il).toLocaleDateString("it-IT") : ""}</div>
             </div>
             <div style={{textAlign:"right",flexShrink:0}}>
               <div className="tnum" style={{fontWeight:700,fontSize:14,fontFamily:F_MONO}}>€{o.val.toLocaleString("it-IT")}</div>
@@ -13451,11 +13615,29 @@ function TicketAssistenza({ sessione, ruolo, ticketDaAprire, setTicketDaAprire, 
   const [filtroStato, setFiltroStato] = useState("Aperto");
   const [aperto, setAperto] = useState(null);
   const [nuovoAperto, setNuovoAperto] = useState(false);
+  // Ricerca + filtro data sull'archivio "Chiuso" — cresce nel tempo, serve
+  // poter restringere per cliente e per intervallo di date per sfogliarlo
+  // rapidamente. Non essendoci un campo dedicato di data-chiusura in
+  // ticket_assistenza, il filtro/ordinamento usa la data di apertura
+  // (created_at) — l'unica data affidabile disponibile oggi.
+  const [ricercaClienteChiusi,setRicercaClienteChiusi]=useState("");
+  const [ricercaDataDaChiusi,setRicercaDataDaChiusi]=useState("");
+  const [ricercaDataAChiusi,setRicercaDataAChiusi]=useState("");
+  const [filtriChiusi,setFiltriChiusi]=useState(null); // null = nessun filtro attivo
+  function eseguiRicercaChiusi(){
+    const cliente = normalizzaRagioneSociale(ricercaClienteChiusi);
+    const dataDa = ricercaDataDaChiusi, dataA = ricercaDataAChiusi;
+    if(!cliente && !dataDa && !dataA){ setFiltriChiusi(null); return; }
+    setFiltriChiusi({cliente, dataDa, dataA});
+  }
+  function pulisciRicercaChiusi(){
+    setRicercaClienteChiusi(""); setRicercaDataDaChiusi(""); setRicercaDataAChiusi(""); setFiltriChiusi(null);
+  }
 
   async function carica(){
     setCaricando(true);
     try{
-      const lista = await sbGetAuth("ticket_assistenza","select=*&order=created_at.desc&limit=300",accessToken);
+      const lista = await sbGetAuth("ticket_assistenza","select=*&order=created_at.desc&limit=1000",accessToken);
       setTicket(lista||[]);
       const codici = [...new Set((lista||[]).map(t=>t.cliente_codice).filter(Boolean))];
       if(codici.length){
@@ -13495,7 +13677,22 @@ function TicketAssistenza({ sessione, ruolo, ticketDaAprire, setTicketDaAprire, 
     return <NuovoTicketStaff sessione={sessione} catalog={catalog} onAnnulla={()=>setNuovoAperto(false)} onCreato={()=>{ setNuovoAperto(false); carica(); }}/>;
   }
 
-  const filtrati = ticket.filter(t=>t.stato===filtroStato);
+  const chiusiBase = ticket.filter(t=>t.stato==="Chiuso");
+  const chiusiFiltrati = !filtriChiusi ? chiusiBase : chiusiBase.filter(t=>{
+    const {cliente, dataDa, dataA} = filtriChiusi;
+    if(cliente){
+      const nomeCliente = clientiMap[t.cliente_codice]?.ragione_sociale || "";
+      if(!corrispondeRicerca(cliente, [nomeCliente, t.cliente_codice])) return false;
+    }
+    if(dataDa || dataA){
+      const d = (t.created_at||"").slice(0,10);
+      if(!d) return false;
+      if(dataDa && d<dataDa) return false;
+      if(dataA && d>dataA) return false;
+    }
+    return true;
+  });
+  const filtrati = filtroStato==="Chiuso" ? chiusiFiltrati : ticket.filter(t=>t.stato===filtroStato);
 
   return (
     <div>
@@ -13517,8 +13714,31 @@ function TicketAssistenza({ sessione, ruolo, ticketDaAprire, setTicketDaAprire, 
         })}
       </div>
 
+      {filtroStato==="Chiuso" && chiusiBase.length>0 && (
+        <div style={{...S.card,cursor:"default",marginBottom:14}}>
+          <div style={{display:"flex",gap:8,marginBottom:8,flexWrap:"wrap"}}>
+            <input
+              value={ricercaClienteChiusi} onChange={e=>setRicercaClienteChiusi(e.target.value)}
+              onKeyDown={e=>{ if(e.key==="Enter"){ e.preventDefault(); eseguiRicercaChiusi(); } }}
+              placeholder="Cliente (ragione sociale o codice)" style={{...S.inp,flex:"1 1 220px"}}
+            />
+          </div>
+          <div style={{display:"flex",gap:8,marginBottom:8,flexWrap:"wrap",alignItems:"center"}}>
+            <label style={{fontSize:11,fontFamily:F_MONO,color:"#9AA3AB",textTransform:"uppercase",letterSpacing:"0.05em"}}>Dal</label>
+            <input type="date" value={ricercaDataDaChiusi} onChange={e=>setRicercaDataDaChiusi(e.target.value)} style={{...S.inp,flex:"1 1 140px"}}/>
+            <label style={{fontSize:11,fontFamily:F_MONO,color:"#9AA3AB",textTransform:"uppercase",letterSpacing:"0.05em"}}>Al</label>
+            <input type="date" value={ricercaDataAChiusi} onChange={e=>setRicercaDataAChiusi(e.target.value)} style={{...S.inp,flex:"1 1 140px"}}/>
+          </div>
+          <div style={{display:"flex",gap:8}}>
+            <button onClick={eseguiRicercaChiusi} style={{...S.btnAccent,padding:"9px 16px",fontSize:12.5}}>🔍 Cerca</button>
+            {filtriChiusi && <button onClick={pulisciRicercaChiusi} style={{...S.btnS,padding:"9px 16px",fontSize:12.5}}>Pulisci</button>}
+          </div>
+        </div>
+      )}
+
       {caricando && <div style={{color:"#9AA3AB",fontSize:13}}>Caricamento…</div>}
-      {!caricando && filtrati.length===0 && <div style={{color:"#9AA3AB",fontSize:13,padding:"2rem 0",textAlign:"center"}}>Nessun ticket in stato «{filtroStato}»</div>}
+      {!caricando && filtroStato==="Chiuso" && chiusiBase.length>0 && filtrati.length===0 && <div style={{color:"#9AA3AB",fontSize:13,padding:"2rem 0",textAlign:"center"}}>Nessun ticket chiuso trovato con questi filtri.</div>}
+      {!caricando && !(filtroStato==="Chiuso" && chiusiBase.length>0) && filtrati.length===0 && <div style={{color:"#9AA3AB",fontSize:13,padding:"2rem 0",textAlign:"center"}}>Nessun ticket in stato «{filtroStato}»</div>}
 
       {filtrati.map(t=>{
         const cl = clientiMap[t.cliente_codice];
@@ -13530,6 +13750,7 @@ function TicketAssistenza({ sessione, ruolo, ticketDaAprire, setTicketDaAprire, 
                 <div style={{fontFamily:F_MONO,fontSize:11,color:"#9AA3AB"}}>{t.numero}</div>
                 <div style={{fontWeight:600,fontSize:13.5,marginTop:2}}>{t.titolo}</div>
                 <div style={{fontSize:12,color:C.steel,marginTop:2}}>{cl?.ragione_sociale || t.cliente_codice}</div>
+                {filtroStato==="Chiuso" && t.created_at && <div style={{fontSize:11,color:"#9AA3AB",marginTop:2}}>Aperto il {new Date(t.created_at).toLocaleDateString("it-IT")}</div>}
               </div>
               <div style={{textAlign:"right",flexShrink:0}}>
                 <Tag tone={TONO_PRIORITA_TICKET[t.priorita]}>{t.priorita}</Tag>
