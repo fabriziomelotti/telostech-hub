@@ -189,10 +189,12 @@ export function ImportClienti({ ruolo, sessione }){
   }
 
   function trovaFoglio(wb){
-    // sceglie il primo foglio che contiene la colonna "Codice" con dati
+    // sceglie il primo foglio che contiene la colonna "Codice" con dati —
+    // confronto insensibile a maiuscole/minuscole, stesso motivo di
+    // mappaRiga qui sotto.
     for(const nome of wb.SheetNames){
       const rows = window.XLSX.utils.sheet_to_json(wb.Sheets[nome], {defval:""});
-      if(rows.length > 1 && Object.prototype.hasOwnProperty.call(rows[0], "Codice")){
+      if(rows.length > 1 && Object.keys(rows[0]).some(k=>k.trim().toLowerCase()==="codice")){
         return rows;
       }
     }
@@ -201,9 +203,17 @@ export function ImportClienti({ ruolo, sessione }){
   }
 
   function mappaRiga(r){
+    // Confronto delle intestazioni insensibile a maiuscole/minuscole e a
+    // spazi iniziali/finali: un file con "Descrizione agente" invece di
+    // "Descrizione Agente" (o qualunque differenza di questo tipo)
+    // altrimenti veniva ignorato in silenzio, senza nessun errore visibile
+    // — la colonna semplicemente non veniva mai trovata.
+    const chiaviRiga = {};
+    for(const k of Object.keys(r)) chiaviRiga[k.trim().toLowerCase()] = k;
     const out = {};
     for(const [xls, db] of Object.entries(COLONNE_DB)){
-      let v = r[xls];
+      const chiaveReale = chiaviRiga[xls.trim().toLowerCase()];
+      let v = chiaveReale !== undefined ? r[chiaveReale] : undefined;
       if(v === undefined || v === null) v = "";
       v = String(v).trim();
       out[db] = v === "" ? null : v;
