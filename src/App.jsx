@@ -7128,15 +7128,20 @@ function Ordini({ordini,setOrdini,preventivi,setPreventivi,setInterventi,catalog
   function pulisciRicercaOrdini(){
     setRicercaCodiceOrdine(""); setRicercaClienteOrdine(""); setTerminiCercatiOrdine(null);
   }
+  // "Cerca ordini" resta uno strumento sui soli ordini non ancora presi in
+  // carico (stato "Inviato") — non su tutto lo storico. Vale per qualsiasi
+  // ruolo: il filtro per cliente del commerciale è già applicato a monte,
+  // sull'array "ordini" ricevuto come prop.
+  const ordiniInviati = useMemo(()=>ordini.filter(o=>o.stato==="Inviato"),[ordini]);
   const ordiniFiltrati = useMemo(()=>{
-    if(!terminiCercatiOrdine) return ordini;
+    if(!terminiCercatiOrdine) return ordiniInviati;
     const {codice, cliente} = terminiCercatiOrdine;
-    return ordini.filter(o=>{
+    return ordiniInviati.filter(o=>{
       if(codice && !(o.cliente_codice||"").toLowerCase().includes(codice.toLowerCase())) return false;
       if(cliente && !corrispondeRicerca(cliente, [o.cliente])) return false;
       return true;
     });
-  },[ordini, terminiCercatiOrdine]);
+  },[ordiniInviati, terminiCercatiOrdine]);
   const selezionato = ordini.find(o=>o.id===selId);
   const accessToken = trovaAccessToken(sessione);
   useEffect(()=>{ setConfermaSospendi(false); setConfermaRiattiva(false); setConfermaEliminaOrdine(false); setDocumentiFinSelezionati([]); },[selId]);
@@ -8186,8 +8191,9 @@ ${o.firma_cliente ? `
   }
 
   if(vista==="home" && !creandoNuovo){
-    const daGestireN = ordini.filter(o=>o.stato==="Inviato").length;
-    const confermatiN = ordini.filter(o=>o.stato==="Evaso").length;
+    const daPrendereInCaricoN = ordini.filter(o=>o.stato==="Inviato").length;
+    const inGestioneN = ordini.filter(o=>o.stato==="In gestione").length;
+    const evasiN = ordini.filter(o=>o.stato==="Evaso").length;
     return (
       <div>
         <div style={S.eyebrow}>Ordini</div>
@@ -8198,9 +8204,9 @@ ${o.firma_cliente ? `
 
         <div style={isMobile ? {display:"flex",flexDirection:"column",gap:8} : {display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:12}}>
           {[
-            ["cerca","search","Cerca ordini",ordini.length,"Tutti gli ordini, con ricerca per cliente","rgba(200,75,58,0.09)",C.danger],
-            ["da-gestire","reply","Da gestire",daGestireN,"Inviati, ancora da prendere in carico","rgba(217,164,65,0.12)",C.warn],
-            ["confermati","checkCircle","Confermati",confermatiN,"Evasi, gestiti fino in fondo","rgba(74,157,110,0.1)",C.ok],
+            ["cerca","search","Cerca ordini",daPrendereInCaricoN,"Inviati, ancora da prendere in carico","rgba(200,75,58,0.09)",C.danger],
+            ["da-gestire","reply","In gestione",inGestioneN,"Presi in carico, in lavorazione","rgba(217,164,65,0.12)",C.warn],
+            ["confermati","checkCircle","Evasi",evasiN,"Evasi, gestiti fino in fondo","rgba(74,157,110,0.1)",C.ok],
           ].map(([id,icona,lbl,n,sub,sfondo,colore])=>(
             isMobile ? (
               <div key={id} onClick={()=>setVista(id)} style={{...S.card,cursor:"pointer",display:"flex",alignItems:"center",gap:12,background:sfondo,border:`1px solid ${colore}`}}>
@@ -8227,8 +8233,8 @@ ${o.firma_cliente ? `
   }
 
   if(vista==="da-gestire" || vista==="confermati"){
-    const stato = vista==="da-gestire" ? "Inviato" : "Evaso";
-    const titolo = vista==="da-gestire" ? "Da gestire" : "Confermati";
+    const stato = vista==="da-gestire" ? "In gestione" : "Evaso";
+    const titolo = vista==="da-gestire" ? "In gestione" : "Evasi";
     const elenco = ordini.filter(o=>o.stato===stato);
     return (
       <div>
@@ -8258,6 +8264,7 @@ ${o.firma_cliente ? `
         <button onClick={()=>{ if(creandoNuovo) annullaNuovoOrdine(); setVista("home"); }} style={{...S.btnS}}>← Ordini</button>
         {!creandoNuovo && <button onClick={()=>setCreandoNuovo(true)} style={{...S.btnAccent,padding:"9px 15px",fontSize:12.5}}>+ Nuovo ordine</button>}
       </div>
+      {!creandoNuovo && <div style={{...S.eyebrow,marginTop:14}}>Da prendere in carico ({ordiniInviati.length})</div>}
       {erroreSync && <div style={{fontSize:12,color:C.danger,background:"rgba(200,75,58,0.08)",borderRadius:6,padding:"9px 11px",marginTop:14}}>⚠ {erroreSync}</div>}
 
       {creandoNuovo && (
@@ -8362,7 +8369,7 @@ ${o.firma_cliente ? `
         </div>
       )}
 
-      {ordini.length>0 && (
+      {ordiniInviati.length>0 && (
         <div style={{...S.card,cursor:"default",marginTop:14,marginBottom:14}}>
           <div style={{display:"flex",gap:8,marginBottom:8,flexWrap:"wrap"}}>
             <input
@@ -8390,7 +8397,14 @@ ${o.firma_cliente ? `
           <div style={{fontSize:11.5,marginTop:4}}>Gli ordini nascono dai preventivi confermati, o si creano da qui</div>
         </div>
       )}
-      {terminiCercatiOrdine && ordiniFiltrati.length===0 && (
+      {ordini.length>0 && ordiniInviati.length===0 && !creandoNuovo && (
+        <div style={{textAlign:"center",padding:"2.5rem 1rem",color:"#9AA3AB"}}>
+          <div style={{fontSize:28,marginBottom:8}}>⬡</div>
+          <div style={{fontSize:13}}>Nessun ordine da prendere in carico</div>
+          <div style={{fontSize:11.5,marginTop:4}}>Gli ordini già presi in carico sono in "In gestione" o "Evasi"</div>
+        </div>
+      )}
+      {terminiCercatiOrdine && ordiniFiltrati.length===0 && ordiniInviati.length>0 && (
         <div style={{textAlign:"center",padding:"2rem 1rem",color:"#9AA3AB",fontSize:13}}>Nessun ordine trovato.</div>
       )}
       {ordiniFiltrati.map(o=>(
