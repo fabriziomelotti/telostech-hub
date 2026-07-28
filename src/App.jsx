@@ -12540,9 +12540,13 @@ function AssegnaAgentiClienti({ ruolo, sessione }){
 
   function apriForm(testo){
     setFormAperto(testo); setEmailToccata(false);
+    // Il testo importato è nel formato "COGNOME NOME" (es. "Ferrara
+    // Giuseppe" → cognome Ferrara, nome Giuseppe) — l'ultima parola è
+    // sempre il nome, tutto quello prima è il cognome (anche se composto
+    // da più parole, es. "Dalla Valle Marco").
     const parti = testo.trim().split(/\s+/);
-    setNomeForm(parti[0]||"");
-    setCognomeForm(parti.slice(1).join(" ")||"");
+    setNomeForm(parti.length>1 ? parti[parti.length-1] : "");
+    setCognomeForm(parti.length>1 ? parti.slice(0,-1).join(" ") : parti[0]||"");
   }
   // Email suggerita nome.cognome@telosgroup.it — ricalcolata mentre si
   // digita nome/cognome, ma solo finché l'admin non la tocca lui stesso.
