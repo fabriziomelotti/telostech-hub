@@ -12498,11 +12498,162 @@ function FormPacchetto({ pacchetto, catalog, accessToken, ruolo, onSalvato, onAn
 // gestione utenti. Tutto il resto (catalogo, prezzi, listini, categorie,
 // logistica) si trova ora in GESTIONE (vedi PannelloGestione), visibile
 // anche al responsabile.
+// ─── ASSEGNA AGENTI CLIENTI ────────────────────────────────────────────────
+// Strumento di triage: elenca ogni valore distinto del vecchio campo testo
+// "agente" (importato dall'Excel) ancora senza un account collegato, e
+// lascia decidere caso per caso — mai in automatico, perché un testo come
+// "Rossi Mario" o "Filiale Nord" non si può distinguere in modo affidabile
+// via codice: solo chi conosce l'organizzazione sa se è una persona o un
+// riferimento direzionale/filiale.
+function AssegnaAgentiClienti({ ruolo, sessione }){
+  const accessToken = trovaAccessToken(sessione);
+  const [righe,setRighe] = useState([]); // [{ testo, codici:[...] }]
+  const [utentiCommerciali,setUtentiCommerciali] = useState([]);
+  const [caricando,setCaricando] = useState(true);
+  const [msg,setMsg] = useState("");
+  const [formAperto,setFormAperto] = useState(null); // testo agente in fase di creazione utente
+  const [nomeForm,setNomeForm] = useState("");
+  const [cognomeForm,setCognomeForm] = useState("");
+  const [emailForm,setEmailForm] = useState("");
+  const [emailToccata,setEmailToccata] = useState(false); // se l'admin la modifica a mano, non sovrascriverla più
+  const [salvando,setSalvando] = useState(false);
+
+  async function carica(){
+    setCaricando(true); setMsg("");
+    try{
+      const [daRivedere, u] = await Promise.all([
+        sbGetAuth("clienti", "select=codice,agente&agente_profilo_id=is.null&agente_senza_riferimento=eq.false&agente=not.is.null&limit=5000", accessToken),
+        chiamaUtentiInfo(accessToken).then(d=>(d?.utenti||[]).filter(x=>x.ruolo==="commerciale")),
+      ]);
+      const mappa = {};
+      (daRivedere||[]).forEach(c=>{
+        const t = (c.agente||"").trim();
+        if(!t) return;
+        (mappa[t] = mappa[t] || []).push(c.codice);
+      });
+      setRighe(Object.entries(mappa).map(([testo,codici])=>({testo,codici})).sort((a,b)=>b.codici.length-a.codici.length));
+      setUtentiCommerciali(u);
+    }catch(err){ setMsg("Errore nel caricamento: "+err.message); }
+    setCaricando(false);
+  }
+  useEffect(()=>{ if(ruolo==="admin") carica(); },[ruolo]);
+
+  function apriForm(testo){
+    setFormAperto(testo); setEmailToccata(false);
+    const parti = testo.trim().split(/\s+/);
+    setNomeForm(parti[0]||"");
+    setCognomeForm(parti.slice(1).join(" ")||"");
+  }
+  // Email suggerita nome.cognome@telosgroup.it — ricalcolata mentre si
+  // digita nome/cognome, ma solo finché l'admin non la tocca lui stesso.
+  useEffect(()=>{
+    if(emailToccata || formAperto===null) return;
+    const slug = s => (s||"").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"").replace(/[^a-z]/g,"");
+    setEmailForm(nomeForm||cognomeForm ? `${slug(nomeForm)}.${slug(cognomeForm)}@telosgroup.it` : "");
+  },[nomeForm, cognomeForm, emailToccata, formAperto]);
+
+  if(ruolo!=="admin"){
+    return (
+      <div style={{...S.card,cursor:"default"}}>
+        <div style={{fontFamily:F_DISPLAY,fontSize:16,fontWeight:600}}>Agenti da assegnare</div>
+        <div style={{fontSize:12.5,color:C.steel,marginTop:6}}>Funzione riservata al ruolo <b>Admin</b>.</div>
+      </div>
+    );
+  }
+
+  async function creaEAssegna(testo){
+    if(!nomeForm.trim() || !cognomeForm.trim() || !emailForm.trim()) return;
+    setSalvando(true); setMsg("");
+    try{
+      const password = generaPassword();
+      const creato = await chiamaAdminUsers("create", {
+        email: emailForm.trim(), password, nome: nomeForm.trim(), cognome: cognomeForm.trim(), ruolo: "commerciale",
+      }, accessToken);
+      await sbAuth("PATCH","clienti",`agente=eq.${encodeURIComponent(testo)}`,{agente_profilo_id: creato.id},accessToken);
+      setMsg(`Creato ${nomeForm.trim()} ${cognomeForm.trim()} (${emailForm.trim()}) — password: ${password} — comunicala e non verrà mostrata di nuovo.`);
+      setFormAperto(null);
+      carica();
+    }catch(err){ setMsg("Errore: "+err.message); }
+    setSalvando(false);
+  }
+
+  async function assegnaAEsistente(testo, profiloId){
+    if(!profiloId) return;
+    setSalvando(true); setMsg("");
+    try{
+      await sbAuth("PATCH","clienti",`agente=eq.${encodeURIComponent(testo)}`,{agente_profilo_id: profiloId},accessToken);
+      carica();
+    }catch(err){ setMsg("Errore: "+err.message); }
+    setSalvando(false);
+  }
+
+  async function segnaSenzaAgente(testo){
+    setSalvando(true); setMsg("");
+    try{
+      await sbAuth("PATCH","clienti",`agente=eq.${encodeURIComponent(testo)}`,{agente_senza_riferimento:true},accessToken);
+      carica();
+    }catch(err){ setMsg("Errore: "+err.message); }
+    setSalvando(false);
+  }
+
+  return (
+    <div style={{...S.card,cursor:"default"}}>
+      <div style={{fontFamily:F_DISPLAY,fontSize:16,fontWeight:600,marginBottom:4}}>Agenti da assegnare</div>
+      <div style={{fontSize:12.5,color:C.steel,marginBottom:14}}>
+        Valori del campo "agente" importati dall'Excel, non ancora collegati a un account — {righe.length} da rivedere.
+      </div>
+      {msg && <div style={{fontSize:12.5,color: msg.startsWith("Errore")?C.danger:C.ok, background: msg.startsWith("Errore")?"rgba(181,64,43,0.08)":"rgba(63,145,66,0.08)", borderRadius:6, padding:"9px 11px", marginBottom:14}}>{msg}</div>}
+      {caricando && <div style={{color:"#9AA3AB",fontSize:13}}>Caricamento…</div>}
+      {!caricando && righe.length===0 && (
+        <div style={{color:"#9AA3AB",fontSize:13,textAlign:"center",padding:"20px 0"}}>Tutti gli agenti sono stati assegnati o segnati come "senza riferimento".</div>
+      )}
+      {righe.map(r=>(
+        <div key={r.testo} style={{border:`1px solid ${C.paperLine}`,borderRadius:8,padding:"12px 14px",marginBottom:10}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8,gap:10}}>
+            <div>
+              <div style={{fontWeight:700,fontSize:13.5}}>{r.testo}</div>
+              <div style={{fontSize:11.5,color:"#9AA3AB"}}>{r.codici.length} client{r.codici.length===1?"e":"i"}</div>
+            </div>
+            <button onClick={()=>segnaSenzaAgente(r.testo)} disabled={salvando} style={S.btnS}>Nessun agente</button>
+          </div>
+
+          {utentiCommerciali.length>0 && (
+            <select defaultValue="" disabled={salvando} onChange={e=>assegnaAEsistente(r.testo, e.target.value)} style={{...S.sel,width:"100%",marginBottom:8}}>
+              <option value="">— assegna a un commerciale già esistente —</option>
+              {utentiCommerciali.map(u=>(<option key={u.id} value={u.id}>{u.nome} {u.cognome||""}</option>))}
+            </select>
+          )}
+
+          {formAperto===r.testo ? (
+            <div style={{background:"#F7F8FA",borderRadius:6,padding:10}}>
+              <div style={{display:"flex",gap:8,marginBottom:8}}>
+                <input value={nomeForm} onChange={e=>setNomeForm(e.target.value)} placeholder="Nome" style={{...S.inp,flex:1}}/>
+                <input value={cognomeForm} onChange={e=>setCognomeForm(e.target.value)} placeholder="Cognome" style={{...S.inp,flex:1}}/>
+              </div>
+              <input value={emailForm} onChange={e=>{ setEmailForm(e.target.value); setEmailToccata(true); }} placeholder="Email" style={{...S.inp,marginBottom:8,fontFamily:F_MONO}}/>
+              <div style={{display:"flex",gap:8}}>
+                <button onClick={()=>creaEAssegna(r.testo)} disabled={salvando||!nomeForm.trim()||!cognomeForm.trim()||!emailForm.trim()} style={{...S.btnAccent,flex:1,opacity:(salvando||!nomeForm.trim()||!cognomeForm.trim()||!emailForm.trim())?0.5:1}}>
+                  {salvando?"…":"Crea account e assegna"}
+                </button>
+                <button onClick={()=>setFormAperto(null)} style={S.btnS}>Annulla</button>
+              </div>
+            </div>
+          ) : (
+            <button onClick={()=>apriForm(r.testo)} disabled={salvando} style={{...S.btnP,width:"100%"}}>+ Crea nuovo utente commerciale</button>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function PannelloAdmin({ ruolo, sessione, catalog }) {
   return (
     <div>
       <div style={{fontFamily:F_DISPLAY,fontSize:18,fontWeight:600,marginBottom:18}}>AMMINISTRAZIONE</div>
       <ImportClienti ruolo={ruolo} sessione={sessione}/>
+      <div style={{height:18}}/>
+      <AssegnaAgentiClienti ruolo={ruolo} sessione={sessione}/>
       <div style={{height:18}}/>
       <GestioneUtenti ruolo={ruolo} sessione={sessione}/>
       <div style={{height:18}}/>
