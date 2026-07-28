@@ -68,7 +68,13 @@ function configuraPWA(){
     // sulle webapp installate su Home Screen. Rimandarla a pagina già
     // caricata riduce la finestra in cui può capitare.
     if("serviceWorker" in navigator){
-      const registra = () => navigator.serviceWorker.register("/sw.js").catch(()=>{});
+      // DEBUG TEMPORANEO: alert invece di ignorare in silenzio un eventuale
+      // fallimento della registrazione stessa (distinto dal "non diventa
+      // mai pronto" che si vede più avanti in iscriviPush) — va tolto
+      // insieme agli altri alert diagnostici quando risolto.
+      const registra = () => navigator.serviceWorker.register("/sw.js").catch(err=>{
+        try{ alert("Debug: registrazione service worker fallita — "+(err?.name||"")+": "+(err?.message||err)); }catch{}
+      });
       if(document.readyState === "complete") registra();
       else window.addEventListener("load", registra, { once:true });
     }
