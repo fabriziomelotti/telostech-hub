@@ -2551,7 +2551,7 @@ function Clienti({sessione, preventivi, ordini, attrezzature, setAttrezzature, i
       onChiudi={()=>setAttrezzaturaAperta(null)}
       onSalvata={(agg)=>{ setAttrezzature(prev=>prev.map(x=>x.id===agg.id?agg:x)); setAttrezzaturaAperta(null); }}
       onEliminata={(id)=>{ setAttrezzature(prev=>prev.filter(x=>x.id!==id)); setAttrezzaturaAperta(null); }}
-      catalog={catalog} sessione={sessione}
+      catalog={catalog} sessione={sessione} ruolo={ruolo}
     />;
   }
 
@@ -2985,7 +2985,7 @@ function Promemoria({sessione, ruolo, preventivi, interventi, ordini, promemoria
 // inserimento sbagliato, si sposta un'attrezzatura su un altro cliente
 // (venduta/passata di mano), la si segna dismessa (senza perderne la
 // storia) o, se davvero necessario, la si elimina.
-function ModificaAttrezzatura({ attrezzatura, onChiudi, onSalvata, onEliminata, catalog, sessione }){
+function ModificaAttrezzatura({ attrezzatura, onChiudi, onSalvata, onEliminata, catalog, sessione, ruolo }){
   const accessToken = trovaAccessToken(sessione);
   const [nome,setNome] = useState(attrezzatura.nome_prodotto||"");
   const [marchio,setMarchio] = useState(attrezzatura.marchio||"");
@@ -3053,6 +3053,39 @@ function ModificaAttrezzatura({ attrezzatura, onChiudi, onSalvata, onEliminata, 
       setErrore("Eliminazione non riuscita: "+err.message);
       setConfermaElimina(false);
     }
+  }
+
+  // Consultazione riservata per il commerciale — niente form, niente
+  // salva/elimina/sposta, coerente con la stessa restrizione già applicata
+  // ai pulsanti "+" di creazione e ora rinforzata anche lato RLS.
+  if(ruolo==="commerciale"){
+    return (
+      <div>
+        <button onClick={onChiudi} style={{...S.btnS,marginBottom:14}}>← Indietro</button>
+        <div style={S.eyebrow}>Attrezzatura</div>
+        <div style={{fontSize:12,color:C.steel,fontStyle:"italic",margin:"10px 0 16px"}}>
+          Consultazione riservata — la gestione è affidata ai tecnici.
+        </div>
+        <div style={{...S.card,cursor:"default",marginBottom:16}}>
+          {[
+            ["Cliente", clienteAttuale?.ragione_sociale || attrezzatura.cliente_codice],
+            ["Nome prodotto", attrezzatura.nome_prodotto],
+            ["Marca", attrezzatura.marchio],
+            ["Numero di serie", attrezzatura.numero_serie],
+            ["Data installazione", attrezzatura.data_installazione],
+            ["Scadenza aggiornamenti", attrezzatura.scadenza_aggiornamenti],
+            ["Scadenza verifiche", attrezzatura.scadenza_verifiche],
+            ["Stato", attrezzatura.stato],
+            ["Note", attrezzatura.note],
+          ].filter(([,v])=>v).map(([lbl,v])=>(
+            <div key={lbl} style={{display:"flex",justifyContent:"space-between",padding:"10px 4px",borderBottom:`1px solid ${C.paperLine}`,fontSize:13}}>
+              <span style={{color:C.steel}}>{lbl}</span>
+              <span style={{fontWeight:600,textAlign:"right"}}>{v}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
   }
 
   return (
@@ -3191,7 +3224,7 @@ function ClienteDettaglio({cliente, onIndietro, preventivi, ordini, attrezzature
       onChiudi={()=>setAttrezzaturaInModifica(null)}
       onSalvata={(agg)=>{ setAttrezzature(prev=>prev.map(x=>x.id===agg.id?agg:x)); setAttrezzaturaInModifica(null); }}
       onEliminata={(id)=>{ setAttrezzature(prev=>prev.filter(x=>x.id!==id)); setAttrezzaturaInModifica(null); }}
-      catalog={catalog} sessione={sessione}
+      catalog={catalog} sessione={sessione} ruolo={ruolo}
     />;
   }
 
@@ -3426,7 +3459,11 @@ function ClienteDettaglio({cliente, onIndietro, preventivi, ordini, attrezzature
 
       {tab==="interventi" && (
         <div>
-          {!formInterventoAperto ? (
+          {ruolo==="commerciale" ? (
+            <div style={{fontSize:12,color:C.steel,fontStyle:"italic",marginBottom:16,padding:"10px 4px"}}>
+              Consultazione riservata — l'inserimento interventi è gestito dai tecnici.
+            </div>
+          ) : !formInterventoAperto ? (
             <button onClick={()=>setFormInterventoAperto(true)} style={{...S.btnAccent,width:"100%",padding:"12px",marginBottom:16,fontWeight:700}}>
               + Pianifica intervento
             </button>
@@ -3496,7 +3533,11 @@ function ClienteDettaglio({cliente, onIndietro, preventivi, ordini, attrezzature
 
       {tab==="attrezzature" && (
         <div>
-          {!formAttrezzaturaAperto ? (
+          {ruolo==="commerciale" ? (
+            <div style={{fontSize:12,color:C.steel,fontStyle:"italic",marginBottom:16,padding:"10px 4px"}}>
+              Consultazione riservata — la registrazione attrezzature è gestita dai tecnici.
+            </div>
+          ) : !formAttrezzaturaAperto ? (
             <button onClick={()=>setFormAttrezzaturaAperto(true)} style={{...S.btnAccent,width:"100%",padding:"12px",marginBottom:16,fontWeight:700}}>
               + Registra attrezzatura
             </button>
