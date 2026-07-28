@@ -12954,7 +12954,18 @@ function NotificheBell({ sessione, onApriTicket }){
       if(!("serviceWorker" in navigator) || !("PushManager" in window)){
         alert("Debug: PushManager non disponibile su questo browser."); return;
       }
-      const registration = await navigator.serviceWorker.ready;
+      // navigator.serviceWorker.ready non si risolve mai se il service
+      // worker non arriva a registrarsi (es. /sw.js non raggiungibile) —
+      // senza un limite di tempo, tutta la funzione resterebbe bloccata in
+      // silenzio, senza nessun errore visibile. Il timeout la trasforma in
+      // un errore leggibile.
+      const registration = await Promise.race([
+        navigator.serviceWorker.ready,
+        new Promise((_, reject) => setTimeout(
+          () => reject(new Error("timeout: il service worker non è mai diventato pronto entro 6 secondi — probabile che /sw.js non sia raggiungibile")),
+          6000
+        )),
+      ]);
       let subscription = await registration.pushManager.getSubscription();
       if(subscription && forzaRinnovo){
         const vecchioEndpoint = subscription.endpoint;
