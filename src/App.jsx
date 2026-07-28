@@ -2456,8 +2456,10 @@ function Clienti({sessione, preventivi, ordini, attrezzature, setAttrezzature, i
   const [ragioneSociale,setRagioneSociale] = useState("");
   const [localita,setLocalita] = useState("");
   const [provincia,setProvincia] = useState("");
+  const [categoria,setCategoria] = useState("");
   const [localitaOpzioni,setLocalitaOpzioni] = useState([]);
   const [provinciaOpzioni,setProvinciaOpzioni] = useState([]);
+  const [categoriaOpzioni,setCategoriaOpzioni] = useState([]);
   const [risultati,setRisultati] = useState([]);
   const [caricando,setCaricando] = useState(false);
   const [errore,setErrore] = useState("");
@@ -2474,20 +2476,23 @@ function Clienti({sessione, preventivi, ordini, attrezzature, setAttrezzature, i
 
   function selezionaModalita(m){
     setModalita(prev=>prev===m?null:m);
-    setCodice(""); setRagioneSociale(""); setLocalita(""); setProvincia("");
+    setCodice(""); setRagioneSociale(""); setLocalita(""); setProvincia(""); setCategoria("");
     setQAttrezzatura(""); setRisultati([]); setErrore(""); setCercato(false);
   }
 
-  // Popola le tendine località/provincia con i valori realmente presenti
-  // in anagrafica, una volta sola quando si entra in modalità "clienti".
+  // Popola le tendine località/provincia/categoria con i valori realmente
+  // presenti in anagrafica, una volta sola quando si entra in modalità
+  // "clienti" — niente lista fissa scritta a mano, si legge da quello che
+  // c'è davvero nei dati importati.
   useEffect(()=>{
     if(modalita!=="clienti" || localitaOpzioni.length>0) return;
-    sbGetAuth("clienti", "select=localita,provincia&limit=5000", accessToken)
+    sbGetAuth("clienti", "select=localita,provincia,categoria&limit=5000", accessToken)
       .then(dati=>{
-        const loc = new Set(), prov = new Set();
-        (dati||[]).forEach(c=>{ if(c.localita) loc.add(c.localita); if(c.provincia) prov.add(c.provincia); });
+        const loc = new Set(), prov = new Set(), cat = new Set();
+        (dati||[]).forEach(c=>{ if(c.localita) loc.add(c.localita); if(c.provincia) prov.add(c.provincia); if(c.categoria) cat.add(c.categoria); });
         setLocalitaOpzioni([...loc].sort((a,b)=>a.localeCompare(b)));
         setProvinciaOpzioni([...prov].sort((a,b)=>a.localeCompare(b)));
+        setCategoriaOpzioni([...cat].sort((a,b)=>a.localeCompare(b)));
       })
       .catch(()=>{});
   },[modalita]);
@@ -2495,7 +2500,7 @@ function Clienti({sessione, preventivi, ordini, attrezzature, setAttrezzature, i
   async function eseguiRicercaClienti(){
     const codiceOk = codice.trim();
     const paroleRagione = ragioneSociale.trim().split(/\s+/).filter(Boolean).map(soloAlfanumerico).filter(Boolean);
-    if(!codiceOk && paroleRagione.length===0 && !localita && !provincia){
+    if(!codiceOk && paroleRagione.length===0 && !localita && !provincia && !categoria){
       setErrore("Inserisci almeno un criterio di ricerca.");
       return;
     }
@@ -2511,7 +2516,8 @@ function Clienti({sessione, preventivi, ordini, attrezzature, setAttrezzature, i
       }
       if(localita) filtri.push(`localita=eq.${encodeURIComponent(localita)}`);
       if(provincia) filtri.push(`provincia=eq.${encodeURIComponent(provincia)}`);
-      const params = `select=codice,ragione_sociale,rag_sociale_agg,indirizzo,localita,provincia,cap,partita_iva,codice_fiscale,telefono,mail,filiale,agente&${filtri.join("&")}&limit=30`;
+      if(categoria) filtri.push(`categoria=eq.${encodeURIComponent(categoria)}`);
+      const params = `select=codice,ragione_sociale,rag_sociale_agg,indirizzo,localita,provincia,cap,partita_iva,codice_fiscale,telefono,mail,filiale,agente,agente_profilo_id,categoria&${filtri.join("&")}&limit=30`;
       const dati = await sbGetAuth("clienti", params, accessToken);
       const filtrati = paroleRagione.length
         ? (dati||[]).filter(c => {
@@ -2609,12 +2615,16 @@ function Clienti({sessione, preventivi, ordini, attrezzature, setAttrezzature, i
               {provinciaOpzioni.map(p=>(<option key={p} value={p}>{p}</option>))}
             </select>
           </div>
+          <select value={categoria} onChange={e=>setCategoria(e.target.value)} style={{...S.inp,padding:"13px 16px",fontSize:14,marginBottom:10}}>
+            <option value="">Tutte le categorie</option>
+            {categoriaOpzioni.map(c=>(<option key={c} value={c}>{c}</option>))}
+          </select>
           <div style={{display:"flex",gap:8}}>
             <button onClick={eseguiRicercaClienti} disabled={caricando} style={{...S.btnAccent,flex:1,padding:"12px",opacity:caricando?0.6:1}}>
               {caricando?"…":"🔍 Cerca"}
             </button>
-            {(codice||ragioneSociale||localita||provincia) && (
-              <button onClick={()=>{ setCodice(""); setRagioneSociale(""); setLocalita(""); setProvincia(""); setRisultati([]); setErrore(""); setCercato(false); }} style={S.btnS}>Pulisci</button>
+            {(codice||ragioneSociale||localita||provincia||categoria) && (
+              <button onClick={()=>{ setCodice(""); setRagioneSociale(""); setLocalita(""); setProvincia(""); setCategoria(""); setRisultati([]); setErrore(""); setCercato(false); }} style={S.btnS}>Pulisci</button>
             )}
           </div>
         </div>
@@ -2678,11 +2688,16 @@ function Clienti({sessione, preventivi, ordini, attrezzature, setAttrezzature, i
         )}
         {risultati.map(c=>(
           <div key={c.codice} onClick={()=>setSelezionato(c)} style={S.card}>
-            <div style={{fontWeight:600,fontSize:13.5}}>{c.ragione_sociale}</div>
-            {c.rag_sociale_agg && <div style={{fontSize:12,color:C.steel,marginTop:1}}>{c.rag_sociale_agg}</div>}
-            <div style={{fontSize:11.5,color:"#8A929A",marginTop:3}}>
-              {[c.localita, c.provincia && `(${c.provincia})`].filter(Boolean).join(" ")}
-              {c.partita_iva && <span className="tnum" style={{fontFamily:F_MONO,marginLeft:8}}>P.IVA {c.partita_iva}</span>}
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:8}}>
+              <div style={{minWidth:0}}>
+                <div style={{fontWeight:600,fontSize:13.5}}>{c.ragione_sociale}</div>
+                {c.rag_sociale_agg && <div style={{fontSize:12,color:C.steel,marginTop:1}}>{c.rag_sociale_agg}</div>}
+                <div style={{fontSize:11.5,color:"#8A929A",marginTop:3}}>
+                  {[c.localita, c.provincia && `(${c.provincia})`].filter(Boolean).join(" ")}
+                  {c.partita_iva && <span className="tnum" style={{fontFamily:F_MONO,marginLeft:8}}>P.IVA {c.partita_iva}</span>}
+                </div>
+              </div>
+              {c.categoria && <Tag tone="steel" style={{flexShrink:0}}>{c.categoria}</Tag>}
             </div>
           </div>
         ))}
@@ -3138,6 +3153,38 @@ function ClienteDettaglio({cliente, onIndietro, preventivi, ordini, attrezzature
   const attrezzatureCliente = (attrezzature||[]).filter(a=>a.cliente_codice===cliente.codice);
   const interventiCliente = (interventi||[]).filter(i=>i.cliente_codice===cliente.codice);
 
+  // ── Categoria e agente di riferimento, modificabili sul posto ──
+  // cliente arriva come prop dal genitore (non aggiornabile da qui), quindi
+  // teniamo un valore locale inizializzato da cliente e lo aggiorniamo dopo
+  // ogni salvataggio riuscito — tornando alla lista e ricercando si vede
+  // comunque il dato persistito vero.
+  const [categoriaCliente,setCategoriaCliente] = useState(cliente.categoria || "");
+  const [agenteId,setAgenteId] = useState(cliente.agente_profilo_id || "");
+  const [categorieEsistenti,setCategorieEsistenti] = useState([]);
+  const [utentiCommerciali,setUtentiCommerciali] = useState([]);
+  const [salvandoCampo,setSalvandoCampo] = useState(false);
+
+  useEffect(()=>{
+    sbGetAuth("clienti", "select=categoria&limit=5000", accessToken)
+      .then(dati=>{
+        const set = new Set();
+        (dati||[]).forEach(c=>{ if(c.categoria) set.add(c.categoria); });
+        setCategorieEsistenti([...set].sort((a,b)=>a.localeCompare(b)));
+      }).catch(()=>{});
+    chiamaUtentiInfo(accessToken)
+      .then(d=>setUtentiCommerciali((d?.utenti||[]).filter(u=>u.ruolo==="commerciale")))
+      .catch(()=>setUtentiCommerciali([]));
+  },[]);
+
+  async function salvaCampoCliente(campo, valore, setter){
+    setSalvandoCampo(true);
+    try{
+      await sbAuth("PATCH","clienti",`codice=eq.${cliente.codice}`,{[campo]:valore||null},accessToken);
+      setter(valore);
+    }catch(err){ setErroreLocale("Salvataggio non riuscito: "+err.message); }
+    setSalvandoCampo(false);
+  }
+
   if(attrezzaturaInModifica){
     return <ModificaAttrezzatura
       attrezzatura={attrezzaturaInModifica}
@@ -3281,13 +3328,65 @@ function ClienteDettaglio({cliente, onIndietro, preventivi, ordini, attrezzature
             ["Partita IVA", cliente.partita_iva],
             ["Codice fiscale", cliente.codice_fiscale],
             ["Filiale di riferimento", cliente.filiale],
-            ["Agente", cliente.agente],
           ].filter(([,v])=>v).map(([lbl,v])=>(
             <div key={lbl} style={{display:"flex",justifyContent:"space-between",padding:"10px 4px",borderBottom:`1px solid ${C.paperLine}`,fontSize:13}}>
               <span style={{color:C.steel}}>{lbl}</span>
               <span style={{fontWeight:600,textAlign:"right"}}>{v}</span>
             </div>
           ))}
+
+          {/* Categoria — testo libero già importato dall'Excel: qui è
+              modificabile scegliendo tra i valori già in uso altrove o
+              scrivendone uno nuovo, stesso meccanismo di CampoSelezionabile
+              usato per la tipologia prodotto. */}
+          <div style={{padding:"10px 4px",borderBottom:`1px solid ${C.paperLine}`}}>
+            <div style={{fontSize:13,color:C.steel,marginBottom:6}}>Categoria</div>
+            <select
+              value={categorieEsistenti.includes(categoriaCliente) ? categoriaCliente : "__nuovo__"}
+              disabled={salvandoCampo}
+              onChange={e=>{
+                const v = e.target.value==="__nuovo__" ? "" : e.target.value;
+                if(e.target.value!=="__nuovo__") salvaCampoCliente("categoria", v, setCategoriaCliente);
+                else setCategoriaCliente("");
+              }}
+              style={{...S.inp,fontSize:13,padding:"8px 10px"}}
+            >
+              <option value="__nuovo__">— nessuna / nuova categoria —</option>
+              {categoriaCliente && !categorieEsistenti.includes(categoriaCliente) && <option value={categoriaCliente}>{categoriaCliente} (attuale)</option>}
+              {categorieEsistenti.map(c=>(<option key={c} value={c}>{c}</option>))}
+            </select>
+            {!categorieEsistenti.includes(categoriaCliente) && (
+              <input
+                value={categoriaCliente}
+                onChange={e=>setCategoriaCliente(e.target.value)}
+                onBlur={()=>salvaCampoCliente("categoria", categoriaCliente.trim(), setCategoriaCliente)}
+                placeholder="Scrivi una nuova categoria…"
+                style={{...S.inp,fontSize:13,padding:"8px 10px",marginTop:6}}
+              />
+            )}
+          </div>
+
+          {/* Agente di riferimento — collegamento vero a un account
+              commerciale (agente_profilo_id), non più solo il nome scritto
+              a mano nell'Excel. Il vecchio testo importato (cliente.agente)
+              resta come suggerimento finché non viene collegato un account. */}
+          <div style={{padding:"10px 4px",borderBottom:`1px solid ${C.paperLine}`}}>
+            <div style={{fontSize:13,color:C.steel,marginBottom:6}}>Agente di riferimento</div>
+            <select
+              value={agenteId}
+              disabled={salvandoCampo}
+              onChange={e=>salvaCampoCliente("agente_profilo_id", e.target.value||null, setAgenteId)}
+              style={{...S.inp,fontSize:13,padding:"8px 10px"}}
+            >
+              <option value="">— nessun agente (filiale/partner) —</option>
+              {utentiCommerciali.map(u=>(<option key={u.id} value={u.id}>{u.nome} {u.cognome||""}</option>))}
+            </select>
+            {!agenteId && cliente.agente && (
+              <div style={{fontSize:11.5,color:C.steel,marginTop:6,fontStyle:"italic"}}>
+                Valore importato dall'Excel: «{cliente.agente}» — collegalo a un account se corrisponde a un commerciale.
+              </div>
+            )}
+          </div>
         </div>
       )}
 
