@@ -3209,6 +3209,19 @@ function ClienteDettaglio({cliente, onIndietro, preventivi, ordini, attrezzature
       .catch(()=>setUtentiCommerciali([]));
   },[]);
 
+  // Se l'agente già assegnato al cliente non compare tra le opzioni
+  // caricate (es. utenti-info restituisce un elenco diverso a seconda di
+  // chi chiama — un commerciale potrebbe non vedere sé stesso nell'elenco
+  // completo dei colleghi), aggiungiamo comunque una voce per lui, così la
+  // tendina non mostra mai "nessun agente" per un cliente che invece ce
+  // l'ha. Per l'utente corrente conosciamo il nome per certo (sessione);
+  // per un id diverso mostriamo un'etichetta generica ma non ingannevole.
+  const opzioniAgente = useMemo(()=>{
+    if(!agenteId || utentiCommerciali.some(u=>u.id===agenteId)) return utentiCommerciali;
+    const propria = agenteId === sessione?.user?.id;
+    return [...utentiCommerciali, { id: agenteId, nome: propria ? (sessione?.nome||"Tu") : "Agente assegnato", cognome: propria ? "" : "(nome non disponibile)" }];
+  },[utentiCommerciali, agenteId, sessione]);
+
   async function salvaCampoCliente(campo, valore, setter){
     setSalvandoCampo(true);
     try{
@@ -3412,7 +3425,7 @@ function ClienteDettaglio({cliente, onIndietro, preventivi, ordini, attrezzature
               style={{...S.inp,fontSize:13,padding:"8px 10px"}}
             >
               <option value="">— nessun agente (filiale/partner) —</option>
-              {utentiCommerciali.map(u=>(<option key={u.id} value={u.id}>{u.nome} {u.cognome||""}</option>))}
+              {opzioniAgente.map(u=>(<option key={u.id} value={u.id}>{u.nome} {u.cognome||""}</option>))}
             </select>
             {!agenteId && cliente.agente && (
               <div style={{fontSize:11.5,color:C.steel,marginTop:6,fontStyle:"italic"}}>
