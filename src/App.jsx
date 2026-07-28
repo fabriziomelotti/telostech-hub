@@ -13058,6 +13058,18 @@ function NotificheBell({ sessione, onApriTicket }){
           🔔 Attiva notifiche
         </button>
       )}
+      {permessoNotifiche==="denied" && (
+        // Una volta negato, nessun sito può richiedere di nuovo il permesso
+        // da solo (protezione del browser) — va riattivato a mano dalle
+        // Impostazioni del telefono. Qui ci limitiamo a spiegarlo, il
+        // pulsante "Attiva notifiche" non servirebbe a nulla in questo stato.
+        <span
+          title="Notifiche bloccate — riattivale da Impostazioni → Notifiche sul telefono"
+          style={{fontSize:10.5,color:C.danger,fontWeight:600,whiteSpace:"nowrap",cursor:"help"}}
+        >
+          🔕 Notifiche bloccate
+        </span>
+      )}
       <button onClick={()=>setAperto(a=>!a)} style={{background:"none",border:"none",cursor:"pointer",position:"relative",padding:6,display:"flex"}}>
         <Icon name="bell" size={19} color={C.charcoal}/>
         {nonLette>0 && <span style={{position:"absolute",top:2,right:2,background:C.danger,color:"#fff",fontSize:9,fontWeight:700,borderRadius:8,minWidth:15,height:15,display:"flex",alignItems:"center",justifyContent:"center",padding:"0 3px"}}>{nonLette>9?"9+":nonLette}</span>}
