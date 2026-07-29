@@ -15133,6 +15133,10 @@ function NotificheBell({ sessione, onApriTicket }){
   // pulsante "Attiva notifiche" qui sotto. Su iOS Safari "Notification"
   // non esiste affatto fuori da una PWA con Web Push configurato: in quel
   // caso il pulsante resta nascosto, nessun modo di aggirarlo da qui.
+  // NB: non più agganciata a nessun pulsante in questo componente (tolto
+  // "Attiva notifiche" su richiesta) — resta qui pronta per essere
+  // ricollegata altrove (es. in Impostazioni) se in futuro serve di nuovo
+  // un modo per chiedere il permesso push da dentro l'app.
   async function attivaNotifiche(){
     if(typeof Notification === "undefined") return;
     try{
@@ -15308,11 +15312,6 @@ function NotificheBell({ sessione, onApriTicket }){
 
   return (
     <div style={{position:"relative",flexShrink:0,display:"flex",alignItems:"center",gap:6}}>
-      {permessoNotifiche==="default" && (
-        <button onClick={attivaNotifiche} style={{background:"none",border:`1px solid ${C.paperLine}`,borderRadius:14,padding:"4px 9px",fontSize:11,color:C.ink,cursor:"pointer",fontWeight:600,whiteSpace:"nowrap"}}>
-          🔔 Attiva notifiche
-        </button>
-      )}
       {permessoNotifiche==="denied" && (
         // Una volta negato, nessun sito può richiedere di nuovo il permesso
         // da solo (protezione del browser) — va riattivato a mano dalle
