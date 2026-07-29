@@ -777,21 +777,22 @@ export default function App(){
       .catch(err => console.warn("Margini per categoria non raggiungibili:", err.message));
   },[role]);
 
-  // Badge rosso accanto a "Ticket" nel menu: quanti messaggi/notifiche
-  // legate a un ticket sono ancora da leggere per l'utente corrente. Stessa
-  // tabella "notifiche" già usata dalla campanella (NotificheBell) e da
-  // invia-push, qui interrogata a parte solo per il conteggio, con lo
-  // stesso ritmo di aggiornamento (ogni 45s) — la campanella resta
-  // indipendente, questo è solo il pallino sul menu.
+  // Badge rosso accanto a "Ticket" nel menu: quanti ticket sono in attesa
+  // di una risposta dallo staff (stesso identico criterio del tag "in
+  // attesa di risposta" già mostrato nell'elenco ticket: ultimo messaggio
+  // arrivato dal cliente, ticket non chiuso). Volutamente NON basato sulla
+  // tabella "notifiche" — verificato che oggi nessun punto del sistema
+  // scrive lì quando arriva un ticket nuovo o un messaggio cliente, quindi
+  // quella tabella qui sarebbe sempre vuota. Contando direttamente i ticket
+  // veri il badge funziona a prescindere da quel meccanismo.
   const [ticketNonLetti,setTicketNonLetti] = useState(0);
   useEffect(()=>{
     if(!role || role==="cliente") return;
-    const mioId = sessione?.user?.id;
     const accessToken = trovaAccessToken(sessione);
-    if(!mioId || !accessToken) return;
+    if(!accessToken) return;
     let annullato = false;
     function carica(){
-      sbGetAuth("notifiche", `select=id&profilo_id=eq.${mioId}&letta=eq.false&ticket_id=not.is.null`, accessToken)
+      sbGetAuth("ticket_assistenza", "select=id&stato=neq.Chiuso&ultimo_messaggio_da=eq.cliente", accessToken)
         .then(dati => { if(!annullato) setTicketNonLetti((dati||[]).length); })
         .catch(()=>{}); // il badge è solo un avviso in più, non deve mai rompere il resto dell'app
     }
