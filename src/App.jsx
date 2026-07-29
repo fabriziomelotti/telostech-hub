@@ -120,6 +120,11 @@ async function sbGetAuth(table, params = "", accessToken) {
   if (!accessToken) throw new Error("Sessione non trovata: ricarica la pagina e rieffettua il login.");
   const res = await fetch(`${SUPABASE_URL}/rest/v1/${table}?${params}`, {
     headers: { ...sbHeaders, "Authorization": `Bearer ${accessToken}` },
+    // "no-store": mai servire una risposta dalla cache del browser (o del
+    // service worker, se anche lui rispetta cache:'no-store' sulla request
+    // che gli arriva) — dati come notifiche/ticket/badge devono sempre
+    // essere quelli veri al momento della chiamata, mai una copia vecchia.
+    cache: "no-store",
   });
   if (!res.ok) {
     // Legge il corpo dell'errore (PostgREST restituisce {message,details,hint,code})
@@ -358,6 +363,10 @@ const MOTIVI_SALTO = {
   rimandata: "Vendita rimandata",
   altro: "Altro",
 };
+
+// Filiali con un proprio Magazzino Demo (Assistenza) — 4 valori fissi,
+// stesso principio delle altre liste chiuse come MOTIVI_SALTO qui sopra.
+const FILIALI_DEMO = ["Torino", "Alessandria", "Modena", "Castel San Giovanni"];
 
 // Antepone il precodice a 3 lettere del marchio (es. TEXA→TEX) al codice
 // prodotto per la visualizzazione — es. "TEX" + "Z20410" → "TEXZ20410".
@@ -629,6 +638,9 @@ export default function App(){
   // righe del carrello nel form Nuovo ordine". Un semplice booleano
   // "richiesta in corso" invece di duplicare lo stato del carrello stesso.
   const [avviaOrdineDaCart, setAvviaOrdineDaCart] = useState(false);
+  // Scorciatoia dalla dashboard di un tecnico: "porta subito al planning
+  // settimanale", stesso principio del booleano sopra per il carrello.
+  const [apriPlanningTecnico, setApriPlanningTecnico] = useState(false);
   const [preventivi, setPreventivi] = useState([]);
   const [ordini, setOrdini] = useState([]);
   const [attrezzature, setAttrezzature] = useState([]);
@@ -936,7 +948,7 @@ export default function App(){
         </div>
 
         <div style={S.content}>
-          {area==="home" && <Home r={r} role={role} setArea={setArea} isMobile={isMobile} preventivi={preventivi} interventi={interventi} promemoria={promemoria} sessione={sessione}/>}
+          {area==="home" && <Home r={r} role={role} setArea={setArea} isMobile={isMobile} preventivi={preventivi} interventi={interventi} promemoria={promemoria} sessione={sessione} setApriPlanningTecnico={setApriPlanningTecnico}/>}
           {area==="ai" && <AIChat msgs={msgs} msgInput={msgInput} setMsgInput={setMsgInput} sendMsg={sendMsg} aiTyping={aiTyping}/>}
           {area==="prodotti" && <Prodotti cart={cart} setCart={setCart} catalog={catalog} catalogLoading={catalogLoading} sessione={sessione} ruolo={role} setCatalog={setCatalog} setArea={setArea} precodici={precodici}/>}
           {area==="clienti" && <Clienti sessione={sessione} preventivi={preventivi} ordini={ordini} attrezzature={attrezzature} setAttrezzature={setAttrezzature} interventi={interventi} setInterventi={setInterventi} catalog={catalog} ruolo={role}/>}
@@ -944,7 +956,7 @@ export default function App(){
           {area==="preventivi" && <Preventivi cart={cart} setCart={setCart} preventivi={preventivi} setPreventivi={setPreventivi} setOrdini={setOrdini} setArea={setArea} setAvviaOrdineDaCart={setAvviaOrdineDaCart} ruolo={role} catalog={catalog} sessione={sessione} precodici={precodici} isMobile={isMobile}/>}
           {area==="ordini" && <Ordini ordini={ordini} setOrdini={setOrdini} preventivi={preventivi} setPreventivi={setPreventivi} setInterventi={setInterventi} catalog={catalog} sessione={sessione} ruolo={role} precodici={precodici} isMobile={isMobile} cart={cart} setCart={setCart} avviaOrdineDaCart={avviaOrdineDaCart} setAvviaOrdineDaCart={setAvviaOrdineDaCart}/>}
           {area==="statistiche" && <Statistiche preventivi={preventivi} ordini={ordini} catalog={catalog} sessione={sessione} ruolo={role}/>}
-          {area==="interventi" && <Interventi interventi={interventi} setInterventi={setInterventi} attrezzature={attrezzature} sessione={sessione} setArea={setArea} interventoDaCompletare={interventoDaCompletare} setInterventoDaCompletare={setInterventoDaCompletare} catalog={catalog} ruolo={role} precodici={precodici} isMobile={isMobile}/>}
+          {area==="interventi" && <Interventi interventi={interventi} setInterventi={setInterventi} attrezzature={attrezzature} sessione={sessione} setArea={setArea} interventoDaCompletare={interventoDaCompletare} setInterventoDaCompletare={setInterventoDaCompletare} catalog={catalog} ruolo={role} precodici={precodici} isMobile={isMobile} apriPlanningTecnico={apriPlanningTecnico} setApriPlanningTecnico={setApriPlanningTecnico}/>}
           {area==="ticket" && <TicketAssistenza sessione={sessione} ruolo={role} ticketDaAprire={ticketDaAprire} setTicketDaAprire={setTicketDaAprire} catalog={catalog}/>}
           {area==="admin" && <PannelloAdmin ruolo={role} sessione={sessione} catalog={catalog}/>}
           {area==="gestione" && <PannelloGestione setCatalog={setCatalog} ruolo={role} sessione={sessione} catalog={catalog}/>}
@@ -1083,7 +1095,7 @@ function contaAttenzionePromemoria(ruolo, preventivi, interventi, promemoriaProp
   return n;
 }
 
-function Home({r,role,setArea,isMobile,preventivi,interventi,promemoria,sessione}){
+function Home({r,role,setArea,isMobile,preventivi,interventi,promemoria,sessione,setApriPlanningTecnico}){
   const isT=role==="tecnico";
   const ora = new Date();
   const saluto = ora.getHours()<12?"Buongiorno":ora.getHours()<18?"Buon pomeriggio":"Buonasera";
@@ -1165,9 +1177,10 @@ function Home({r,role,setArea,isMobile,preventivi,interventi,promemoria,sessione
           ["clienti","◉","Clienti"],
           ["promemoria","⚑","Promemoria",contaPromemoria],
           ["ai","✦","TESSA"],
-          [isT?"interventi":"preventivi",isT?"⚒":"▤",isT?"Assistenza":"Preventivo"]
+          [isT?"interventi":"preventivi",isT?"⚒":"▤",isT?"Assistenza":"Preventivo"],
+          ...(isT ? [["planning","📅","Planning"]] : []),
         ].map(([id,icon,lbl,badge])=>(
-          <div key={id} onClick={()=>setArea(id)} style={{
+          <div key={id} onClick={()=>{ if(id==="planning") setApriPlanningTecnico(true); setArea(id==="planning"?"interventi":id); }} style={{
             position:"relative",
             background:"#fff", border:`1px solid ${C.paperLine}`, borderRadius:8,
             padding:"16px 12px", cursor:"pointer", textAlign:"center",
@@ -5310,6 +5323,112 @@ async function generaRapportoInterventoPDF(i, meta={}){
 
 </body></html>`;
   await condividiOStampaPdf(html, `Rapporto_intervento_${codiceMostrato}.pdf`, { titolo: `Rapporto intervento ${codiceMostrato}`, testo: i.cliente_nome || "" });
+}
+
+// ─── DOCUMENTO PRESTITO PRODOTTO DEMO ──────────────────────────────────────
+// Stesso impianto grafico del rapporto intervento (stessa @page, stessi
+// stili firma-box) — un solo prodotto per documento, generato al momento
+// della consegna. La firma è richiesta solo per i prestiti a un cliente
+// (per i colleghi il campo semplicemente non compare, prestito.firma_*
+// resta null — vedi conferma di Fabrizio: "per i colleghi non serve").
+async function generaDocumentoPrestitoDemoPDF(prestito, prodotto, meta={}){
+  const oggi = new Date().toLocaleDateString("it-IT");
+  const codiceMostrato = `PD-${(prestito.id||"").slice(0,8) || Date.now().toString().slice(-6)}`;
+
+  const html = `<!DOCTYPE html><html><head><meta charset="utf-8"/><title>Prestito prodotto demo ${codiceMostrato}</title>
+<style>
+  @page{size:A4;margin:0}
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{width:210mm}
+  body{font-family:Arial,sans-serif;color:#232323;font-size:12.5px}
+  .pagina{width:210mm;min-height:297mm;padding:6mm 9mm;display:flex;flex-direction:column}
+  .corpo-contenuto{flex:1}
+  .hd-content{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;padding-bottom:6px;border-bottom:2px solid #162758}
+  .hd-content .logo-telos-spa{height:34px}
+  .hd-content .badge-partner{height:26px}
+  .riga-titolo{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;margin-bottom:8px}
+  .titolo-ordine{font-size:19px;font-weight:700;color:#162758}
+  .meta-box{display:grid;grid-template-columns:auto auto;column-gap:10px;row-gap:3px;font-size:11px;justify-content:end;flex-shrink:0}
+  .meta-box .etichetta{color:#7C879E;text-align:right}
+  .meta-box .valore{text-align:left;font-weight:600;white-space:nowrap}
+  .info-box{margin-bottom:16px}
+  .info-box .lbl{font-size:10px;color:#7C879E;text-transform:uppercase;letter-spacing:.03em;margin-bottom:2px}
+  .info-box .val{font-size:12px;color:#232323;white-space:pre-line;line-height:1.5}
+  .footer-legale{font-size:9px;color:#9AA3AB;border-top:1px solid #E3E5EA;padding-top:5px;margin-top:8px}
+  .footer-legale b{color:#5B6770}
+  .firma-box{margin-top:24px;border:1px solid #162758;border-radius:6px;padding:16px}
+  .firma-box .titolo{font-weight:700;font-size:12px;margin-bottom:6px}
+  .firma-digitale img{max-width:200px;max-height:80px;display:block;margin-top:6px}
+  .firma-digitale-nota{font-size:9.5px;color:#7C879E;margin-top:6px;font-style:italic}
+  .firma-linee{display:flex;justify-content:space-between;font-size:10px;color:#7C879E;margin-top:10px}
+  .firma-linee div{width:45%;border-top:1px solid #232323;padding-top:4px}
+  .avviso-scadenza{background:rgba(217,164,65,0.1);border:1px solid #D9A441;border-radius:6px;padding:10px 14px;font-size:12.5px;font-weight:700;color:#8A6416;margin-bottom:16px}
+</style></head><body>
+
+<div class="pagina">
+  <div class="corpo-contenuto">
+    <div class="hd-content">
+      <img class="logo-telos-spa" src="${LOGO_TELOS_SPA}" alt="Telos SPA"/>
+      <img class="badge-partner" src="${LOGO_BADGE_PARTNER}" alt=""/>
+    </div>
+    <div class="riga-titolo">
+      <div class="titolo-ordine">PRESTITO PRODOTTO DEMO</div>
+      <div class="meta-box">
+        <div class="etichetta">Numero</div><div class="valore">${codiceMostrato}</div>
+        <div class="etichetta">Filiale</div><div class="valore">${prestito.filiale||""}</div>
+        <div class="etichetta">Data uscita</div><div class="valore">${prestito.data_uscita ? new Date(prestito.data_uscita).toLocaleDateString("it-IT") : oggi}${prestito.ora_uscita?` · ${prestito.ora_uscita}`:""}</div>
+      </div>
+    </div>
+
+    <div class="avviso-scadenza">Rientro previsto entro il ${prestito.scadenza_rientro ? new Date(prestito.scadenza_rientro).toLocaleDateString("it-IT") : "—"}</div>
+
+    <div class="info-box">
+      <div class="lbl">Prodotto</div>
+      <div class="val">
+        <b>${prodotto.marca?prodotto.marca+" — ":""}${prodotto.modello}</b>
+        ${prodotto.numero_serie?`<br/>S/N ${prodotto.numero_serie}`:""}
+        ${prodotto.denominazione?`<br/>${prodotto.denominazione}`:""}
+        ${prodotto.codice?`<br/>Codice: ${prodotto.codice}`:""}
+      </div>
+    </div>
+
+    <div class="info-box">
+      <div class="lbl">Ritirato da</div>
+      <div class="val">
+        <b>${prestito.nome_debitore||""}</b>
+        ${prestito.tipo_debitore==="cliente" && prestito.cliente_nome ? `<br/>${prestito.cliente_nome}` : ""}
+        ${prestito.tipo_debitore==="collega" ? `<br/>(collega Telos)` : ""}
+      </div>
+    </div>
+
+    <div class="info-box">
+      <div class="lbl">Consegnato da</div>
+      <div class="val">${prestito.creato_da_nome || meta.operatoreNome || "—"}</div>
+    </div>
+
+    ${prestito.tipo_debitore==="cliente" ? `
+    <div class="firma-box">
+      <div class="titolo">Presa visione e conferma del cliente</div>
+      ${prestito.firma_cliente ? `
+      <div class="firma-digitale">
+        <div style="font-size:11px;color:#5B6770;margin-bottom:2px">Nome e cognome: <b>${prestito.firma_nome||"—"}</b></div>
+        <img src="${prestito.firma_cliente}" alt="Firma cliente"/>
+        <div class="firma-digitale-nota">Firmato digitalmente${prestito.firma_data ? ` il ${new Date(prestito.firma_data).toLocaleString("it-IT",{dateStyle:"short",timeStyle:"short"})}` : ""} — il prodotto sopra indicato dovrà rientrare in filiale entro la data di scadenza riportata.</div>
+      </div>
+      ` : `
+      <div class="firma-linee"><div>Luogo e data</div><div>Nome, cognome e firma del cliente</div></div>
+      `}
+    </div>` : ""}
+  </div>
+
+  <div class="footer-legale">
+    <b>TELOS S.P.A.</b> P.I./C.F. 00525920013 - capitale sociale € 3.586.191,18 i.v. - REA TO-457465 | www.telosspa.it<br/>
+    <b>SEDE Legale:</b> VENARIA (TO) - 10078 - Via Aosta 5 - Tel. 011.4242932 · <b>Amministrazione:</b> amministrazione.torino@telosgroup.it
+  </div>
+</div>
+
+</body></html>`;
+  await condividiOStampaPdf(html, `Prestito_demo_${codiceMostrato}.pdf`, { titolo: `Prestito prodotto demo ${codiceMostrato}`, testo: prestito.nome_debitore || "" });
 }
 
 // ─── RICERCA PRODOTTI INLINE (per aggiungere articoli a un preventivo bozza) ──
@@ -10976,7 +11095,355 @@ function DettaglioIntervento({ intervento, attrezzature, sessione, onIndietro, o
   );
 }
 
-function Interventi({interventi, setInterventi, attrezzature, sessione, setArea, interventoDaCompletare, setInterventoDaCompletare, catalog, ruolo, precodici, isMobile}){
+// ═══════════════════════════════════════════════════════════════════════════
+// MAGAZZINO DEMO (Assistenza) — inventario prodotti demo per filiale, con
+// gestione di uscite/entrate (prestiti) a clienti o colleghi.
+// Prestito a un cliente: richiede firma (stesso meccanismo di preventivi/
+// ordini/interventi, componente FirmaPad) e genera un documento PDF con
+// scadenza di rientro; alla conferma viene creato anche un promemoria per
+// quella data (tabella "promemoria" esistente — nessuna novità lì). Se il
+// prodotto non rientra, un sollecito automatico (cron lato database, vedi
+// migrazione dedicata) crea un nuovo promemoria ogni 3 giorni finché il
+// prestito non viene chiuso.
+// Prestito a un collega: nessuna firma richiesta (confermato da Fabrizio).
+// ═══════════════════════════════════════════════════════════════════════════
+function MagazzinoDemo({sessione, onIndietro}){
+  const accessToken = trovaAccessToken(sessione);
+  const mioId = sessione?.user?.id;
+  const [prodotti,setProdotti] = useState(null); // null = non ancora caricato
+  const [prestiti,setPrestiti] = useState(null);
+  const [erroreSync,setErroreSync] = useState("");
+  const [vista,setVista] = useState("home"); // home | filiale | prodotto | nuovo-prodotto
+  const [filialeSel,setFilialeSel] = useState(null);
+  const [prodottoSelId,setProdottoSelId] = useState(null);
+
+  function ricarica(){
+    sbGetAuth("prodotti_demo","select=*&order=filiale.asc,marca.asc,modello.asc",accessToken)
+      .then(setProdotti).catch(err=>{ setProdotti([]); setErroreSync("Prodotti demo non raggiungibili: "+err.message); });
+    sbGetAuth("prestiti_demo","select=*&order=creato_il.desc&limit=500",accessToken)
+      .then(setPrestiti).catch(err=>{ setPrestiti([]); setErroreSync("Prestiti demo non raggiungibili: "+err.message); });
+  }
+  useEffect(()=>{ ricarica(); },[]);
+
+  const prodottoSel = (prodotti||[]).find(p=>p.id===prodottoSelId) || null;
+  const prestitoAttivoSel = prodottoSel ? (prestiti||[]).find(p=>p.prodotto_demo_id===prodottoSel.id && p.stato==="attivo") : null;
+
+  function contaFiliale(filiale){
+    const elenco = (prodotti||[]).filter(p=>p.filiale===filiale);
+    return { totale: elenco.length, inPrestito: elenco.filter(p=>p.stato==="in_prestito").length };
+  }
+
+  // ── Nuovo prodotto ──────────────────────────────────────────────────────
+  const [nfMarca,setNfMarca] = useState("");
+  const [nfModello,setNfModello] = useState("");
+  const [nfCodice,setNfCodice] = useState("");
+  const [nfSerie,setNfSerie] = useState("");
+  const [nfDenominazione,setNfDenominazione] = useState("");
+  const [nfNote,setNfNote] = useState("");
+  const [salvandoProdotto,setSalvandoProdotto] = useState(false);
+  function azzeraFormProdotto(){
+    setNfMarca(""); setNfModello(""); setNfCodice(""); setNfSerie(""); setNfDenominazione(""); setNfNote("");
+  }
+  async function creaProdotto(){
+    if(!nfModello.trim() || !filialeSel) return;
+    setSalvandoProdotto(true); setErroreSync("");
+    try{
+      const payload = {
+        filiale: filialeSel, marca: nfMarca.trim()||null, modello: nfModello.trim(),
+        codice: nfCodice.trim()||null, numero_serie: nfSerie.trim()||null,
+        denominazione: nfDenominazione.trim()||null, note: nfNote.trim()||null,
+        creato_da_nome: sessione?.nome || null,
+      };
+      const [salvato] = await sbAuth("POST","prodotti_demo","",payload,accessToken);
+      setProdotti(prev=>[...(prev||[]), salvato]);
+      azzeraFormProdotto();
+      setVista("filiale");
+    }catch(err){
+      setErroreSync("Creazione non riuscita: "+err.message);
+    }
+    setSalvandoProdotto(false);
+  }
+
+  // ── Prestito (uscita) ───────────────────────────────────────────────────
+  const [prestandoAperto,setPrestandoAperto] = useState(false);
+  const [tipoDebitore,setTipoDebitore] = useState("cliente"); // cliente | collega
+  const [clienteInfo,setClienteInfo] = useState({});
+  const [nomeDebitore,setNomeDebitore] = useState("");
+  const [scadenzaRientro,setScadenzaRientro] = useState("");
+  const [oraUscita,setOraUscita] = useState("");
+  const [firmaImg,setFirmaImg] = useState(null);
+  const [mostraFirma,setMostraFirma] = useState(false);
+  const [salvandoPrestito,setSalvandoPrestito] = useState(false);
+  function azzeraFormPrestito(){
+    setPrestandoAperto(false); setTipoDebitore("cliente"); setClienteInfo({});
+    setNomeDebitore(""); setScadenzaRientro(""); setOraUscita(""); setFirmaImg(null); setMostraFirma(false);
+  }
+  async function confermaPrestito(){
+    if(!prodottoSel || !nomeDebitore.trim() || !scadenzaRientro) return;
+    if(tipoDebitore==="cliente" && !firmaImg) return;
+    setSalvandoPrestito(true); setErroreSync("");
+    try{
+      const payload = {
+        prodotto_demo_id: prodottoSel.id, filiale: prodottoSel.filiale,
+        tipo_debitore: tipoDebitore,
+        cliente_codice: tipoDebitore==="cliente" ? (clienteInfo.cliente_codice||null) : null,
+        cliente_nome: tipoDebitore==="cliente" ? (clienteInfo.cliente||null) : null,
+        nome_debitore: nomeDebitore.trim(),
+        ora_uscita: oraUscita.trim()||null,
+        scadenza_rientro: scadenzaRientro,
+        firma_cliente: tipoDebitore==="cliente" ? firmaImg : null,
+        firma_nome: tipoDebitore==="cliente" ? nomeDebitore.trim() : null,
+        firma_data: tipoDebitore==="cliente" ? new Date().toISOString() : null,
+        creato_da_id: mioId || null,
+        creato_da_nome: sessione?.nome || null,
+      };
+      const [salvato] = await sbAuth("POST","prestiti_demo","",payload,accessToken);
+      await sbAuth("PATCH","prodotti_demo",`id=eq.${prodottoSel.id}`,{stato:"in_prestito"},accessToken);
+      setPrestiti(prev=>[salvato,...(prev||[])]);
+      setProdotti(prev=>(prev||[]).map(p=>p.id===prodottoSel.id?{...p,stato:"in_prestito"}:p));
+      // Promemoria per la data di rientro attesa — stesso identico
+      // meccanismo di un promemoria creato a mano, il sollecito ogni 3
+      // giorni se non rientra in tempo lo gestisce poi il cron lato DB.
+      try{
+        await sbAuth("POST","promemoria","",{
+          testo: `Ritiro prodotto demo: ${prodottoSel.marca?prodottoSel.marca+" ":""}${prodottoSel.modello} — prestato a ${nomeDebitore.trim()} (${prodottoSel.filiale})`,
+          scadenza: scadenzaRientro,
+          autore_nome: sessione?.nome || null,
+          autore_id: mioId || null,
+          cliente_codice: tipoDebitore==="cliente" ? (clienteInfo.cliente_codice||null) : null,
+          cliente_nome: tipoDebitore==="cliente" ? (clienteInfo.cliente||null) : null,
+        },accessToken);
+      }catch{ /* il prestito è comunque salvato — il promemoria è un valore aggiunto, non deve bloccare */ }
+      await generaDocumentoPrestitoDemoPDF(salvato, prodottoSel, {operatoreNome: sessione?.nome});
+      azzeraFormPrestito();
+    }catch(err){
+      setErroreSync("Registrazione prestito non riuscita: "+err.message);
+    }
+    setSalvandoPrestito(false);
+  }
+
+  // ── Rientro ──────────────────────────────────────────────────────────────
+  const [salvandoRientro,setSalvandoRientro] = useState(false);
+  async function segnaRientrato(){
+    if(!prestitoAttivoSel || !prodottoSel) return;
+    setSalvandoRientro(true); setErroreSync("");
+    try{
+      await sbAuth("PATCH","prestiti_demo",`id=eq.${prestitoAttivoSel.id}`,{stato:"concluso",data_rientro_effettivo:new Date().toISOString()},accessToken);
+      await sbAuth("PATCH","prodotti_demo",`id=eq.${prodottoSel.id}`,{stato:"in_magazzino"},accessToken);
+      setPrestiti(prev=>(prev||[]).map(p=>p.id===prestitoAttivoSel.id?{...p,stato:"concluso",data_rientro_effettivo:new Date().toISOString()}:p));
+      setProdotti(prev=>(prev||[]).map(p=>p.id===prodottoSel.id?{...p,stato:"in_magazzino"}:p));
+    }catch(err){
+      setErroreSync("Registrazione rientro non riuscita: "+err.message);
+    }
+    setSalvandoRientro(false);
+  }
+
+  const storicoProdottoSel = prodottoSel ? (prestiti||[]).filter(p=>p.prodotto_demo_id===prodottoSel.id && p.stato==="concluso")
+    .sort((a,b)=>new Date(b.creato_il||0)-new Date(a.creato_il||0)) : [];
+
+  if(prodotti===null || prestiti===null){
+    return <div style={{padding:"2rem 0",textAlign:"center",color:"#9AA3AB",fontSize:13}}>Carico il magazzino demo…</div>;
+  }
+
+  // ── Vista: nuovo prodotto ────────────────────────────────────────────────
+  if(vista==="nuovo-prodotto"){
+    return (
+      <div>
+        <button onClick={()=>{setVista("filiale");azzeraFormProdotto();}} style={{...S.btnS,marginBottom:14}}>← Annulla</button>
+        <div style={S.eyebrow}>Nuovo prodotto demo — {filialeSel}</div>
+        <div style={{height:10}}/>
+        {erroreSync && <div style={{fontSize:12,color:C.danger,background:"rgba(200,75,58,0.08)",borderRadius:6,padding:"9px 11px",marginBottom:14}}>⚠ {erroreSync}</div>}
+        <input value={nfMarca} onChange={e=>setNfMarca(e.target.value)} placeholder="Marca" style={{...S.inp,marginBottom:8}}/>
+        <input value={nfModello} onChange={e=>setNfModello(e.target.value)} placeholder="Modello *" style={{...S.inp,marginBottom:8}} autoFocus/>
+        <input value={nfCodice} onChange={e=>setNfCodice(e.target.value)} placeholder="Codice (facoltativo)" style={{...S.inp,marginBottom:8}}/>
+        <input value={nfSerie} onChange={e=>setNfSerie(e.target.value)} placeholder="Numero di serie (facoltativo)" style={{...S.inp,marginBottom:8}}/>
+        <input value={nfDenominazione} onChange={e=>setNfDenominazione(e.target.value)} placeholder="Denominazione / tag interno (facoltativo)" style={{...S.inp,marginBottom:8}}/>
+        <textarea value={nfNote} onChange={e=>setNfNote(e.target.value)} placeholder="Note (facoltative)" rows={2} style={{...S.inp,resize:"vertical",marginBottom:14}}/>
+        <button disabled={!nfModello.trim()||salvandoProdotto} onClick={creaProdotto} style={{...S.btnAccent,width:"100%",padding:"12px",opacity:nfModello.trim()?1:0.5}}>
+          {salvandoProdotto?"Salvo…":"✓ Aggiungi al magazzino"}
+        </button>
+      </div>
+    );
+  }
+
+  // ── Vista: dettaglio prodotto ────────────────────────────────────────────
+  if(vista==="prodotto" && prodottoSel){
+    return (
+      <div>
+        <button onClick={()=>{setVista("filiale");setProdottoSelId(null);azzeraFormPrestito();}} style={{...S.btnS,marginBottom:14}}>← Torna al magazzino {prodottoSel.filiale}</button>
+        {erroreSync && <div style={{fontSize:12,color:C.danger,background:"rgba(200,75,58,0.08)",borderRadius:6,padding:"9px 11px",marginBottom:14}}>⚠ {erroreSync}</div>}
+
+        <div style={{...S.card,cursor:"default",marginBottom:16}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:10,marginBottom:8}}>
+            <div>
+              <div style={{fontWeight:700,fontSize:15}}>{prodottoSel.marca?`${prodottoSel.marca} — `:""}{prodottoSel.modello}</div>
+              {prodottoSel.numero_serie && <div className="tnum" style={{fontSize:11.5,color:"#9AA3AB",fontFamily:F_MONO,marginTop:2}}>S/N {prodottoSel.numero_serie}</div>}
+              {prodottoSel.denominazione && <div style={{fontSize:11.5,color:"#9AA3AB",marginTop:1}}>{prodottoSel.denominazione}</div>}
+            </div>
+            <Tag tone={prodottoSel.stato==="in_magazzino"?"ok":"warn"}>{prodottoSel.stato==="in_magazzino"?"In magazzino":"In prestito"}</Tag>
+          </div>
+          {prodottoSel.note && <div style={{fontSize:12,color:C.steel,marginTop:6,whiteSpace:"pre-line"}}>{prodottoSel.note}</div>}
+        </div>
+
+        {prodottoSel.stato==="in_prestito" && prestitoAttivoSel && (
+          <div style={{...S.card,cursor:"default",marginBottom:16,border:`1px solid ${C.warn}`}}>
+            <div style={{fontSize:12.5,fontWeight:700,marginBottom:8}}>Prestito attivo</div>
+            <div style={{fontSize:12.5,marginBottom:3}}>
+              <b>{prestitoAttivoSel.nome_debitore}</b>{prestitoAttivoSel.tipo_debitore==="cliente" && prestitoAttivoSel.cliente_nome ? ` — ${prestitoAttivoSel.cliente_nome}` : " (collega)"}
+            </div>
+            <div style={{fontSize:11.5,color:"#9AA3AB"}}>
+              Uscito il {new Date(prestitoAttivoSel.data_uscita).toLocaleDateString("it-IT")}{prestitoAttivoSel.ora_uscita?` · ${prestitoAttivoSel.ora_uscita}`:""} — rientro previsto entro il {new Date(prestitoAttivoSel.scadenza_rientro).toLocaleDateString("it-IT")}
+            </div>
+            {new Date(prestitoAttivoSel.scadenza_rientro) < new Date(new Date().toDateString()) && (
+              <div style={{fontSize:11.5,color:C.danger,fontWeight:600,marginTop:6}}>⚠ Scaduto — rientro non ancora registrato</div>
+            )}
+            <button disabled={salvandoRientro} onClick={segnaRientrato} style={{...S.btnAccent,width:"100%",padding:"11px",marginTop:12,fontWeight:700}}>
+              {salvandoRientro?"…":"✓ Segna come rientrato"}
+            </button>
+          </div>
+        )}
+
+        {prodottoSel.stato==="in_magazzino" && !prestandoAperto && (
+          <button onClick={()=>setPrestandoAperto(true)} style={{...S.btnAccent,width:"100%",padding:"12px",fontWeight:700,marginBottom:16}}>Presta questo prodotto</button>
+        )}
+
+        {prodottoSel.stato==="in_magazzino" && prestandoAperto && (
+          <div style={{...S.card,cursor:"default",border:`1px solid ${C.ink}`,marginBottom:16}}>
+            <div style={{fontSize:13,fontWeight:700,marginBottom:10}}>Registra prestito</div>
+
+            <div style={{display:"flex",gap:6,marginBottom:12}}>
+              <button onClick={()=>setTipoDebitore("cliente")} style={{
+                flex:1,border:`1px solid ${tipoDebitore==="cliente"?C.ink:C.paperLine}`,borderRadius:7,padding:"9px",fontSize:12.5,cursor:"pointer",fontWeight:tipoDebitore==="cliente"?600:400,
+                background:tipoDebitore==="cliente"?C.ink:"#fff",color:tipoDebitore==="cliente"?"#fff":"#5B6770",
+              }}>Cliente</button>
+              <button onClick={()=>setTipoDebitore("collega")} style={{
+                flex:1,border:`1px solid ${tipoDebitore==="collega"?C.ink:C.paperLine}`,borderRadius:7,padding:"9px",fontSize:12.5,cursor:"pointer",fontWeight:tipoDebitore==="collega"?600:400,
+                background:tipoDebitore==="collega"?C.ink:"#fff",color:tipoDebitore==="collega"?"#fff":"#5B6770",
+              }}>Collega</button>
+            </div>
+
+            {tipoDebitore==="cliente" && (
+              <div style={{marginBottom:12}}>
+                <SelezioneClienteEstesa valore={clienteInfo} onCambia={setClienteInfo} sessione={sessione}/>
+              </div>
+            )}
+
+            <input value={nomeDebitore} onChange={e=>setNomeDebitore(e.target.value)} placeholder="Nome e cognome di chi ritira *" style={{...S.inp,marginBottom:8}}/>
+            <div style={{display:"flex",gap:8,marginBottom:12}}>
+              <div style={{flex:1}}>
+                <div style={{fontSize:11,color:"#9AA3AB",marginBottom:4}}>Scadenza rientro *</div>
+                <input type="date" value={scadenzaRientro} onChange={e=>setScadenzaRientro(e.target.value)} style={S.inp}/>
+              </div>
+              <div style={{flex:1}}>
+                <div style={{fontSize:11,color:"#9AA3AB",marginBottom:4}}>Ora uscita (facoltativa)</div>
+                <input type="time" value={oraUscita} onChange={e=>setOraUscita(e.target.value)} style={S.inp}/>
+              </div>
+            </div>
+
+            {tipoDebitore==="cliente" && (
+              <div style={{marginBottom:12}}>
+                <div style={{fontSize:12.5,fontWeight:700,marginBottom:6}}>Firma del cliente *</div>
+                {firmaImg ? (
+                  <div>
+                    <img src={firmaImg} alt="Firma" style={{maxWidth:220,border:`1px solid ${C.paperLine}`,borderRadius:6,background:"#fff",display:"block",marginBottom:6}}/>
+                    <button onClick={()=>{setFirmaImg(null);setMostraFirma(true);}} style={{background:"none",border:"none",color:C.steel,fontSize:11.5,cursor:"pointer",textDecoration:"underline"}}>Rifirma</button>
+                  </div>
+                ) : mostraFirma ? (
+                  <FirmaPad onSalva={dataUrl=>{setFirmaImg(dataUrl);setMostraFirma(false);}} onAnnulla={()=>setMostraFirma(false)}/>
+                ) : (
+                  <button onClick={()=>setMostraFirma(true)} style={S.btnS}>✍️ Raccogli firma</button>
+                )}
+              </div>
+            )}
+
+            <div style={{display:"flex",gap:8}}>
+              <button
+                disabled={salvandoPrestito || !nomeDebitore.trim() || !scadenzaRientro || (tipoDebitore==="cliente" && !firmaImg)}
+                onClick={confermaPrestito}
+                style={{...S.btnAccent,flex:1,padding:"12px",fontWeight:700,opacity:(nomeDebitore.trim()&&scadenzaRientro&&(tipoDebitore!=="cliente"||firmaImg))?1:0.5}}
+              >
+                {salvandoPrestito?"Registro…":"✓ Conferma prestito"}
+              </button>
+              <button onClick={azzeraFormPrestito} style={S.btnS}>Annulla</button>
+            </div>
+          </div>
+        )}
+
+        {storicoProdottoSel.length>0 && (
+          <div style={{marginTop:8}}>
+            <div style={{...S.eyebrow,marginBottom:8}}>Storico prestiti ({storicoProdottoSel.length})</div>
+            {storicoProdottoSel.map(p=>(
+              <div key={p.id} style={{...S.card,cursor:"default",marginBottom:6}}>
+                <div style={{fontSize:12.5,fontWeight:600}}>{p.nome_debitore}{p.tipo_debitore==="cliente"&&p.cliente_nome?` — ${p.cliente_nome}`:" (collega)"}</div>
+                <div style={{fontSize:11,color:"#9AA3AB",marginTop:2}}>
+                  Uscito il {new Date(p.data_uscita).toLocaleDateString("it-IT")} · rientrato il {p.data_rientro_effettivo ? new Date(p.data_rientro_effettivo).toLocaleDateString("it-IT") : "—"}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // ── Vista: elenco prodotti di una filiale ────────────────────────────────
+  if(vista==="filiale" && filialeSel){
+    const elenco = (prodotti||[]).filter(p=>p.filiale===filialeSel)
+      .sort((a,b)=>(a.stato===b.stato?0:a.stato==="in_magazzino"?-1:1));
+    return (
+      <div>
+        <button onClick={()=>{setVista("home");setFilialeSel(null);}} style={{...S.btnS,marginBottom:14}}>← Tutte le filiali</button>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
+          <div style={S.eyebrow}>Magazzino Demo — {filialeSel}</div>
+          <button onClick={()=>setVista("nuovo-prodotto")} style={{...S.btnAccent,padding:"8px 14px",fontSize:12.5}}>+ Nuovo prodotto</button>
+        </div>
+        {erroreSync && <div style={{fontSize:12,color:C.danger,background:"rgba(200,75,58,0.08)",borderRadius:6,padding:"9px 11px",marginBottom:14}}>⚠ {erroreSync}</div>}
+        {elenco.length===0 && <div style={{fontSize:12.5,color:"#9AA3AB",padding:"1rem 0"}}>Nessun prodotto demo registrato per questa filiale.</div>}
+        {elenco.map(p=>{
+          const prestito = p.stato==="in_prestito" ? (prestiti||[]).find(x=>x.prodotto_demo_id===p.id && x.stato==="attivo") : null;
+          return (
+            <div key={p.id} onClick={()=>{setProdottoSelId(p.id);setVista("prodotto");}} style={{...S.card,cursor:"pointer",display:"flex",justifyContent:"space-between",alignItems:"center",gap:10,marginBottom:8}}>
+              <div style={{minWidth:0}}>
+                <div style={{fontWeight:600,fontSize:13.5}}>{p.marca?`${p.marca} — `:""}{p.modello}</div>
+                <div style={{fontSize:11.5,color:"#9AA3AB",marginTop:2}}>
+                  {p.numero_serie ? `S/N ${p.numero_serie}` : (p.denominazione||"—")}
+                  {prestito && ` · presso ${prestito.nome_debitore}`}
+                </div>
+              </div>
+              <Tag tone={p.stato==="in_magazzino"?"ok":"warn"}>{p.stato==="in_magazzino"?"In magazzino":"In prestito"}</Tag>
+            </div>
+          );
+        })}
+      </div>
+    );
+  }
+
+  // ── Vista: home — quattro filiali ────────────────────────────────────────
+  return (
+    <div>
+      <button onClick={onIndietro} style={{...S.btnS,marginBottom:14}}>← Torna ad Assistenza</button>
+      <div style={S.eyebrow}>Magazzino Demo</div>
+      <div style={{fontSize:12.5,color:C.steel,margin:"6px 0 18px",lineHeight:1.6}}>
+        Prodotti demo per filiale, prestiti a clienti (con firma e scadenza di rientro) o colleghi.
+      </div>
+      {erroreSync && <div style={{fontSize:12,color:C.danger,background:"rgba(200,75,58,0.08)",borderRadius:6,padding:"9px 11px",marginBottom:14}}>⚠ {erroreSync}</div>}
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+        {FILIALI_DEMO.map(f=>{
+          const {totale, inPrestito} = contaFiliale(f);
+          return (
+            <div key={f} onClick={()=>{setFilialeSel(f);setVista("filiale");}} style={{...S.card,cursor:"pointer",aspectRatio:"1.3",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:6,textAlign:"center"}}>
+              <Icon name="package" size={24} color={C.ink}/>
+              <div style={{fontWeight:700,fontSize:13.5}}>{f}</div>
+              <div className="tnum" style={{fontSize:11,color:"#9AA3AB",fontFamily:F_MONO}}>{totale} prodott{totale===1?"o":"i"}{inPrestito>0?` · ${inPrestito} in prestito`:""}</div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function Interventi({interventi, setInterventi, attrezzature, sessione, setArea, interventoDaCompletare, setInterventoDaCompletare, catalog, ruolo, precodici, isMobile, apriPlanningTecnico, setApriPlanningTecnico}){
   const accessToken = trovaAccessToken(sessione);
   // Preventivi per interventi tecnici (manodopera/ricambi) — vedi
   // FormPreventivoIntervento più sopra, diversi dai preventivi di vendita
@@ -11063,14 +11530,65 @@ function Interventi({interventi, setInterventi, attrezzature, sessione, setArea,
   const pianificatiFiltrati = useMemo(()=>
     tecnicoPlanning ? pianificati.filter(i=>i.tecnico_assegnato_nome===tecnicoPlanning) : pianificati
   ,[pianificati, tecnicoPlanning]);
-  const pianificatiPerGiorno = useMemo(()=>{
-    const gruppi = {};
-    pianificatiFiltrati.forEach(i=>{
-      const chiave = i.data_pianificata || "Senza data";
-      (gruppi[chiave] = gruppi[chiave] || []).push(i);
+
+  // ── Planning settimanale (Lun–Ven) ──────────────────────────────────────
+  // Un tecnico vede solo la propria settimana (bloccato al suo nome, nessun
+  // selettore); responsabile/admin vedono tutti e possono scegliere un
+  // tecnico specifico con lo stesso menu a tendina già usato sopra
+  // (tecnicoPlanning/setTecnicoPlanning). DEVE stare prima di qualunque
+  // return anticipato del componente — stesso motivo del bug hooks già
+  // corretto altrove in questo file.
+  useEffect(()=>{
+    if(ruolo==="tecnico" && sessione?.nome) setTecnicoPlanning(sessione.nome);
+  },[ruolo, sessione?.nome]);
+
+  const [settimanaOffset,setSettimanaOffset] = useState(0); // 0 = settimana corrente, -1/+1 = precedente/successiva
+  const giorniSettimana = useMemo(()=>{
+    const oggi = new Date();
+    const giornoSett = oggi.getDay(); // 0=domenica … 6=sabato
+    const diffALunedi = giornoSett===0 ? -6 : 1-giornoSett;
+    const lunedi = new Date(oggi.getFullYear(), oggi.getMonth(), oggi.getDate()+diffALunedi+settimanaOffset*7);
+    return Array.from({length:5},(_,i)=>{
+      const d = new Date(lunedi.getFullYear(), lunedi.getMonth(), lunedi.getDate()+i);
+      return d.toISOString().slice(0,10);
     });
-    return Object.entries(gruppi).sort(([a],[b])=> a==="Senza data" ? 1 : b==="Senza data" ? -1 : a.localeCompare(b));
-  },[pianificatiFiltrati]);
+  },[settimanaOffset]);
+  const pianificatiSettimana = useMemo(()=>
+    pianificatiFiltrati.filter(i=>i.data_pianificata && giorniSettimana.includes(i.data_pianificata))
+  ,[pianificatiFiltrati, giorniSettimana]);
+  function interventiDiGiorno(data){
+    return pianificatiSettimana.filter(i=>i.data_pianificata===data)
+      .sort((a,b)=>(a.ora_pianificata||"99:99").localeCompare(b.ora_pianificata||"99:99"));
+  }
+  // Interventi già presi in carico (tecnico assegnato) ma senza data ancora
+  // confermata — sono quelli "piazzabili" su un giorno della board.
+  const daPianificareFiltrati = useMemo(()=>
+    tecnicoPlanning ? daPianificare.filter(i=>i.tecnico_assegnato_nome===tecnicoPlanning) : daPianificare
+  ,[daPianificare, tecnicoPlanning]);
+
+  const [giornoAssegnazione,setGiornoAssegnazione] = useState(null); // data (YYYY-MM-DD) del giorno su cui si sta piazzando un intervento, o null
+  const [interventoDaAssegnare,setInterventoDaAssegnare] = useState("");
+  const [oraAssegnazione,setOraAssegnazione] = useState("");
+  const [salvandoAssegnazione,setSalvandoAssegnazione] = useState(false);
+  const [erroreAssegnazione,setErroreAssegnazione] = useState("");
+  async function assegnaGiorno(){
+    if(!interventoDaAssegnare || !giornoAssegnazione) return;
+    setSalvandoAssegnazione(true); setErroreAssegnazione("");
+    try{
+      const patch = { stato:"Pianificato", data_pianificata: giornoAssegnazione, ora_pianificata: oraAssegnazione.trim()||null };
+      await sbAuth("PATCH","interventi",`id=eq.${interventoDaAssegnare}`,patch,accessToken);
+      setInterventi(prev=>prev.map(x=>x.id===interventoDaAssegnare?{...x,...patch}:x));
+      setGiornoAssegnazione(null); setInterventoDaAssegnare(""); setOraAssegnazione("");
+    }catch(err){
+      setErroreAssegnazione("Assegnazione non riuscita: "+err.message);
+    }
+    setSalvandoAssegnazione(false);
+  }
+  // Arrivo dalla scorciatoia "Planning" sulla dashboard di un tecnico (vedi
+  // Home): salta subito alla board settimanale.
+  useEffect(()=>{
+    if(apriPlanningTecnico){ setVista("planning"); setApriPlanningTecnico(false); }
+  },[apriPlanningTecnico]);
 
   // Promemoria scadenze attrezzature (aggiornamenti/verifiche): entro 30
   // giorni o già scadute, visibili qui a responsabili e tecnici.
@@ -11192,6 +11710,10 @@ function Interventi({interventi, setInterventi, attrezzature, sessione, setArea,
     );
   }
 
+  if(vista==="magazzino-demo"){
+    return <MagazzinoDemo sessione={sessione} onIndietro={()=>setVista("home")}/>;
+  }
+
   if(vista==="richiesti" || vista==="da-pianificare"){
     const elenco = vista==="richiesti" ? richiesti : daPianificare;
     const titolo = vista==="richiesti" ? "Interventi richiesti" : "Interventi da pianificare";
@@ -11224,31 +11746,86 @@ function Interventi({interventi, setInterventi, attrezzature, sessione, setArea,
   }
 
   if(vista==="planning"){
+    const nomiGiorni = ["Lunedì","Martedì","Mercoledì","Giovedì","Venerdì"];
     return (
       <div>
-        <button onClick={()=>setVista("pianificati")} style={{...S.btnS,marginBottom:14}}>← Torna ai pianificati</button>
-        <div style={S.eyebrow}>Planning</div>
-        <select value={tecnicoPlanning} onChange={e=>setTecnicoPlanning(e.target.value)} style={{...S.inp,marginTop:8,marginBottom:16}}>
-          <option value="">Tutti i tecnici</option>
-          {tecniciInPlanning.map(t=>(<option key={t} value={t}>{t}</option>))}
-        </select>
-        {pianificatiPerGiorno.length===0 && <div style={{fontSize:12.5,color:"#9AA3AB"}}>Nessun intervento pianificato.</div>}
-        {pianificatiPerGiorno.map(([giorno, elenco])=>(
-          <div key={giorno} style={{marginBottom:18}}>
-            <div style={{fontSize:12,fontWeight:700,color:C.steel,marginBottom:8,fontFamily:F_MONO}}>
-              {giorno==="Senza data" ? "Senza data" : new Date(giorno).toLocaleDateString("it-IT",{weekday:"long",day:"numeric",month:"long"})}
-            </div>
-            {elenco.map(i=>(
-              <div key={i.id} onClick={()=>apriDettaglio(i)} style={{...S.card,cursor:"pointer",display:"flex",justifyContent:"space-between",alignItems:"center",gap:10,marginBottom:6}}>
-                <div style={{minWidth:0}}>
-                  <div style={{fontWeight:600,fontSize:13}}>{i.cliente_nome}</div>
-                  <div style={{fontSize:11,color:"#9AA3AB",marginTop:2}}>{TIPO_LABELS[i.tipo]||i.tipo} · {i.tecnico_assegnato_nome}</div>
-                </div>
-                {i.ora_pianificata && <span className="tnum" style={{fontSize:12,fontFamily:F_MONO,color:C.ink,flexShrink:0}}>{i.ora_pianificata}</span>}
-              </div>
-            ))}
+        <button onClick={()=>setVista(ruolo==="tecnico"?"home":"pianificati")} style={{...S.btnS,marginBottom:14}}>← {ruolo==="tecnico"?"Torna ad Assistenza":"Torna ai pianificati"}</button>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}>
+          <div style={S.eyebrow}>Planning settimanale</div>
+          <div style={{display:"flex",gap:6}}>
+            <button onClick={()=>setSettimanaOffset(o=>o-1)} style={{...S.btnS,padding:"6px 10px"}}>‹</button>
+            <button onClick={()=>setSettimanaOffset(0)} disabled={settimanaOffset===0} style={{...S.btnS,padding:"6px 10px",opacity:settimanaOffset===0?0.4:1}}>Oggi</button>
+            <button onClick={()=>setSettimanaOffset(o=>o+1)} style={{...S.btnS,padding:"6px 10px"}}>›</button>
           </div>
-        ))}
+        </div>
+        <div className="tnum" style={{fontSize:11.5,color:"#9AA3AB",fontFamily:F_MONO,marginBottom:14}}>
+          {new Date(giorniSettimana[0]).toLocaleDateString("it-IT",{day:"numeric",month:"long"})} – {new Date(giorniSettimana[4]).toLocaleDateString("it-IT",{day:"numeric",month:"long",year:"numeric"})}
+        </div>
+
+        {ruolo!=="tecnico" && (
+          <select value={tecnicoPlanning} onChange={e=>setTecnicoPlanning(e.target.value)} style={{...S.inp,marginBottom:16}}>
+            <option value="">Tutti i tecnici</option>
+            {tecniciInPlanning.map(t=>(<option key={t} value={t}>{t}</option>))}
+          </select>
+        )}
+
+        {erroreAssegnazione && <div style={{fontSize:12,color:C.danger,background:"rgba(200,75,58,0.08)",borderRadius:6,padding:"9px 11px",marginBottom:14}}>⚠ {erroreAssegnazione}</div>}
+
+        {giorniSettimana.map((data,idx)=>{
+          const elenco = interventiDiGiorno(data);
+          const oggi = new Date().toISOString().slice(0,10) === data;
+          return (
+            <div key={data} style={{marginBottom:18}}>
+              <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8}}>
+                <div style={{fontSize:12.5,fontWeight:700,color:oggi?C.ink:C.steel}}>{nomiGiorni[idx]}</div>
+                <div className="tnum" style={{fontSize:11,color:"#9AA3AB",fontFamily:F_MONO}}>{new Date(data).toLocaleDateString("it-IT",{day:"numeric",month:"short"})}</div>
+                {oggi && <Tag tone="primary">Oggi</Tag>}
+              </div>
+
+              {elenco.length===0 && giornoAssegnazione!==data && (
+                <div style={{fontSize:12,color:"#9AA3AB",padding:"8px 0"}}>Nessun intervento.</div>
+              )}
+              {elenco.map(i=>(
+                <div key={i.id} onClick={()=>apriDettaglio(i)} style={{...S.card,cursor:"pointer",display:"flex",justifyContent:"space-between",alignItems:"center",gap:10,marginBottom:6}}>
+                  <div style={{minWidth:0}}>
+                    <div style={{fontWeight:600,fontSize:13}}>{i.cliente_nome || "Cliente non specificato"}</div>
+                    <div style={{fontSize:11,color:"#9AA3AB",marginTop:2}}>
+                      {TIPO_LABELS[i.tipo]||i.tipo}{!tecnicoPlanning && i.tecnico_assegnato_nome ? ` · ${i.tecnico_assegnato_nome}` : ""}
+                    </div>
+                  </div>
+                  {i.ora_pianificata && <span className="tnum" style={{fontSize:12,fontFamily:F_MONO,color:C.ink,flexShrink:0}}>{i.ora_pianificata}</span>}
+                </div>
+              ))}
+
+              {giornoAssegnazione===data ? (
+                <div style={{...S.card,cursor:"default",border:`1px solid ${C.ink}`}}>
+                  <div style={{fontSize:12,fontWeight:700,marginBottom:8}}>Piazza un intervento su questo giorno</div>
+                  {daPianificareFiltrati.length===0 ? (
+                    <div style={{fontSize:12,color:"#9AA3AB",marginBottom:8}}>
+                      {tecnicoPlanning ? "Nessun intervento preso in carico da questo tecnico, ancora senza data." : "Nessun intervento preso in carico senza data (vedi \"Da pianificare\")."}
+                    </div>
+                  ) : (<>
+                    <select value={interventoDaAssegnare} onChange={e=>setInterventoDaAssegnare(e.target.value)} style={{...S.inp,marginBottom:8}}>
+                      <option value="">— scegli un intervento —</option>
+                      {daPianificareFiltrati.map(i=>(
+                        <option key={i.id} value={i.id}>{i.cliente_nome||"Cliente non specificato"} — {TIPO_LABELS[i.tipo]||i.tipo}{!tecnicoPlanning?` (${i.tecnico_assegnato_nome||"—"})`:""}</option>
+                      ))}
+                    </select>
+                    <input type="time" value={oraAssegnazione} onChange={e=>setOraAssegnazione(e.target.value)} placeholder="Ora (facoltativa)" style={{...S.inp,marginBottom:10,maxWidth:140}}/>
+                    <div style={{display:"flex",gap:8}}>
+                      <button disabled={!interventoDaAssegnare||salvandoAssegnazione} onClick={assegnaGiorno} style={{...S.btnAccent,padding:"9px 15px",opacity:interventoDaAssegnare?1:0.5}}>
+                        {salvandoAssegnazione?"…":"✓ Conferma"}
+                      </button>
+                      <button onClick={()=>{setGiornoAssegnazione(null);setInterventoDaAssegnare("");setOraAssegnazione("");}} style={S.btnS}>Annulla</button>
+                    </div>
+                  </>)}
+                </div>
+              ) : (
+                <button onClick={()=>setGiornoAssegnazione(data)} style={{...S.btnS,fontSize:11.5,padding:"6px 12px"}}>+ Aggiungi</button>
+              )}
+            </div>
+          );
+        })}
       </div>
     );
   }
@@ -11360,8 +11937,11 @@ function Interventi({interventi, setInterventi, attrezzature, sessione, setArea,
       <button onClick={()=>setVista("preventivi-intervento")} style={{...S.btnS,width:"100%",marginTop:16,marginBottom:8,display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
         <Icon name="document" size={15}/> Preventivi intervento ({(preventiviIntervento||[]).length})
       </button>
-      <button onClick={()=>{ setInterventoDaCompletare(null); setVista("nuovo-rapporto"); }} style={{...S.btnS,width:"100%",marginBottom:20,display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
+      <button onClick={()=>{ setInterventoDaCompletare(null); setVista("nuovo-rapporto"); }} style={{...S.btnS,width:"100%",marginBottom:8,display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
         <Icon name="clipboard" size={15}/> Nuovo rapporto (senza intervento pianificato)
+      </button>
+      <button onClick={()=>setVista("magazzino-demo")} style={{...S.btnS,width:"100%",marginBottom:20,display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
+        <Icon name="package" size={15}/> Magazzino Demo
       </button>
 
       {scadenzePromemoria.length>0 && (
