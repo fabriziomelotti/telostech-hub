@@ -14630,18 +14630,36 @@ function NotificheBell({ sessione, onApriTicket }){
   async function carica(){
     if(!accessToken || !mioId) return;
     try{
-      const dati = await sbGetAuth("notifiche", `select=*&profilo_id=eq.${mioId}&order=created_at.desc&limit=20`, accessToken);
-      setNotifiche(dati||[]);
+      // Due fonti unite in un'unica lista: le notifiche vere (tabella
+      // "notifiche") e i ticket in attesa di risposta, presi direttamente
+      // da ticket_assistenza — stesso criterio già usato per il pallino sul
+      // menu, perché oggi nessun ticket genera una riga in "notifiche" (né
+      // alla creazione né a un nuovo messaggio del cliente): senza questa
+      // seconda fonte la campanella li ignorerebbe sempre, a prescindere
+      // da quanti ne arrivino. Queste voci sono "virtuali" (_virtuale:true,
+      // id sintetico "ticket-<id>"): non esistono come righe in "notifiche",
+      // quindi non si segnano come lette — spariscono da sole non appena
+      // qualcuno risponde al ticket (ultimo_messaggio_da non è più "cliente").
+      const [dati, ticketInAttesa] = await Promise.all([
+        sbGetAuth("notifiche", `select=*&profilo_id=eq.${mioId}&order=created_at.desc&limit=20`, accessToken),
+        sbGetAuth("ticket_assistenza", "select=id,numero,titolo,created_at&stato=neq.Chiuso&ultimo_messaggio_da=eq.cliente&order=created_at.desc&limit=20", accessToken).catch(()=>[]),
+      ]);
+      const virtuali = (ticketInAttesa||[]).map(t=>({
+        id: `ticket-${t.id}`, testo: `Ticket ${t.numero||""} in attesa di risposta${t.titolo?` — ${t.titolo}`:""}`,
+        created_at: t.created_at, letta: false, ticket_id: t.id, _virtuale: true,
+      }));
+      const unite = [...virtuali, ...(dati||[])].sort((a,b)=>new Date(b.created_at)-new Date(a.created_at));
+      setNotifiche(unite);
 
       if(!primoCaricoRef.current && typeof Notification !== "undefined" && Notification.permission==="granted"){
-        (dati||[]).filter(n=>!n.letta && !idsMostrateRef.current.has(n.id)).forEach(n=>{
+        unite.filter(n=>!n.letta && !idsMostrateRef.current.has(n.id)).forEach(n=>{
           try{
             const popup = new Notification("Telos Tech Hub", { body: n.testo, tag: n.id });
             popup.onclick = ()=>{ window.focus(); if(n.ticket_id && onApriTicket) onApriTicket(n.ticket_id); popup.close(); };
           }catch{ /* alcuni browser mobile non supportano new Notification() in foreground: ignora, resta comunque il badge */ }
         });
       }
-      (dati||[]).forEach(n=>idsMostrateRef.current.add(n.id));
+      unite.forEach(n=>idsMostrateRef.current.add(n.id));
       primoCaricoRef.current = false;
     }catch{ /* silenzioso: la campanella non deve mai rompere il resto dell'app */ }
   }
@@ -14668,7 +14686,7 @@ function NotificheBell({ sessione, onApriTicket }){
 
   async function apri(n){
     setAperto(false);
-    if(!n.letta){
+    if(!n._virtuale && !n.letta){
       setNotifiche(prev=>prev.map(x=>x.id===n.id?{...x,letta:true}:x));
       try{ await sbAuth("PATCH","notifiche",`id=eq.${n.id}`,{letta:true},accessToken); }catch{}
     }
@@ -14676,8 +14694,13 @@ function NotificheBell({ sessione, onApriTicket }){
   }
 
   async function segnaTutteLette(){
-    if(nonLette===0) return;
-    setNotifiche(prev=>prev.map(x=>({...x,letta:true})));
+    // Le voci ticket sono virtuali: non esistono in "notifiche", quindi non
+    // c'è nulla da segnare come letto lì — spariscono da sole quando
+    // qualcuno risponde al ticket. "Segna tutte lette" tocca solo le
+    // notifiche vere.
+    const daSegnare = notifiche.filter(n=>!n._virtuale && !n.letta);
+    if(daSegnare.length===0) return;
+    setNotifiche(prev=>prev.map(x=>x._virtuale?x:{...x,letta:true}));
     try{ await sbAuth("PATCH","notifiche",`profilo_id=eq.${mioId}&letta=eq.false`,{letta:true},accessToken); }catch{}
   }
 
@@ -14685,13 +14708,6 @@ function NotificheBell({ sessione, onApriTicket }){
 
   return (
     <div style={{position:"relative",flexShrink:0,display:"flex",alignItems:"center",gap:6}}>
-      {/* DEBUG TEMPORANEO — da togliere appena capiamo il valore reale sul
-          dispositivo di Fabrizio: mostra a video permessoNotifiche invece
-          di doverlo leggere da Console (F12), che su alcuni dispositivi
-          non è comodo o non è disponibile. */}
-      <span style={{fontSize:9,fontFamily:F_MONO,color:"#fff",background:C.danger,padding:"2px 6px",borderRadius:4,whiteSpace:"nowrap"}}>
-        DEBUG: {permessoNotifiche}
-      </span>
       {permessoNotifiche==="default" && (
         <button onClick={attivaNotifiche} style={{background:"none",border:`1px solid ${C.paperLine}`,borderRadius:14,padding:"4px 9px",fontSize:11,color:C.ink,cursor:"pointer",fontWeight:600,whiteSpace:"nowrap"}}>
           🔔 Attiva notifiche
@@ -14715,12 +14731,12 @@ function NotificheBell({ sessione, onApriTicket }){
         <div style={{position:"absolute",top:"100%",right:0,width:320,maxHeight:420,overflowY:"auto",background:"#fff",border:`1px solid ${C.paperLine}`,borderRadius:9,boxShadow:"0 8px 24px rgba(0,0,0,0.14)",zIndex:200,marginTop:6}}>
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 12px",borderBottom:`1px solid ${C.paperLine}`}}>
             <span style={{fontWeight:600,fontSize:13}}>Notifiche</span>
-            {nonLette>0 && <span onClick={segnaTutteLette} style={{fontSize:11,color:C.ink,cursor:"pointer",fontWeight:600}}>Segna tutte lette</span>}
+            {notifiche.some(n=>!n._virtuale && !n.letta) && <span onClick={segnaTutteLette} style={{fontSize:11,color:C.ink,cursor:"pointer",fontWeight:600}}>Segna tutte lette</span>}
           </div>
           {notifiche.length===0 && <div style={{padding:"20px 12px",textAlign:"center",color:"#9AA3AB",fontSize:12.5}}>Nessuna notifica</div>}
           {notifiche.map(n=>(
             <div key={n.id} onClick={()=>apri(n)} style={{padding:"10px 12px",borderBottom:`1px solid ${C.paperLine}`,cursor:"pointer",background:n.letta?"#fff":"rgba(87,206,202,0.07)"}}>
-              <div style={{fontSize:12.5,color:C.charcoal,fontWeight:n.letta?400:600}}>{n.testo}</div>
+              <div style={{fontSize:12.5,color:C.charcoal,fontWeight:n.letta?400:600}}>{n._virtuale?"🎫 ":""}{n.testo}</div>
               <div style={{fontSize:10.5,color:"#9AA3AB",marginTop:3,fontFamily:F_MONO}}>{new Date(n.created_at).toLocaleString("it-IT",{dateStyle:"short",timeStyle:"short"})}</div>
             </div>
           ))}
