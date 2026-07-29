@@ -625,6 +625,10 @@ export default function App(){
   const [area, setArea] = useState("home");
   const [showMore, setShowMore] = useState(false);
   const [cart, setCart] = useState([]);
+  // Passa da Preventivi (vista carrello) a Ordini: "porta subito qui le
+  // righe del carrello nel form Nuovo ordine". Un semplice booleano
+  // "richiesta in corso" invece di duplicare lo stato del carrello stesso.
+  const [avviaOrdineDaCart, setAvviaOrdineDaCart] = useState(false);
   const [preventivi, setPreventivi] = useState([]);
   const [ordini, setOrdini] = useState([]);
   const [attrezzature, setAttrezzature] = useState([]);
@@ -910,8 +914,8 @@ export default function App(){
           {area==="prodotti" && <Prodotti cart={cart} setCart={setCart} catalog={catalog} catalogLoading={catalogLoading} sessione={sessione} ruolo={role} setCatalog={setCatalog} setArea={setArea} precodici={precodici}/>}
           {area==="clienti" && <Clienti sessione={sessione} preventivi={preventivi} ordini={ordini} attrezzature={attrezzature} setAttrezzature={setAttrezzature} interventi={interventi} setInterventi={setInterventi} catalog={catalog} ruolo={role}/>}
           {area==="promemoria" && <Promemoria sessione={sessione} ruolo={role} preventivi={preventivi} interventi={interventi} ordini={ordini} promemoria={promemoria} setPromemoria={setPromemoria} setArea={setArea}/>}
-          {area==="preventivi" && <Preventivi cart={cart} setCart={setCart} preventivi={preventivi} setPreventivi={setPreventivi} setOrdini={setOrdini} setArea={setArea} ruolo={role} catalog={catalog} sessione={sessione} precodici={precodici} isMobile={isMobile}/>}
-          {area==="ordini" && <Ordini ordini={ordini} setOrdini={setOrdini} preventivi={preventivi} setPreventivi={setPreventivi} setInterventi={setInterventi} catalog={catalog} sessione={sessione} ruolo={role} precodici={precodici} isMobile={isMobile}/>}
+          {area==="preventivi" && <Preventivi cart={cart} setCart={setCart} preventivi={preventivi} setPreventivi={setPreventivi} setOrdini={setOrdini} setArea={setArea} setAvviaOrdineDaCart={setAvviaOrdineDaCart} ruolo={role} catalog={catalog} sessione={sessione} precodici={precodici} isMobile={isMobile}/>}
+          {area==="ordini" && <Ordini ordini={ordini} setOrdini={setOrdini} preventivi={preventivi} setPreventivi={setPreventivi} setInterventi={setInterventi} catalog={catalog} sessione={sessione} ruolo={role} precodici={precodici} isMobile={isMobile} cart={cart} setCart={setCart} avviaOrdineDaCart={avviaOrdineDaCart} setAvviaOrdineDaCart={setAvviaOrdineDaCart}/>}
           {area==="statistiche" && <Statistiche preventivi={preventivi} ordini={ordini} catalog={catalog} sessione={sessione} ruolo={role}/>}
           {area==="interventi" && <Interventi interventi={interventi} setInterventi={setInterventi} attrezzature={attrezzature} sessione={sessione} setArea={setArea} interventoDaCompletare={interventoDaCompletare} setInterventoDaCompletare={setInterventoDaCompletare} catalog={catalog} ruolo={role} precodici={precodici} isMobile={isMobile}/>}
           {area==="ticket" && <TicketAssistenza sessione={sessione} ruolo={role} ticketDaAprire={ticketDaAprire} setTicketDaAprire={setTicketDaAprire} catalog={catalog}/>}
@@ -5875,7 +5879,7 @@ function BloccoSoluzioneVendita({ soluzione, indice, onCambia, onRimuovi, catalo
   );
 }
 
-function Preventivi({cart,setCart,preventivi,setPreventivi,setOrdini,setArea,ruolo,catalog,sessione,precodici,isMobile}){
+function Preventivi({cart,setCart,preventivi,setPreventivi,setOrdini,setArea,setAvviaOrdineDaCart,ruolo,catalog,sessione,precodici,isMobile}){
   const [view,setView]=useState("home"); // home | cerca | da-gestire | in-ordine | bloccate | nuovo | dettaglio
   const [generandoPdf,setGenerandoPdf]=useState(false);
   const [mostraSelezionePacchetto,setMostraSelezionePacchetto]=useState(false);
@@ -6012,6 +6016,15 @@ function Preventivi({cart,setCart,preventivi,setPreventivi,setOrdini,setArea,ruo
     setBozzaNonSalvata(nuovoOggettoLocale([]));
     setSelId("__nuovo__");
     setView("dettagli-edit");
+  }
+  // "Crea ordine direttamente": salta il preventivo, porta le righe del
+  // carrello dritte al form "Nuovo ordine" in Ordini — cliente e referente
+  // Telos restano comunque da scegliere là (un ordine li richiede per
+  // essere salvato, a differenza di una bozza di preventivo).
+  function vaiOrdineDaCart(){
+    if(cart.length===0) return;
+    setAvviaOrdineDaCart(true);
+    setArea("ordini");
   }
 
   const selezionato = trovaPreventivo(selId);
@@ -6403,9 +6416,10 @@ function Preventivi({cart,setCart,preventivi,setPreventivi,setOrdini,setArea,ruo
             <span style={{color:"#fff",fontWeight:600,fontSize:13}}>Totale</span>
             <span className="tnum" style={{color:C.cyan,fontWeight:700,fontSize:18,fontFamily:F_MONO}}>€{total.toFixed(2)}</span>
           </div>
-          <div style={{display:"flex",gap:8,marginTop:12}}>
-            <button onClick={creaDaCart} style={{...S.btnAccent,flex:1,padding:"12px"}}>Crea preventivo da questi articoli</button>
-            <button onClick={()=>setCart([])} style={S.btnS}>Svuota</button>
+          <div style={{display:"flex",gap:8,marginTop:12,flexWrap:"wrap"}}>
+            <button onClick={creaDaCart} style={{...S.btnAccent,flex:"1 1 200px",padding:"12px"}}>Crea preventivo da questi articoli</button>
+            <button onClick={vaiOrdineDaCart} style={{...S.btnS,flex:"1 1 200px",padding:"12px",background:"transparent",color:"#fff",border:`1px solid ${C.surfaceRaised}`}}>Crea ordine direttamente</button>
+            <button onClick={()=>setCart([])} style={{...S.btnS,flexShrink:0}}>Svuota</button>
           </div>
         </div>
         <ListaPreventivi preventivi={preventivi} onApri={(id)=>{setSelId(id);setView("dettaglio");}} sessione={sessione} catalog={catalog}/>
@@ -8215,7 +8229,7 @@ function Statistiche({preventivi, ordini, catalog, sessione, ruolo}){
 }
 
 // ─── ORDINI ───────────────────────────────────────────────────────────────────
-function Ordini({ordini,setOrdini,preventivi,setPreventivi,setInterventi,catalog,sessione,ruolo,precodici,isMobile}){
+function Ordini({ordini,setOrdini,preventivi,setPreventivi,setInterventi,catalog,sessione,ruolo,precodici,isMobile,cart,setCart,avviaOrdineDaCart,setAvviaOrdineDaCart}){
   const [selId,setSelId]=useState(null);
   const [vista,setVista]=useState("home");
   const [generandoPdf,setGenerandoPdf]=useState(false);
@@ -8303,6 +8317,28 @@ function Ordini({ordini,setOrdini,preventivi,setPreventivi,setInterventi,catalog
   const [mostraSelezionePacchettoOrdine,setMostraSelezionePacchettoOrdine] = useState(false);
   const [salvandoNuovo,setSalvandoNuovo] = useState(false);
   const [erroreNuovo,setErroreNuovo] = useState("");
+
+  // Arrivo da "Crea ordine direttamente" sul carrello del catalogo (vedi
+  // Preventivi → vista cart): apre subito il form "Nuovo ordine" con le
+  // righe già compilate, cliente/referente restano comunque da scegliere
+  // qui (un ordine, a differenza di una bozza di preventivo, li richiede
+  // per essere salvato). DEVE stare prima di qualunque return anticipato
+  // del componente — altrimenti al passaggio da "niente in carrello" a
+  // "carrello pieno" questo hook verrebbe saltato in alcuni render e non
+  // in altri, mandando in errore React (vedi bug pagina bianca già corretto
+  // altrove in ModificaAttrezzatura per lo stesso identico motivo).
+  useEffect(()=>{
+    if(!avviaOrdineDaCart || !cart || cart.length===0) return;
+    const righe = cart.map(p=>({
+      cod:p.cod, mar:p.mar, nome:p.nome||p.desc, netto:p.netto, listino:p.listino, qty:1,
+      ...(p._pacchettoNome ? { pacchetto_nome: p._pacchettoNome } : {}),
+    }));
+    setNuoveRighe(righe);
+    setCreandoNuovo(true);
+    setVista("home");
+    setCart([]);
+    setAvviaOrdineDaCart(false);
+  },[avviaOrdineDaCart]);
 
   function annullaNuovoOrdine(){
     setCreandoNuovo(false); setClienteInfoNuovoOrdine({});
