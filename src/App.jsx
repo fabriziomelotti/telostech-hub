@@ -10245,7 +10245,7 @@ function FormNuovoInterventoDaPianificare({ attrezzature, sessione, onCreato, on
           </select>
         </>
       )}
-      {cliente && attrezzatureCliente.length===0 && (
+      {clienteInfo.cliente_codice && attrezzatureCliente.length===0 && (
         <>
           <div style={S.eyebrow}>Strumento (facoltativo)</div>
           <input value={attrezzaturaTesto} onChange={e=>setAttrezzaturaTesto(e.target.value)} placeholder="Descrivilo qui, se non è registrato" style={{...S.inp,marginBottom:16}}/>
@@ -11218,7 +11218,7 @@ function Interventi({interventi, setInterventi, attrezzature, sessione, setArea,
 
       <div style={isMobile ? {display:"flex",flexDirection:"column",gap:8} : {display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:12}}>
         {[
-          ["richiesti","bell","Richiesti",richiesti.length,"Da ordini o preventivi confermati, in attesa di presa in carico","rgba(200,75,58,0.09)",C.danger],
+          ["richiesti","bell","Richiesti",richiesti.length,"Da ordini confermati o ticket confermati - da prendere in carico","rgba(200,75,58,0.09)",C.danger],
           ["da-pianificare","clipboard","Da pianificare",daPianificare.length,"Presi in carico, in attesa di data e ora","rgba(217,164,65,0.12)",C.warn],
           ["pianificati","calendar","Pianificati",pianificati.length,"Con data confermata — anche vista planning per tecnico","rgba(22,39,88,0.09)",C.ink],
           ["conclusi","checkCircle","Conclusi",conclusi.length,"Chiusi con conferma cliente, in archivio","rgba(74,157,110,0.1)",C.ok],
