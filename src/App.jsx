@@ -10146,7 +10146,12 @@ function FormNuovoInterventoDaPianificare({ attrezzature, sessione, onCreato, on
   const [errore, setErrore] = useState("");
 
   useEffect(()=>{
-    chiamaUtentiInfo(accessToken).then(d=>setUtentiTelos(d?.utenti ?? [])).catch(()=>setUtentiTelos([]));
+    // La presa in carico di un intervento è compito di tecnici e
+    // responsabili — i commerciali non gestiscono interventi, quindi non
+    // compaiono qui (restano comunque nell'elenco più ampio usato altrove,
+    // es. "Referente Telos" nei preventivi — qui si filtra solo per questo
+    // scopo specifico).
+    chiamaUtentiInfo(accessToken).then(d=>setUtentiTelos((d?.utenti ?? []).filter(u=>u.ruolo!=="commerciale"))).catch(()=>setUtentiTelos([]));
     sbGetAuth("assistenze", "select=*&attivo=eq.true&interno=eq.false&order=nome.asc", accessToken)
       .then(setAssistenze).catch(()=>setAssistenze([]));
   },[]);
@@ -10340,7 +10345,9 @@ function DettaglioIntervento({ intervento, attrezzature, sessione, onIndietro, o
   useEffect(()=>{
     sbGetAuth("assistenze", "select=*&attivo=eq.true&order=interno.desc,nome.asc", accessToken)
       .then(setAssistenze).catch(()=>setAssistenze([]));
-    chiamaUtentiInfo(accessToken).then(d=>setUtentiTelos(d?.utenti ?? [])).catch(()=>setUtentiTelos([]));
+    // Stesso filtro di FormNuovoInterventoDaPianificare: la presa in carico
+    // resta compito di tecnici e responsabili, mai dei commerciali.
+    chiamaUtentiInfo(accessToken).then(d=>setUtentiTelos((d?.utenti ?? []).filter(u=>u.ruolo!=="commerciale"))).catch(()=>setUtentiTelos([]));
   },[]);
 
   const attrezzatureCliente = useMemo(()=>
