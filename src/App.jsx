@@ -15463,7 +15463,7 @@ function TicketAssistenza({ sessione, ruolo, ticketDaAprire, setTicketDaAprire, 
   }
 
   useEffect(()=>{ carica(); },[]);
-  useEffect(()=>{ chiamaUtentiInfo(accessToken).then(d=>setUtenti(d?.utenti||[])).catch(()=>setUtenti([])); },[]);
+  useEffect(()=>{ chiamaUtentiInfo(accessToken).then(d=>setUtenti((d?.utenti||[]).filter(u=>u.ruolo!=="commerciale"))).catch(()=>setUtenti([])); },[]);
 
   // Apertura diretta da una notifica cliccata in campanella
   useEffect(()=>{
@@ -15809,11 +15809,33 @@ function DettaglioTicket({ ticket, sessione, ruolo, utenti, catalog, clienteInfo
     setInviando(false);
   }
 
-  async function generaIntervento(){
-    if(!window.confirm("Generare un Intervento tecnico collegato a questo ticket?")) return;
+  // Generare l'intervento richiede due cose che prima non erano imposte:
+  // 1) un tecnico già scelto in "Assegnato a" (l'intervento nasce già
+  //    assegnato a lui, non "da smistare" di nuovo);
+  // 2) un report di chi ha gestito il ticket finora — cosa è stato provato/
+  //    fatto in chat o al telefono, e perché secondo lui serve un
+  //    intervento sul posto — così il tecnico non riparte da zero.
+  // Stesso pattern già usato per la chiusura (chiediChiusura/confermaChiusura):
+  // click apre un pannello che blocca la conferma finché non è compilato.
+  const [generazioneInCorso, setGenerazioneInCorso] = useState(false);
+  const [reportFinale, setReportFinale] = useState("");
+
+  function chiediGenerazioneIntervento(){
+    if(!ticket.assegnato_a){
+      alert("Assegna prima un tecnico (a destra, \"Assegnato a\") prima di generare l'intervento.");
+      return;
+    }
+    setReportFinale("");
+    setGenerazioneInCorso(true);
+  }
+
+  async function confermaGenerazioneIntervento(){
+    if(!reportFinale.trim()) return;
     setGenerandoIntervento(true);
     try{
       const nomeCliente = clienteInfo?.ragione_sociale || ticket.cliente_codice;
+      const nomeTecnico = nomeUtente(ticket.assegnato_a) || "—";
+      const categorizzazione = [ticket.marchio, ticket.categoria].filter(Boolean).join(" / ");
       const payload = {
         titolo: `${ticket.titolo} — ${nomeCliente}`,
         tipo: "intervento_tecnico",
@@ -15821,19 +15843,41 @@ function DettaglioTicket({ ticket, sessione, ruolo, utenti, catalog, clienteInfo
         cliente_nome: nomeCliente,
         stato: "Richiesto",
         priorita: ({Bassa:"bassa",Normale:"media",Alta:"alta",Urgente:"alta"})[ticket.priorita] || "media",
-        note: `Generato dal ticket ${ticket.numero}.${ticket.descrizione?`\n\n${ticket.descrizione}`:""}`,
+        tecnico_assegnato_id: ticket.assegnato_a,
+        tecnico_assegnato_nome: nomeTecnico,
+        // Tutto quello che serve al tecnico per non ripartire da zero:
+        // numero ticket, categorizzazione data in fase di smistamento,
+        // richiesta originale del cliente e — soprattutto — il report di
+        // chi ha gestito il ticket finora, con il perché di un intervento.
+        note: [
+          `Generato dal ticket ${ticket.numero}.`,
+          categorizzazione ? `Categorizzazione: ${categorizzazione}` : null,
+          ticket.descrizione ? `Richiesta iniziale del cliente:\n${ticket.descrizione}` : null,
+          `Report di ${sessione?.nome || "chi ha gestito il ticket"}:\n${reportFinale.trim()}`,
+        ].filter(Boolean).join("\n\n"),
         attrezzatura_id: ticket.attrezzatura_id || null,
         attrezzatura_testo: ticket.attrezzatura_id ? null : (ticket.descrizione_libera_prodotto || null),
         creato_da_nome: sessione?.nome || null,
       };
       const [intervento] = await sbAuth("POST","interventi","",payload,accessToken);
       const [agg] = await sbAuth("PATCH","ticket_assistenza",`id=eq.${ticket.id}`,{intervento_collegato_id:intervento.id, stato:"In lavorazione"},accessToken);
+      // Due messaggi distinti, non uno solo: al cliente non deve arrivare
+      // gergo interno (titolo del ticket, nome del tecnico) — solo la
+      // conferma che la sua richiesta è stata presa in carico per
+      // organizzare l'intervento. Lato Telos invece deve restare visibile
+      // chi se ne sta occupando.
       await sbAuth("POST","ticket_messaggi","",{
-        ticket_id: ticket.id, autore_tipo:"sistema",
-        testo:`Generato l'intervento «${intervento.titolo||""}» — visibile al cliente.`, visibile_al_cliente:true,
+        ticket_id: ticket.id, autore_tipo:"sistema", visibile_al_cliente:false,
+        testo:`Ticket inviato al tecnico ${nomeTecnico} per programmazione intervento.`,
+      },accessToken);
+      await sbAuth("POST","ticket_messaggi","",{
+        ticket_id: ticket.id, autore_tipo:"sistema", visibile_al_cliente:true,
+        testo:`${nomeCliente} — inviato a tecnico per programmare intervento.`,
       },accessToken);
       onAggiornato(agg);
       caricaMessaggi();
+      setGenerazioneInCorso(false);
+      setReportFinale("");
     }catch(err){ alert("Errore: "+err.message); }
     setGenerandoIntervento(false);
   }
@@ -16014,9 +16058,27 @@ function DettaglioTicket({ ticket, sessione, ruolo, utenti, catalog, clienteInfo
               <div style={{fontSize:12.5,fontWeight:600,marginTop:2}}>già generato</div>
             </div>
           ) : !soloLettura && (
-            <button onClick={generaIntervento} disabled={generandoIntervento} style={{...S.btnP,width:"100%"}}>
-              {generandoIntervento?"Generazione…":"🔧 Genera intervento"}
-            </button>
+            generazioneInCorso ? (
+              <div style={{...S.card,cursor:"default"}}>
+                <div style={{fontSize:12,fontWeight:600,marginBottom:6}}>Report per il tecnico</div>
+                <div style={{fontSize:11.5,color:C.steel,marginBottom:8}}>
+                  Cosa è stato fatto/provato finora e perché serve un intervento sul posto — arriva al tecnico insieme al resto.
+                </div>
+                <textarea value={reportFinale} onChange={e=>setReportFinale(e.target.value)} rows={4}
+                  placeholder="Es. Provato da remoto XYZ senza esito, sospetto guasto hardware sulla scheda…"
+                  style={{...S.inp,marginBottom:8,resize:"vertical",fontFamily:F_BODY}}/>
+                <div style={{display:"flex",gap:8}}>
+                  <button onClick={()=>setGenerazioneInCorso(false)} disabled={generandoIntervento} style={{...S.btnS,flex:1}}>Annulla</button>
+                  <button onClick={confermaGenerazioneIntervento} disabled={generandoIntervento||!reportFinale.trim()} style={{...S.btnP,flex:2,opacity:(generandoIntervento||!reportFinale.trim())?0.5:1}}>
+                    {generandoIntervento?"Generazione…":"✓ Genera intervento"}
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <button onClick={chiediGenerazioneIntervento} style={{...S.btnP,width:"100%"}}>
+                🔧 Genera intervento
+              </button>
+            )
           )}
         </div>
       </div>
