@@ -14685,6 +14685,13 @@ function NotificheBell({ sessione, onApriTicket }){
 
   return (
     <div style={{position:"relative",flexShrink:0,display:"flex",alignItems:"center",gap:6}}>
+      {/* DEBUG TEMPORANEO — da togliere appena capiamo il valore reale sul
+          dispositivo di Fabrizio: mostra a video permessoNotifiche invece
+          di doverlo leggere da Console (F12), che su alcuni dispositivi
+          non è comodo o non è disponibile. */}
+      <span style={{fontSize:9,fontFamily:F_MONO,color:"#fff",background:C.danger,padding:"2px 6px",borderRadius:4,whiteSpace:"nowrap"}}>
+        DEBUG: {permessoNotifiche}
+      </span>
       {permessoNotifiche==="default" && (
         <button onClick={attivaNotifiche} style={{background:"none",border:`1px solid ${C.paperLine}`,borderRadius:14,padding:"4px 9px",fontSize:11,color:C.ink,cursor:"pointer",fontWeight:600,whiteSpace:"nowrap"}}>
           🔔 Attiva notifiche
