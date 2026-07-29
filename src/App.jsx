@@ -1890,6 +1890,25 @@ function Prodotti({cart,setCart,catalog:catProp,catalogLoading,sessione,ruolo,se
 // SchedaProdotto/EditaProdotto. Visibile solo a responsabile/admin, la
 // scrittura passa dalla Edge Function catalog-admin (azione
 // "bulkAssegnaCategoria", autorizzata anche per il ruolo responsabile).
+// Libreria SheetJS (lettura/scrittura .xlsx) caricata da CDN al bisogno,
+// invece che come dipendenza npm — evita di toccare package.json/build per
+// una funzione usata solo in un paio di pannelli admin del Catalogo.
+// Cache della Promise: chiamate concorrenti aspettano lo stesso caricamento
+// invece di inserire due volte lo <script>.
+let _xlsxCaricamento = null;
+function caricaLibreriaXLSX(){
+  if(typeof window!=="undefined" && window.XLSX) return Promise.resolve(window.XLSX);
+  if(_xlsxCaricamento) return _xlsxCaricamento;
+  _xlsxCaricamento = new Promise((resolve,reject)=>{
+    const script = document.createElement("script");
+    script.src = "https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js";
+    script.onload = ()=>resolve(window.XLSX);
+    script.onerror = ()=>{ _xlsxCaricamento=null; reject(new Error("Impossibile caricare la libreria Excel — controlla la connessione e riprova.")); };
+    document.head.appendChild(script);
+  });
+  return _xlsxCaricamento;
+}
+
 function CompletaCategoria({ prodotti, categorieEsistenti, tipologieEsistenti, marchiEsistenti, settoriEsistenti, ruolo, sessione, onFatto }){
   if(ruolo!=="admin" && ruolo!=="responsabile") return null;
   const accessToken = trovaAccessToken(sessione);
@@ -1905,6 +1924,16 @@ function CompletaCategoria({ prodotti, categorieEsistenti, tipologieEsistenti, m
   const [confermaAperta,setConfermaAperta]=useState(false);
   const [stato,setStato]=useState("idle"); // idle | salvo | fatto | errore
   const [msg,setMsg]=useState("");
+
+  // ── Excel: scarica il filtro attivo, completa fuori dall'app, ricarica ──
+  const [esportando,setEsportando]=useState(false);
+  const [msgExport,setMsgExport]=useState("");
+  const [righeImportate,setRigheImportate]=useState([]); // [{cod, categoria?, tipologia?, marchio?, settori?, listino?}]
+  const [nomeFileImportato,setNomeFileImportato]=useState("");
+  const [statoImport,setStatoImport]=useState("idle"); // idle | leggo | pronto | salvo | fatto | errore
+  const [msgImport,setMsgImport]=useState("");
+  const [confermaImportAperta,setConfermaImportAperta]=useState(false);
+  const [risultatoImport,setRisultatoImport]=useState(null);
 
   function toggleFiltroCampo(chiave){
     setFiltriCampo(prev=>{
@@ -1990,6 +2019,92 @@ function CompletaCategoria({ prodotti, categorieEsistenti, tipologieEsistenti, m
     }
   }
 
+  // Esporta esattamente quello che si vede a video in questo momento
+  // (elencoFiltrato: rispetta sia i chip "Manca X" sia il filtro testo) —
+  // non l'intero elenco "da completare", altrimenti il file torna enorme e
+  // pieno di prodotti che magari non riguardano il completamento in corso.
+  async function scaricaExcelDaCompletare(){
+    setEsportando(true); setMsgExport("");
+    try{
+      const XLSX = await caricaLibreriaXLSX();
+      const righe = elencoFiltrato.map(p=>({
+        Codice: p.cod,
+        Nome: p.nome||"",
+        Descrizione: p.desc||"",
+        Marca: p.mar||"",
+        Categoria: p.cat||"",
+        Tipologia: p.tip||"",
+        Settori: p.settori||"",
+        Listino: p.listino||"",
+      }));
+      const ws = XLSX.utils.json_to_sheet(righe);
+      ws["!cols"] = [{wch:16},{wch:34},{wch:42},{wch:16},{wch:20},{wch:20},{wch:20},{wch:12}];
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, "Da completare");
+      const bolla = filtriCampo.size>0 ? "-"+Array.from(filtriCampo).join("-") : "";
+      XLSX.writeFile(wb, `catalogo-da-completare${bolla}-${new Date().toISOString().slice(0,10)}.xlsx`);
+    }catch(err){
+      setMsgExport("Esportazione non riuscita: "+err.message);
+    }
+    setEsportando(false);
+  }
+
+  // Legge il file scelto e prepara un'anteprima — non applica ancora nulla.
+  // Per ogni riga tiene solo i campi effettivamente compilati (Categoria,
+  // Tipologia, Marca, Settori, Listino): una colonna lasciata vuota nel
+  // file non deve cancellare il dato già presente sul prodotto.
+  async function leggiFileExcelDaCompletare(file){
+    setNomeFileImportato(file.name);
+    setStatoImport("leggo"); setMsgImport(""); setRisultatoImport(null); setRigheImportate([]);
+    try{
+      const XLSX = await caricaLibreriaXLSX();
+      const buf = await file.arrayBuffer();
+      const wb = XLSX.read(buf, {type:"array"});
+      const foglio = wb.Sheets[wb.SheetNames[0]];
+      const grezze = XLSX.utils.sheet_to_json(foglio, {defval:""});
+      const righe = grezze.map(r=>{
+        const cod = String(r.Codice||r.codice||"").trim();
+        if(!cod) return null;
+        const riga = {cod};
+        const categoria = String(r.Categoria||"").trim();
+        const tipologia = String(r.Tipologia||"").trim();
+        const marchio = String(r.Marca||"").trim();
+        const settori = String(r.Settori||"").trim();
+        const listinoRaw = r.Listino;
+        if(categoria) riga.categoria = categoria;
+        if(tipologia) riga.tipologia = tipologia;
+        if(marchio) riga.marchio = marchio;
+        if(settori) riga.settori = settori;
+        if(listinoRaw!==""&&listinoRaw!=null){
+          const listino = parsePrezzo(String(listinoRaw));
+          if(isFinite(listino) && listino>0) riga.listino = listino;
+        }
+        return Object.keys(riga).length>1 ? riga : null; // scarta righe senza nulla da aggiornare
+      }).filter(Boolean);
+      setRigheImportate(righe);
+      setStatoImport(righe.length>0 ? "pronto" : "errore");
+      if(righe.length===0) setMsgImport("Nessuna riga con un campo compilato — verifica di aver salvato il file dopo averlo completato.");
+    }catch(err){
+      setStatoImport("errore");
+      setMsgImport("Lettura del file non riuscita: "+err.message);
+    }
+  }
+
+  async function applicaImportExcel(){
+    setStatoImport("salvo"); setConfermaImportAperta(false);
+    try{
+      const { aggiornati, codiciAggiornati, nonTrovati } = await chiamaCatalogAdmin("completaDaFile", { righe: righeImportate }, accessToken);
+      setRisultatoImport({ aggiornati, codiciAggiornati: codiciAggiornati||[], nonTrovati: nonTrovati||[] });
+      setStatoImport("fatto");
+      setRigheImportate([]); setNomeFileImportato("");
+      if(onFatto) onFatto();
+    }catch(err){
+      setStatoImport("errore");
+      setMsgImport("Errore: "+err.message);
+    }
+  }
+
+
   if(prodotti.length===0){
     return (
       <div style={{textAlign:"center",padding:"2.5rem 1rem",color:C.ok}}>
@@ -2023,6 +2138,64 @@ function CompletaCategoria({ prodotti, categorieEsistenti, tipologieEsistenti, m
         })}
         {filtriCampo.size>0 && (
           <span onClick={()=>setFiltriCampo(new Set())} style={{fontSize:11.5,fontFamily:F_MONO,padding:"5px 10px",color:"#9AA3AB",cursor:"pointer"}}>✕ azzera filtri</span>
+        )}
+      </div>
+
+      <div style={{...S.card,cursor:"default",marginBottom:14,background:"rgba(87,206,202,0.06)",border:`1px solid ${C.cyan}`}}>
+        <div style={S.eyebrow}>Excel — completa fuori dall'app</div>
+        <div style={{fontSize:11.5,color:C.steel,marginTop:4,marginBottom:10,lineHeight:1.6}}>
+          Scarica i {elencoFiltrato.length} prodotti attualmente in elenco qui sotto (rispetta i filtri "Manca…"
+          e il testo digitato), compila le colonne che ti servono in Excel e ricarica il file: aggiorna solo le
+          celle che hai riempito, quelle lasciate vuote non toccano il dato già presente.
+        </div>
+        <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center"}}>
+          <button onClick={scaricaExcelDaCompletare} disabled={esportando||elencoFiltrato.length===0} style={{...S.btnAccent,padding:"9px 15px",fontSize:12.5,opacity:elencoFiltrato.length===0?0.4:1}}>
+            {esportando ? "Preparo…" : `⬇ Scarica Excel (${elencoFiltrato.length})`}
+          </button>
+          <label style={{...S.btnS,padding:"9px 15px",fontSize:12.5,cursor:"pointer",display:"inline-flex",alignItems:"center"}}>
+            ⬆ Ricarica Excel completato
+            <input type="file" accept=".xlsx,.xls" disabled={statoImport==="leggo"||statoImport==="salvo"} onChange={e=>{ if(e.target.files[0]) leggiFileExcelDaCompletare(e.target.files[0]); e.target.value=""; }} style={{display:"none"}}/>
+          </label>
+        </div>
+        {msgExport && <div style={{fontSize:11.5,color:C.danger,marginTop:8}}>⚠ {msgExport}</div>}
+
+        {nomeFileImportato && statoImport!=="fatto" && (
+          <div style={{marginTop:12,paddingTop:12,borderTop:`1px solid ${C.paperLine}`}}>
+            <div style={{fontSize:12,fontWeight:600,marginBottom:4}}>{nomeFileImportato}</div>
+            {statoImport==="leggo" && <div style={{fontSize:11.5,color:C.steel}}>Leggo il file…</div>}
+            {statoImport==="errore" && msgImport && <div style={{fontSize:11.5,color:C.danger}}>⚠ {msgImport}</div>}
+            {statoImport==="pronto" && (<>
+              <div style={{fontSize:11.5,color:C.steel,marginBottom:8}}>{righeImportate.length} righe con almeno un campo da aggiornare.</div>
+              {!confermaImportAperta ? (
+                <button onClick={()=>setConfermaImportAperta(true)} style={{...S.btnAccent,padding:"8px 14px",fontSize:12}}>Applica a {righeImportate.length} righe</button>
+              ) : (
+                <div style={{...S.card,cursor:"default",border:`1px solid ${C.warn}`,background:"rgba(217,164,65,0.06)"}}>
+                  <div style={{fontSize:13,fontWeight:600,marginBottom:6}}>Confermi?</div>
+                  <div style={{fontSize:12,color:C.steel,marginBottom:10}}>
+                    Aggiorna {righeImportate.length} prodotti riga per riga, un valore diverso per ciascuno — solo le colonne
+                    compilate nel file. L'operazione va corretta manualmente se sbagliata.
+                  </div>
+                  <div style={{display:"flex",gap:8}}>
+                    <button onClick={applicaImportExcel} style={{...S.btnAccent,padding:"8px 14px",fontSize:12}}>Sì, applica</button>
+                    <button onClick={()=>setConfermaImportAperta(false)} style={{...S.btnS,padding:"8px 14px",fontSize:12}}>Annulla</button>
+                  </div>
+                </div>
+              )}
+            </>)}
+            {statoImport==="salvo" && <div style={{fontSize:11.5,color:C.steel}}>Applico…</div>}
+          </div>
+        )}
+
+        {risultatoImport && (
+          <div style={{marginTop:12,paddingTop:12,borderTop:`1px solid ${C.paperLine}`}}>
+            <div style={{fontSize:12.5,fontWeight:600,color:C.ok}}>✓ {risultatoImport.aggiornati} prodotti aggiornati dal file.</div>
+            {risultatoImport.nonTrovati.length>0 && (
+              <details style={{marginTop:8}}>
+                <summary style={{fontSize:11.5,fontWeight:600,color:C.warn,cursor:"pointer"}}>{risultatoImport.nonTrovati.length} codici non trovati a catalogo</summary>
+                <div style={{maxHeight:140,overflowY:"auto",marginTop:6,padding:"6px 9px",background:C.paper,borderRadius:6,fontSize:11,fontFamily:F_MONO,lineHeight:1.7}}>{risultatoImport.nonTrovati.join(", ")}</div>
+              </details>
+            )}
+          </div>
         )}
       </div>
 
