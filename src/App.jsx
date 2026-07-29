@@ -5246,10 +5246,17 @@ async function generaRapportoInterventoPDF(i, meta={}){
       <div class="lbl">Tipo intervento</div>
       <div class="val">${TIPO_LABELS[i.tipo]||i.tipo||""}</div>
     </div>
-    ${(i.attrezzatura_testo || meta.attrezzaturaNome) ? `
+    ${(i.attrezzatura_testo || meta.attrezzaturaNome) && (!meta.elencoAttrezzature || meta.elencoAttrezzature.length===0) ? `
     <div class="info-box">
       <div class="lbl">Strumento</div>
       <div class="val">${meta.attrezzaturaNome || i.attrezzatura_testo}</div>
+    </div>` : ""}
+    ${(meta.elencoAttrezzature && meta.elencoAttrezzature.length>0) ? `
+    <div class="info-box">
+      <div class="lbl">${meta.elencoAttrezzature.length>1 ? "Attrezzature (marca · modello · n. di serie)" : "Attrezzatura"}</div>
+      <div class="val">${meta.elencoAttrezzature.map(a=>
+        `${a.marca?`<b>${a.marca}</b> — `:""}${a.modello||"—"}${a.numero_serie?` · S/N ${a.numero_serie}`:" · S/N non rilevato"}`
+      ).join("<br/>")}</div>
     </div>` : ""}
     ${(i.articoli && i.articoli.length>0) ? `
     <div class="info-box">
@@ -5257,9 +5264,16 @@ async function generaRapportoInterventoPDF(i, meta={}){
       <div class="val">${i.articoli.map(a=>`${a.mar?a.mar+" — ":""}${a.nome} (${codiceConPrecodice(meta.precodici,a.mar,a.cod)}) × ${a.qty||1}`).join("<br/>")}</div>
     </div>` : ""}
     <div class="info-box">
-      <div class="lbl">Eseguito da</div>
+      <div class="lbl">${i.tecnico_assegnato_nome ? "Tecnico Telos" : "Eseguito da"}</div>
       <div class="val">${i.tecnico_assegnato_nome || meta.assistenzaNome || "—"}</div>
     </div>
+    ${i.esito_collaudo ? `
+    <div class="info-box">
+      <div class="lbl">Esito del collaudo</div>
+      <div class="val" style="font-weight:700;color:${i.esito_collaudo==="positivo"?"#2E7D32":"#C84B3A"}">
+        ${i.esito_collaudo==="positivo" ? "✓ Collaudato con esito positivo — lavoro concluso correttamente" : "⚠ Guasto riscontrato — non è stato possibile concludere il lavoro"}
+      </div>
+    </div>` : ""}
 
     ${checklist.length>0 ? `
     <div class="info-box">
@@ -5270,18 +5284,19 @@ async function generaRapportoInterventoPDF(i, meta={}){
     ${i.note ? `<div class="info-box"><div class="lbl">Note</div><div class="val">${i.note}</div></div>` : ""}
 
     <div class="firma-box">
-      <div class="titolo">Conferma del cliente</div>
+      <div class="titolo">Presa visione e conferma dell'utilizzatore</div>
       ${i.firma_cliente ? `
       <div class="firma-digitale">
+        <div style="font-size:11px;color:#5B6770;margin-bottom:2px">Nome e cognome: <b>${i.firma_nome||"—"}</b></div>
         <img src="${i.firma_cliente}" alt="Firma cliente"/>
-        <div class="firma-digitale-nota">Firmato digitalmente da ${i.firma_nome||"Cliente"}${i.firma_data ? ` il ${new Date(i.firma_data).toLocaleString("it-IT",{dateStyle:"short",timeStyle:"short"})}` : ""}</div>
+        <div class="firma-digitale-nota">Firmato digitalmente${i.firma_data ? ` il ${new Date(i.firma_data).toLocaleString("it-IT",{dateStyle:"short",timeStyle:"short"})}` : ""}</div>
       </div>
       ` : i.conferma_alt_nome ? `
       <div class="firma-digitale-nota" style="margin-top:4px;font-size:11px">
-        ${i.conferma_alt_tipo==="telefonica"?"Conferma telefonica":"Conferma via WhatsApp/email"} del ${i.conferma_alt_data ? new Date(i.conferma_alt_data).toLocaleDateString("it-IT") : ""} — ${i.conferma_alt_nome}
+        Nome e cognome: <b>${i.conferma_alt_nome}</b> — ${i.conferma_alt_tipo==="telefonica"?"conferma telefonica":"conferma via WhatsApp/email"} del ${i.conferma_alt_data ? new Date(i.conferma_alt_data).toLocaleDateString("it-IT") : ""}
       </div>
       ` : `
-      <div class="firma-linee"><div>Luogo e data</div><div>Timbro e firma del Cliente</div></div>
+      <div class="firma-linee"><div>Luogo e data</div><div>Nome, cognome e firma dell'utilizzatore</div></div>
       `}
     </div>
   </div>
@@ -10367,6 +10382,12 @@ function DettaglioIntervento({ intervento, attrezzature, sessione, onIndietro, o
   const [modificaAttrezzatura, setModificaAttrezzatura] = useState(false);
   const [checklist, setChecklist] = useState(intervento.checklist || (intervento.tipo ? (CHECKLIST_TEMPLATES[intervento.tipo]||[]).map(v=>({voce:v,fatto:false})) : []));
   const [note, setNote] = useState(intervento.note || "");
+  // Esito del collaudo (obbligatorio per chiudere, come firma e numeri di
+  // serie) e note interne — queste ultime SOLO per lo staff, non compaiono
+  // mai nel rapporto PDF (a differenza di "note" sopra, che è quella
+  // visibile al cliente nel documento stampato).
+  const [esitoCollaudo, setEsitoCollaudo] = useState(intervento.esito_collaudo || "");
+  const [noteInterne, setNoteInterne] = useState(intervento.note_interne || "");
   const [foto, setFoto] = useState(intervento.foto || []);
   const [documenti, setDocumenti] = useState(intervento.documenti || []);
   const [caricandoAllegato, setCaricandoAllegato] = useState(false);
@@ -10467,7 +10488,8 @@ function DettaglioIntervento({ intervento, attrezzature, sessione, onIndietro, o
   function chiudiIntervento(){
     if(!confermaLocale.firma_cliente && !confermaLocale.conferma_alt_nome) return;
     if(!serialiCompleti) return;
-    salvaPatch({ stato:"Completato", completato_il:new Date().toISOString(), checklist, note: note.trim()||null })
+    if(!esitoCollaudo) return;
+    salvaPatch({ stato:"Completato", completato_il:new Date().toISOString(), checklist, note: note.trim()||null, esito_collaudo: esitoCollaudo, note_interne: noteInterne.trim()||null })
       .then(creaAttrezzatureDaInstallazione);
   }
   // Chiusura semplificata per le assistenze esterne: il rapporto
@@ -10479,9 +10501,10 @@ function DettaglioIntervento({ intervento, attrezzature, sessione, onIndietro, o
   // cliente, checklist compilata) viene comunque salvata.
   function chiudiInterventoSemplice(){
     if(!serialiCompleti) return;
+    if(!esitoCollaudo) return;
     salvaPatch({
       stato:"Completato", completato_il:new Date().toISOString(),
-      checklist, note: note.trim()||null,
+      checklist, note: note.trim()||null, esito_collaudo: esitoCollaudo, note_interne: noteInterne.trim()||null,
       ...confermaLocale,
     }).then(creaAttrezzatureDaInstallazione);
   }
@@ -10726,9 +10749,31 @@ function DettaglioIntervento({ intervento, attrezzature, sessione, onIndietro, o
             </div>
           )}
 
+          <div style={{...S.card,cursor:"default",marginBottom:16,border:`1px solid ${esitoCollaudo?C.paperLine:C.warn}`}}>
+            <div style={{fontSize:12.5,fontWeight:700,marginBottom:4}}>Esito del collaudo *</div>
+            <div style={{fontSize:11.5,color:"#9AA3AB",marginBottom:10}}>Richiesto per chiudere l'intervento — compare nel rapporto PDF.</div>
+            <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+              <button onClick={()=>setEsitoCollaudo("positivo")} style={{
+                flex:"1 1 200px",border:`1px solid ${esitoCollaudo==="positivo"?C.ok:C.paperLine}`,borderRadius:8,padding:"11px",fontSize:12.5,cursor:"pointer",fontWeight:esitoCollaudo==="positivo"?700:500,
+                background:esitoCollaudo==="positivo"?C.ok:"#fff",color:esitoCollaudo==="positivo"?"#fff":"#5B6770",
+              }}>✓ Collaudato, tutto regolare</button>
+              <button onClick={()=>setEsitoCollaudo("guasto")} style={{
+                flex:"1 1 200px",border:`1px solid ${esitoCollaudo==="guasto"?C.danger:C.paperLine}`,borderRadius:8,padding:"11px",fontSize:12.5,cursor:"pointer",fontWeight:esitoCollaudo==="guasto"?700:500,
+                background:esitoCollaudo==="guasto"?C.danger:"#fff",color:esitoCollaudo==="guasto"?"#fff":"#5B6770",
+              }}>⚠ Guasto riscontrato, lavoro non concluso</button>
+            </div>
+          </div>
+
           <div style={{...S.card,cursor:"default",marginBottom:16}}>
-            <div style={{fontSize:12.5,fontWeight:700,marginBottom:8}}>Note sull'intervento</div>
+            <div style={{fontSize:12.5,fontWeight:700,marginBottom:8}}>Note visibili al cliente</div>
+            <div style={{fontSize:11,color:"#9AA3AB",marginBottom:8}}>Compaiono nel rapporto PDF consegnato al cliente.</div>
             <textarea value={note} onChange={e=>setNote(e.target.value)} rows={3} placeholder="Facoltative" style={{...S.inp,resize:"vertical"}}/>
+          </div>
+
+          <div style={{...S.card,cursor:"default",marginBottom:16,background:"rgba(217,164,65,0.06)"}}>
+            <div style={{fontSize:12.5,fontWeight:700,marginBottom:8}}>Note interne</div>
+            <div style={{fontSize:11,color:"#9AA3AB",marginBottom:8}}>Solo per lo staff — NON compaiono nel rapporto PDF né sono visibili al cliente.</div>
+            <textarea value={noteInterne} onChange={e=>setNoteInterne(e.target.value)} rows={3} placeholder="Facoltative" style={{...S.inp,resize:"vertical"}}/>
           </div>
 
           <div style={{...S.card,cursor:"default",marginBottom:16}}>
@@ -10792,9 +10837,9 @@ function DettaglioIntervento({ intervento, attrezzature, sessione, onIndietro, o
               <SezioneConferma record={confermaLocale} editable={true} onAggiorna={aggiornaConferma}/>
               <div style={{fontSize:11.5,color:"#9AA3AB",marginBottom:10}}>Il rapporto firmato (checklist + conferma cliente) chiude l'intervento del personale interno.</div>
               <button
-                disabled={salvando || (!confermaLocale.firma_cliente && !confermaLocale.conferma_alt_nome) || !serialiCompleti}
+                disabled={salvando || (!confermaLocale.firma_cliente && !confermaLocale.conferma_alt_nome) || !serialiCompleti || !esitoCollaudo}
                 onClick={chiudiIntervento}
-                style={{...S.btnAccent,width:"100%",padding:"13px",fontWeight:700,opacity:(confermaLocale.firma_cliente||confermaLocale.conferma_alt_nome)&&serialiCompleti?1:0.5}}
+                style={{...S.btnAccent,width:"100%",padding:"13px",fontWeight:700,opacity:(confermaLocale.firma_cliente||confermaLocale.conferma_alt_nome)&&serialiCompleti&&esitoCollaudo?1:0.5}}
               >
                 {salvando?"…":"✓ Chiudi intervento"}
               </button>
@@ -10804,9 +10849,9 @@ function DettaglioIntervento({ intervento, attrezzature, sessione, onIndietro, o
               <div style={{fontSize:11.5,color:"#9AA3AB",marginBottom:10}}>Eseguito da un'assistenza esterna — la chiusura non richiede un rapporto firmato, che potremmo non ricevere dal fornitore. Se hai comunque una conferma del cliente puoi aggiungerla, non è obbligatoria.</div>
               <SezioneConferma record={confermaLocale} editable={true} onAggiorna={aggiornaConferma}/>
               <button
-                disabled={salvando || !serialiCompleti}
+                disabled={salvando || !serialiCompleti || !esitoCollaudo}
                 onClick={chiudiInterventoSemplice}
-                style={{...S.btnAccent,width:"100%",padding:"13px",fontWeight:700,opacity:(salvando||!serialiCompleti)?0.6:1}}
+                style={{...S.btnAccent,width:"100%",padding:"13px",fontWeight:700,opacity:(salvando||!serialiCompleti||!esitoCollaudo)?0.6:1}}
               >
                 {salvando?"…":"✓ Segna come concluso"}
               </button>
@@ -10829,7 +10874,16 @@ function DettaglioIntervento({ intervento, attrezzature, sessione, onIndietro, o
               ))}
             </div>
           )}
-          {note && <div style={{...S.card,cursor:"default",marginBottom:16}}><div style={{fontSize:12.5,fontWeight:700,marginBottom:6}}>Note</div><div style={{fontSize:12.5,color:C.steel,whiteSpace:"pre-line"}}>{note}</div></div>}
+          {intervento.esito_collaudo && (
+            <div style={{...S.card,cursor:"default",marginBottom:16,display:"flex",alignItems:"center",gap:10}}>
+              <span style={{fontSize:12.5,fontWeight:700}}>Esito collaudo:</span>
+              <Tag tone={intervento.esito_collaudo==="positivo"?"ok":"danger"}>
+                {intervento.esito_collaudo==="positivo"?"✓ Collaudato, tutto regolare":"⚠ Guasto riscontrato, lavoro non concluso"}
+              </Tag>
+            </div>
+          )}
+          {note && <div style={{...S.card,cursor:"default",marginBottom:16}}><div style={{fontSize:12.5,fontWeight:700,marginBottom:6}}>Note (visibili al cliente)</div><div style={{fontSize:12.5,color:C.steel,whiteSpace:"pre-line"}}>{note}</div></div>}
+          {noteInterne && <div style={{...S.card,cursor:"default",marginBottom:16,background:"rgba(217,164,65,0.06)"}}><div style={{fontSize:12.5,fontWeight:700,marginBottom:6}}>Note interne (non nel PDF)</div><div style={{fontSize:12.5,color:C.steel,whiteSpace:"pre-line"}}>{noteInterne}</div></div>}
 
           {(foto.length>0 || documenti.length>0) && (
             <div style={{...S.card,cursor:"default",marginBottom:16}}>
@@ -10872,9 +10926,27 @@ function DettaglioIntervento({ intervento, attrezzature, sessione, onIndietro, o
               onClick={async ()=>{
                 setGenerandoPdf(true);
                 try{
+                  // Marca/modello/N. di serie da stampare nel rapporto:
+                  // - intervento su un'attrezzatura già registrata → quella
+                  // - installazione di una o più unità nuove → le righe
+                  //   effettivamente create in "attrezzature" al momento
+                  //   della chiusura (collegate via intervento_id: i numeri
+                  //   di serie inseriti in chiusura non restano altrove,
+                  //   vanno recuperati da lì, non dallo stato locale
+                  //   "seriali" che a PDF già chiuso è di nuovo vuoto)
+                  let elencoAttrezzature = [];
+                  if(unitaInstallazione.length>0){
+                    try{
+                      const installate = await sbGetAuth("attrezzature", `select=marchio,nome_prodotto,numero_serie&intervento_id=eq.${intervento.id}`, accessToken);
+                      elencoAttrezzature = (installate||[]).map(a=>({ marca:a.marchio, modello:a.nome_prodotto, numero_serie:a.numero_serie }));
+                    }catch{ /* il PDF si genera comunque, solo senza questa sezione */ }
+                  } else if(attrezzaturaCollegata){
+                    elencoAttrezzature = [{ marca:attrezzaturaCollegata.marchio, modello:attrezzaturaCollegata.nome_prodotto, numero_serie:attrezzaturaCollegata.numero_serie }];
+                  }
                   await generaRapportoInterventoPDF(intervento, {
                     attrezzaturaNome: attrezzaturaCollegata?.nome_prodotto,
                     assistenzaNome: assistenzaAssegnata?.nome,
+                    elencoAttrezzature,
                     precodici,
                   });
                 } finally { setGenerandoPdf(false); }
