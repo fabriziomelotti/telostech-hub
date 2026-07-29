@@ -225,13 +225,13 @@ const LOGO_TELOSTECH = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAsMAAAFXCA
 // ─── DATI DEMO ────────────────────────────────────────────────────────────────
 const RUOLI = {
   commerciale: {label:"Commerciale", initials:"MC", nome:"Marco Conti",
-    nav:["home","ai","prodotti","clienti","promemoria","preventivi","ordini","ticket"]},
+    nav:["home","ai","prodotti","clienti","promemoria","preventivi","ordini","statistiche","ticket"]},
   tecnico: {label:"Tecnico", initials:"LR", nome:"Luca Rossi",
     nav:["home","ai","interventi","ticket","clienti","promemoria","prodotti"]},
   responsabile: {label:"Responsabile", initials:"GF", nome:"Giovanni Ferri",
-    nav:["home","ai","prodotti","clienti","promemoria","preventivi","ordini","interventi","ticket","gestione"]},
+    nav:["home","ai","prodotti","clienti","promemoria","preventivi","ordini","statistiche","interventi","ticket","gestione"]},
   admin: {label:"Admin", initials:"AM", nome:"Amministratore",
-    nav:["home","ai","prodotti","clienti","promemoria","preventivi","ordini","interventi","ticket","gestione","admin"]},
+    nav:["home","ai","prodotti","clienti","promemoria","preventivi","ordini","statistiche","interventi","ticket","gestione","admin"]},
   // Nav vuota di proposito: il portale cliente vero e proprio non è ancora
   // costruito. Finché non lo è, un account "cliente" non deve avere
   // accesso a NESSUNA delle aree pensate per lo staff — vedi il gate
@@ -300,6 +300,7 @@ function Icon({ name, size=20, color="currentColor", strokeWidth=1.6 }){
 const NAV_META = {
   home:{icon:"home",label:"Dashboard"}, ai:{icon:"sparkle",label:"TESSA"}, prodotti:{icon:"grid",label:"Catalogo"},
   clienti:{icon:"users",label:"Clienti"}, promemoria:{icon:"flag",label:"Promemoria"}, preventivi:{icon:"document",label:"Preventivi"}, ordini:{icon:"box",label:"Ordini"},
+  statistiche:{icon:"chart",label:"Statistiche"},
   interventi:{icon:"wrench",label:"Assistenza"}, ticket:{icon:"mail",label:"Ticket"},
   admin:{icon:"settings",label:"Admin"}, gestione:{icon:"tools",label:"Gestione"},
 };
@@ -908,6 +909,7 @@ export default function App(){
           {area==="promemoria" && <Promemoria sessione={sessione} ruolo={role} preventivi={preventivi} interventi={interventi} ordini={ordini} promemoria={promemoria} setPromemoria={setPromemoria} setArea={setArea}/>}
           {area==="preventivi" && <Preventivi cart={cart} setCart={setCart} preventivi={preventivi} setPreventivi={setPreventivi} setOrdini={setOrdini} setArea={setArea} ruolo={role} catalog={catalog} sessione={sessione} precodici={precodici} isMobile={isMobile}/>}
           {area==="ordini" && <Ordini ordini={ordini} setOrdini={setOrdini} preventivi={preventivi} setPreventivi={setPreventivi} setInterventi={setInterventi} catalog={catalog} sessione={sessione} ruolo={role} precodici={precodici} isMobile={isMobile}/>}
+          {area==="statistiche" && <Statistiche preventivi={preventivi} ordini={ordini} catalog={catalog} sessione={sessione} ruolo={role}/>}
           {area==="interventi" && <Interventi interventi={interventi} setInterventi={setInterventi} attrezzature={attrezzature} sessione={sessione} setArea={setArea} interventoDaCompletare={interventoDaCompletare} setInterventoDaCompletare={setInterventoDaCompletare} catalog={catalog} ruolo={role} precodici={precodici} isMobile={isMobile}/>}
           {area==="ticket" && <TicketAssistenza sessione={sessione} ruolo={role} ticketDaAprire={ticketDaAprire} setTicketDaAprire={setTicketDaAprire} catalog={catalog}/>}
           {area==="admin" && <PannelloAdmin ruolo={role} sessione={sessione} catalog={catalog}/>}
@@ -3028,19 +3030,45 @@ function Clienti({sessione, preventivi, ordini, attrezzature, setAttrezzature, i
 // interventi (vedi funzioni sopra Home) e non salvate da nessuna parte.
 function Promemoria({sessione, ruolo, preventivi, interventi, ordini, promemoria, setPromemoria, setArea}){
   const accessToken = trovaAccessToken(sessione);
+  const mioId = sessione?.user?.id;
   const puoVedereTeam = ruolo==="responsabile" || ruolo==="admin";
   const [vistaTeam,setVistaTeam] = useState(false);
   const [formAperto,setFormAperto] = useState(false);
   const [clienteForm,setClienteForm] = useState(null);
   const [testoForm,setTestoForm] = useState("");
   const [scadenzaForm,setScadenzaForm] = useState("");
+  const [condiviConForm,setCondiviConForm] = useState([]); // [{id,nome}]
+  const [assegnaAForm,setAssegnaAForm] = useState(null); // {id,nome} | null
   const [salvando,setSalvando] = useState(false);
   const [errore,setErrore] = useState("");
   const [confermaEliminaId,setConfermaEliminaId] = useState(null);
+  // Modifica condivisione/assegnazione DOPO la creazione — id del
+  // promemoria attualmente in modifica, o null se nessuno.
+  const [modificaCondivisioneId,setModificaCondivisioneId] = useState(null);
+  const [condiviConModifica,setCondiviConModifica] = useState([]);
+  const [assegnaAModifica,setAssegnaAModifica] = useState(null);
+  const [salvandoCondivisione,setSalvandoCondivisione] = useState(false);
 
-  // "Propri" per nome (come mieiSaltati in ListaPreventivi) — non abbiamo
-  // l'id utente lato client, solo il nome della sessione.
-  const mieiPromemoria = useMemo(()=>(promemoria||[]).filter(p=>p.autore_nome===sessione?.nome),[promemoria,sessione]);
+  // Colleghi disponibili per condivisione/assegnazione — "chiunque in
+  // Telos" (non solo lo stesso ruolo), esclusi gli account cliente del
+  // portale (chiamaUtentiInfo li filtra già di default) e sé stessi.
+  const [colleghi,setColleghi] = useState([]);
+  useEffect(()=>{
+    chiamaUtentiInfo(accessToken)
+      .then(d=>setColleghi((d?.utenti||[]).filter(u=>u.id!==mioId)))
+      .catch(()=>setColleghi([]));
+  },[]);
+
+
+  // "Propri" per nome (come mieiSaltati in ListaPreventivi, per le righe
+  // create prima di questa funzione) + per id (righe nuove, più affidabile)
+  // + condivisi con me + assegnati a me.
+  const mieiPromemoria = useMemo(()=>(promemoria||[]).filter(p=>
+    p.autore_nome===sessione?.nome ||
+    (mioId && p.autore_id===mioId) ||
+    (mioId && (p.condiviso_con_ids||[]).includes(mioId)) ||
+    (mioId && p.assegnato_a_id===mioId)
+  ),[promemoria,sessione,mioId]);
   const elencoBase = (puoVedereTeam && vistaTeam) ? (promemoria||[]) : mieiPromemoria;
   const aperti = useMemo(()=>[...elencoBase.filter(p=>p.stato==="aperto")].sort((a,b)=>{
     const ga=giorniA(a.scadenza), gb=giorniA(b.scadenza);
@@ -3064,6 +3092,22 @@ function Promemoria({sessione, ruolo, preventivi, interventi, ordini, promemoria
   const interventiScadenzaList = useMemo(()=>interventiScadenzaVicina(interventi),[interventi]);
   const interventiMancaList = useMemo(()=>interventiMancaInfo(interventi),[interventi]);
 
+  // Crea una notifica (push, via lo stesso meccanismo già in uso per
+  // ticket/attrezzature: INSERT in "notifiche" → Database Webhook →
+  // invia-push) per ogni collega appena aggiunto in condivisione o
+  // assegnazione. "Appena aggiunto" e non "tutti i destinatari attuali":
+  // altrimenti ri-salvare un promemoria già condiviso rimanderebbe la
+  // notifica anche a chi l'aveva già ricevuta.
+  async function notificaColleghi(idsNuovi, testoPromemoria, tipo){
+    const testo = tipo==="assegnato"
+      ? `${sessione?.nome||"Un collega"} ti ha assegnato un promemoria: "${testoPromemoria}"`
+      : `${sessione?.nome||"Un collega"} ha condiviso con te un promemoria: "${testoPromemoria}"`;
+    for(const id of idsNuovi){
+      try{ await sbAuth("POST","notifiche","",{ profilo_id:id, testo, link:"/promemoria" },accessToken); }
+      catch{ /* la notifica push è un valore aggiunto, non deve bloccare il salvataggio del promemoria */ }
+    }
+  }
+
   async function salvaNuovo(){
     if(!testoForm.trim()) return;
     setSalvando(true); setErrore("");
@@ -3074,10 +3118,17 @@ function Promemoria({sessione, ruolo, preventivi, interventi, ordini, promemoria
         testo: testoForm.trim(),
         scadenza: scadenzaForm || null,
         autore_nome: sessione?.nome || null,
+        autore_id: mioId || null,
+        condiviso_con_ids: condiviConForm.length>0 ? condiviConForm.map(c=>c.id) : null,
+        condiviso_con_nomi: condiviConForm.length>0 ? condiviConForm.map(c=>`${c.nome} ${c.cognome||""}`.trim()) : null,
+        assegnato_a_id: assegnaAForm?.id || null,
+        assegnato_a_nome: assegnaAForm ? `${assegnaAForm.nome} ${assegnaAForm.cognome||""}`.trim() : null,
       };
       const [salvato] = await sbAuth("POST","promemoria","",payload,accessToken);
       setPromemoria(prev=>[salvato,...prev]);
-      setTestoForm(""); setClienteForm(null); setScadenzaForm(""); setFormAperto(false);
+      if(condiviConForm.length>0) notificaColleghi(condiviConForm.map(c=>c.id), payload.testo, "condiviso");
+      if(assegnaAForm) notificaColleghi([assegnaAForm.id], payload.testo, "assegnato");
+      setTestoForm(""); setClienteForm(null); setScadenzaForm(""); setCondiviConForm([]); setAssegnaAForm(null); setFormAperto(false);
     }catch(err){
       setErrore("Salvataggio non riuscito: "+err.message);
     }
@@ -3105,10 +3156,77 @@ function Promemoria({sessione, ruolo, preventivi, interventi, ordini, promemoria
     setConfermaEliminaId(null);
   }
 
+  function apriModificaCondivisione(p){
+    setModificaCondivisioneId(p.id);
+    setCondiviConModifica((p.condiviso_con_ids||[]).map((id,i)=>({id, nome:(p.condiviso_con_nomi||[])[i]||"?"})));
+    setAssegnaAModifica(p.assegnato_a_id ? {id:p.assegnato_a_id, nome:p.assegnato_a_nome||"?"} : null);
+  }
+  function chiudiModificaCondivisione(){
+    setModificaCondivisioneId(null); setCondiviConModifica([]); setAssegnaAModifica(null);
+  }
+  async function salvaCondivisione(p){
+    setSalvandoCondivisione(true); setErrore("");
+    try{
+      const payload = {
+        condiviso_con_ids: condiviConModifica.length>0 ? condiviConModifica.map(c=>c.id) : null,
+        condiviso_con_nomi: condiviConModifica.length>0 ? condiviConModifica.map(c=>c.nome) : null,
+        assegnato_a_id: assegnaAModifica?.id || null,
+        assegnato_a_nome: assegnaAModifica?.nome || null,
+      };
+      await sbAuth("PATCH","promemoria",`id=eq.${p.id}`,payload,accessToken);
+      setPromemoria(prev=>prev.map(x=>x.id===p.id?{...x,...payload}:x));
+      // Notifica solo i destinatari NUOVI rispetto a prima del salvataggio,
+      // per non rimandare il push a chi il promemoria ce l'aveva già.
+      const idsCondivisiPrima = new Set(p.condiviso_con_ids||[]);
+      const nuoviCondivisi = condiviConModifica.filter(c=>!idsCondivisiPrima.has(c.id));
+      if(nuoviCondivisi.length>0) notificaColleghi(nuoviCondivisi.map(c=>c.id), p.testo, "condiviso");
+      if(assegnaAModifica && assegnaAModifica.id!==p.assegnato_a_id) notificaColleghi([assegnaAModifica.id], p.testo, "assegnato");
+      chiudiModificaCondivisione();
+    }catch(err){
+      setErrore("Salvataggio non riuscito: "+err.message);
+    }
+    setSalvandoCondivisione(false);
+  }
+
+  function selettoreCondividi(selezionati, onCambia){
+    return (
+      <div>
+        <label style={{fontSize:11,fontFamily:F_MONO,color:"#9AA3AB",textTransform:"uppercase",letterSpacing:"0.05em",display:"block",marginBottom:6}}>Condividi con (opzionale)</label>
+        <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
+          {colleghi.map(c=>{
+            const attivo = selezionati.some(s=>s.id===c.id);
+            return (
+              <span key={c.id} onClick={()=>onCambia(attivo ? selezionati.filter(s=>s.id!==c.id) : [...selezionati,{id:c.id,nome:`${c.nome} ${c.cognome||""}`.trim()}])}
+                style={{fontSize:11.5,padding:"5px 10px",borderRadius:20,border:`1px solid ${attivo?C.ink:C.paperLine}`,background:attivo?C.ink:"#fff",color:attivo?"#fff":"#5B6770",cursor:"pointer"}}>
+                {c.nome} {c.cognome||""}
+              </span>
+            );
+          })}
+        </div>
+      </div>
+    );
+  }
+  function selettoreAssegna(selezionato, onCambia){
+    return (
+      <div>
+        <label style={{fontSize:11,fontFamily:F_MONO,color:"#9AA3AB",textTransform:"uppercase",letterSpacing:"0.05em",display:"block",marginBottom:6}}>Assegna a un collega (opzionale — il compito passa a lui)</label>
+        <select value={selezionato?.id||""} onChange={e=>{
+          const c = colleghi.find(x=>x.id===e.target.value);
+          onCambia(c ? {id:c.id, nome:`${c.nome} ${c.cognome||""}`.trim()} : null);
+        }} style={{...S.inp,color:selezionato?C.charcoal:"#9AA3AB"}}>
+          <option value="">— resta a me —</option>
+          {colleghi.map(c=>(<option key={c.id} value={c.id}>{c.nome} {c.cognome||""}</option>))}
+        </select>
+      </div>
+    );
+  }
+
   function rigaPromemoria(p){
     const giorni = giorniA(p.scadenza);
     const scaduto = giorni!==null && giorni<0;
     const vicino = giorni!==null && giorni>=0 && giorni<=GIORNI_PREAVVISO_PROMEMORIA;
+    const sonoAutore = p.autore_nome===sessione?.nome || (mioId && p.autore_id===mioId);
+    const puoEliminare = sonoAutore || (vistaTeam && puoVedereTeam);
     return (
       <div key={p.id} style={{...S.card,cursor:"default",...(scaduto?{borderColor:C.danger}:vicino?{borderColor:C.warn}:{})}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:10}}>
@@ -3121,14 +3239,27 @@ function Promemoria({sessione, ruolo, preventivi, interventi, ordini, promemoria
                   {scaduto?"⚠ scaduto il ":"entro il "}{new Date(p.scadenza).toLocaleDateString("it-IT")}
                 </span>
               )}
-              {vistaTeam && p.autore_nome && <Tag tone="steel">{p.autore_nome}</Tag>}
+              {(vistaTeam || !sonoAutore) && p.autore_nome && <Tag tone="steel">di {p.autore_nome}</Tag>}
+              {(p.condiviso_con_nomi||[]).length>0 && <Tag tone="steel">condiviso con {p.condiviso_con_nomi.join(", ")}</Tag>}
+              {p.assegnato_a_nome && <Tag tone="warn">assegnato a {p.assegnato_a_nome}</Tag>}
             </div>
           </div>
           <div style={{display:"flex",flexDirection:"column",gap:6,flexShrink:0}}>
             <button onClick={()=>segnaFatto(p)} style={{...S.btnS,padding:"6px 10px",fontSize:11.5}}>✓ Fatto</button>
-            <button onClick={()=>setConfermaEliminaId(p.id)} style={{...S.btnS,padding:"6px 10px",fontSize:11.5,color:C.danger}}>Elimina</button>
+            {sonoAutore && <button onClick={()=>apriModificaCondivisione(p)} style={{...S.btnS,padding:"6px 10px",fontSize:11.5}}>⇄ Condividi/assegna</button>}
+            {puoEliminare && <button onClick={()=>setConfermaEliminaId(p.id)} style={{...S.btnS,padding:"6px 10px",fontSize:11.5,color:C.danger}}>Elimina</button>}
           </div>
         </div>
+        {modificaCondivisioneId===p.id && (
+          <div style={{marginTop:10,paddingTop:10,borderTop:`1px solid ${C.paperLine}`}}>
+            <div style={{marginBottom:10}}>{selettoreCondividi(condiviConModifica, setCondiviConModifica)}</div>
+            <div style={{marginBottom:10}}>{selettoreAssegna(assegnaAModifica, setAssegnaAModifica)}</div>
+            <div style={{display:"flex",gap:8}}>
+              <button onClick={()=>salvaCondivisione(p)} disabled={salvandoCondivisione} style={{...S.btnAccent,padding:"7px 12px",fontSize:12}}>{salvandoCondivisione?"Salvo…":"Salva"}</button>
+              <button onClick={chiudiModificaCondivisione} style={{...S.btnS,padding:"7px 12px",fontSize:12}}>Annulla</button>
+            </div>
+          </div>
+        )}
         {confermaEliminaId===p.id && (
           <div style={{marginTop:10,paddingTop:10,borderTop:`1px solid ${C.paperLine}`}}>
             <div style={{fontSize:12,color:C.steel,marginBottom:8}}>Eliminare questo promemoria? L'operazione non è reversibile.</div>
@@ -3236,10 +3367,14 @@ function Promemoria({sessione, ruolo, preventivi, interventi, ordini, promemoria
               <label style={{fontSize:11,fontFamily:F_MONO,color:"#9AA3AB",textTransform:"uppercase",letterSpacing:"0.05em",display:"block",marginBottom:4}}>Scadenza (opzionale)</label>
               <input type="date" value={scadenzaForm} onChange={e=>setScadenzaForm(e.target.value)} style={S.inp}/>
             </div>
+            {colleghi.length>0 && (<>
+              <div style={{marginBottom:12}}>{selettoreCondividi(condiviConForm, setCondiviConForm)}</div>
+              <div style={{marginBottom:12}}>{selettoreAssegna(assegnaAForm, setAssegnaAForm)}</div>
+            </>)}
             {errore && <div style={{fontSize:12,color:C.danger,marginBottom:10}}>⚠ {errore}</div>}
             <div style={{display:"flex",gap:8}}>
               <button onClick={salvaNuovo} disabled={!testoForm.trim()||salvando} style={{...S.btnAccent,padding:"10px 16px",opacity:testoForm.trim()?1:0.4}}>{salvando?"Salvo…":"Salva promemoria"}</button>
-              <button onClick={()=>{setFormAperto(false); setTestoForm(""); setClienteForm(null); setScadenzaForm(""); setErrore("");}} style={{...S.btnS,padding:"10px 16px"}}>Annulla</button>
+              <button onClick={()=>{setFormAperto(false); setTestoForm(""); setClienteForm(null); setScadenzaForm(""); setCondiviConForm([]); setAssegnaAForm(null); setErrore("");}} style={{...S.btnS,padding:"10px 16px"}}>Annulla</button>
             </div>
           </div>
         ) : (
@@ -7695,6 +7830,383 @@ function PreventiviSaltati({preventivi}){
           ))}
         </>
       )}
+    </div>
+  );
+}
+
+// ─── STATISTICHE ────────────────────────────────────────────────────────────
+// Rapporto preventivi inviati/conclusi rispetto ai saltati (per motivazione:
+// prezzo alto / scelta concorrente / vendita rimandata / altro — le stesse 4
+// categorie di MOTIVI_SALTO), sia a numero che a importo; rapporto ordini
+// diretti (senza preventivo) rispetto a quelli nati da preventivo accettato,
+// con evidenza degli ordini diretti evasi; segmentazione per marchio,
+// categoria e tipologia; filtro/confronto per periodo (mese su anno).
+//
+// Solo preventivi/ordini già usciti dalla fase di bozza/inserimento contano
+// ai fini della statistica — una bozza non ancora inviata non è né un
+// successo né un fallimento commerciale.
+//
+// Visibilità: un commerciale vede solo i propri — creati da lui stesso,
+// OPPURE creati da un responsabile che lo ha indicato come referente Telos
+// (vende "a suo nome"). Responsabile/admin possono invece scegliere: vista
+// globale su tutti gli agenti, un agente specifico, un cliente specifico, o
+// mettere a confronto due o più agenti.
+
+// Somma di un campo importo su un elenco di preventivi/ordini.
+function sommaVal(elenco){ return elenco.reduce((s,x)=>s+(x.val||0),0); }
+
+function calcolaStatistiche(elenco){
+  const totale = elenco.length;
+  const totaleVal = sommaVal(elenco);
+  const gruppo = stato => elenco.filter(p=>p.stato===stato);
+  const inviatiArr = gruppo("Inviato"), conclusiArr = gruppo("Convertito in ordine");
+  const sospesiArr = gruppo("Sospeso"), saltatiArr = gruppo("Saltato");
+  const perMotivo = {};
+  Object.keys(MOTIVI_SALTO).forEach(k=>{
+    const arr = saltatiArr.filter(p=>p.motivo_saltato_tipo===k);
+    perMotivo[k] = { n:arr.length, val:sommaVal(arr) };
+  });
+  const pctN = n => totale>0 ? Math.round((n/totale)*1000)/10 : 0;
+  const pctV = v => totaleVal>0 ? Math.round((v/totaleVal)*1000)/10 : 0;
+  return {
+    totale, totaleVal,
+    inviati:{n:inviatiArr.length,val:sommaVal(inviatiArr)},
+    conclusi:{n:conclusiArr.length,val:sommaVal(conclusiArr)},
+    sospesi:{n:sospesiArr.length,val:sommaVal(sospesiArr)},
+    saltati:{n:saltatiArr.length,val:sommaVal(saltatiArr)},
+    perMotivo, pctN, pctV,
+  };
+}
+
+// Ordini "usciti dall'inserimento" (esclusi Inserito/Annullato, che non
+// rappresentano un esito commerciale) — quanti nascono da un preventivo
+// accettato e quanti sono diretti, con evidenza dei diretti evasi.
+function calcolaStatisticheOrdini(elenco){
+  const base = elenco.filter(o=>o.stato!=="Inserito" && o.stato!=="Annullato");
+  const totale = base.length, totaleVal = sommaVal(base);
+  const conPreventivoArr = base.filter(o=>o.preventivo_id);
+  const direttiArr = base.filter(o=>!o.preventivo_id);
+  const direttiEvasiArr = direttiArr.filter(o=>o.stato==="Evaso");
+  const pctN = n => totale>0 ? Math.round((n/totale)*1000)/10 : 0;
+  const pctV = v => totaleVal>0 ? Math.round((v/totaleVal)*1000)/10 : 0;
+  return {
+    totale, totaleVal,
+    conPreventivo:{n:conPreventivoArr.length,val:sommaVal(conPreventivoArr)},
+    diretti:{n:direttiArr.length,val:sommaVal(direttiArr)},
+    direttiEvasi:{n:direttiEvasiArr.length,val:sommaVal(direttiEvasiArr)},
+    pctN, pctV,
+  };
+}
+
+// Segmentazione per marchio/categoria/tipologia: somma a livello di RIGA
+// (netto×qty), non di documento intero — un preventivo può contenere
+// prodotti di più marchi, quindi va scomposto riga per riga per non
+// contare lo stesso importo due volte sotto segmenti diversi.
+// tipologiaPerCodice: le righe salvate portano marchio e categoria ma non
+// la tipologia — va recuperata dal catalogo tramite il codice prodotto.
+function segmentazione(elenco, campo, tipologiaPerCodice){
+  const mappa = new Map();
+  elenco.forEach(doc=>{
+    (doc.righe||[]).forEach(r=>{
+      const valore = campo==="tip" ? (tipologiaPerCodice.get(r.cod)||"") : (r[campo]||"");
+      if(!valore) return;
+      const importo = (r.netto||0)*(r.qty||1);
+      const cur = mappa.get(valore) || {n:0,val:0};
+      cur.n += 1; cur.val += importo;
+      mappa.set(valore, cur);
+    });
+  });
+  return [...mappa.entries()].map(([valore,d])=>({valore,...d})).sort((a,b)=>b.val-a.val);
+}
+
+function RigaBarra({etichetta, n, val, pctN, pctV, colore}){
+  return (
+    <div style={{marginBottom:10}}>
+      <div style={{display:"flex",justifyContent:"space-between",fontSize:12.5,marginBottom:4,gap:8}}>
+        <span>{etichetta}</span>
+        <span className="tnum" style={{fontFamily:F_MONO,color:C.steel,textAlign:"right",flexShrink:0}}>
+          {n} ({pctN}%) · €{val.toLocaleString("it-IT")} ({pctV}%)
+        </span>
+      </div>
+      <div style={{height:7,background:C.paper,borderRadius:4,overflow:"hidden",display:"flex"}}>
+        <div style={{height:"100%",width:`${pctN}%`,background:colore,opacity:0.55}} title="quota a numero"/>
+      </div>
+      <div style={{height:4,background:C.paper,borderRadius:3,overflow:"hidden",marginTop:2}}>
+        <div style={{height:"100%",width:`${pctV}%`,background:colore}} title="quota a valore"/>
+      </div>
+    </div>
+  );
+}
+
+function BloccoSegmentazione({titolo, righe}){
+  if(righe.length===0) return null;
+  const totaleVal = righe.reduce((s,r)=>s+r.val,0);
+  const daMostrare = righe.slice(0,8);
+  return (
+    <div style={{marginTop:14,paddingTop:14,borderTop:`1px solid ${C.paperLine}`}}>
+      <div style={{fontSize:11,fontFamily:F_MONO,color:"#9AA3AB",textTransform:"uppercase",letterSpacing:"0.05em",marginBottom:8}}>{titolo}</div>
+      {daMostrare.map(r=>{
+        const pct = totaleVal>0 ? Math.round((r.val/totaleVal)*1000)/10 : 0;
+        return (
+          <div key={r.valore} style={{display:"flex",justifyContent:"space-between",fontSize:12,padding:"4px 0"}}>
+            <span>{r.valore}</span>
+            <span className="tnum" style={{fontFamily:F_MONO,color:C.steel}}>{r.n} art. · €{r.val.toLocaleString("it-IT")} ({pct}%)</span>
+          </div>
+        );
+      })}
+      {righe.length>8 && <div style={{fontSize:11,color:"#9AA3AB",marginTop:4}}>+ altri {righe.length-8}</div>}
+    </div>
+  );
+}
+
+function BloccoStatistiche({titolo, stat, statOrdini, segmentazioni}){
+  return (
+    <div style={{...S.card,cursor:"default",marginBottom:16}}>
+      <div style={S.eyebrow}>{titolo}</div>
+
+      <div style={{fontSize:11,fontFamily:F_MONO,color:"#9AA3AB",textTransform:"uppercase",letterSpacing:"0.05em",margin:"10px 0 8px"}}>Preventivi</div>
+      <div className="tnum" style={{fontSize:11.5,color:"#9AA3AB",marginBottom:12}}>{stat.totale} preventivi usciti dalla fase di bozza · €{stat.totaleVal.toLocaleString("it-IT")}</div>
+      {stat.totale===0 ? (
+        <div style={{fontSize:12.5,color:"#9AA3AB"}}>Nessun preventivo in questa selezione.</div>
+      ) : (<>
+        <RigaBarra etichetta="Conclusi (convertiti in ordine)" n={stat.conclusi.n} val={stat.conclusi.val} pctN={stat.pctN(stat.conclusi.n)} pctV={stat.pctV(stat.conclusi.val)} colore={C.ok}/>
+        <RigaBarra etichetta="Inviati, in attesa" n={stat.inviati.n} val={stat.inviati.val} pctN={stat.pctN(stat.inviati.n)} pctV={stat.pctV(stat.inviati.val)} colore={C.warn}/>
+        <RigaBarra etichetta="Sospesi" n={stat.sospesi.n} val={stat.sospesi.val} pctN={stat.pctN(stat.sospesi.n)} pctV={stat.pctV(stat.sospesi.val)} colore={C.steel}/>
+        <RigaBarra etichetta="Saltati (totale)" n={stat.saltati.n} val={stat.saltati.val} pctN={stat.pctN(stat.saltati.n)} pctV={stat.pctV(stat.saltati.val)} colore={C.danger}/>
+        {stat.saltati.n>0 && (
+          <div style={{marginTop:10,marginLeft:10}}>
+            {Object.entries(MOTIVI_SALTO).map(([k,lbl])=>(
+              <RigaBarra key={k} etichetta={lbl} n={stat.perMotivo[k].n} val={stat.perMotivo[k].val} pctN={stat.pctN(stat.perMotivo[k].n)} pctV={stat.pctV(stat.perMotivo[k].val)} colore={C.danger}/>
+            ))}
+          </div>
+        )}
+      </>)}
+
+      {statOrdini && (<>
+        <div style={{fontSize:11,fontFamily:F_MONO,color:"#9AA3AB",textTransform:"uppercase",letterSpacing:"0.05em",margin:"18px 0 8px",paddingTop:14,borderTop:`1px solid ${C.paperLine}`}}>Ordini</div>
+        <div className="tnum" style={{fontSize:11.5,color:"#9AA3AB",marginBottom:12}}>{statOrdini.totale} ordini usciti dall'inserimento · €{statOrdini.totaleVal.toLocaleString("it-IT")}</div>
+        {statOrdini.totale===0 ? (
+          <div style={{fontSize:12.5,color:"#9AA3AB"}}>Nessun ordine in questa selezione.</div>
+        ) : (<>
+          <RigaBarra etichetta="Con preventivo accettato" n={statOrdini.conPreventivo.n} val={statOrdini.conPreventivo.val} pctN={statOrdini.pctN(statOrdini.conPreventivo.n)} pctV={statOrdini.pctV(statOrdini.conPreventivo.val)} colore={C.ink}/>
+          <RigaBarra etichetta="Diretti (senza preventivo)" n={statOrdini.diretti.n} val={statOrdini.diretti.val} pctN={statOrdini.pctN(statOrdini.diretti.n)} pctV={statOrdini.pctV(statOrdini.diretti.val)} colore={C.warn}/>
+          <div style={{fontSize:12,color:C.steel,marginTop:6,marginLeft:10}}>
+            di cui <strong>evasi</strong>: {statOrdini.direttiEvasi.n} · €{statOrdini.direttiEvasi.val.toLocaleString("it-IT")}
+          </div>
+        </>)}
+      </>)}
+
+      {segmentazioni && (<>
+        <BloccoSegmentazione titolo="Per marchio" righe={segmentazioni.marchio}/>
+        <BloccoSegmentazione titolo="Per categoria" righe={segmentazioni.categoria}/>
+        <BloccoSegmentazione titolo="Per tipologia" righe={segmentazioni.tipologia}/>
+      </>)}
+    </div>
+  );
+}
+
+function Statistiche({preventivi, ordini, catalog, sessione, ruolo}){
+  const puoScegliere = ruolo==="responsabile" || ruolo==="admin";
+  const [modo,setModo] = useState("globale"); // globale | agente | cliente | confronto
+  const [agenteScelto,setAgenteScelto] = useState("");
+  const [clienteScelto,setClienteScelto] = useState("");
+  const [agentiConfronto,setAgentiConfronto] = useState([]); // array di nomi
+
+  // Periodo: mese/anno singolo, con la possibilità di confrontarlo con un
+  // secondo periodo (mese su anno) — es. luglio 2026 contro luglio 2025.
+  // Sul campo creato_il, stesso principio già usato per le ricerche di
+  // Preventivi/Ordini/Ticket.
+  const [mese,setMese] = useState("");
+  const [anno,setAnno] = useState("");
+  const [confrontaPeriodo,setConfrontaPeriodo] = useState(false);
+  const [mese2,setMese2] = useState("");
+  const [anno2,setAnno2] = useState("");
+
+  const baseP = useMemo(()=>preventivi.filter(p=>p.stato!=="Bozza"),[preventivi]);
+  const baseO = useMemo(()=>(ordini||[]),[ordini]);
+
+  // Mappa codice→tipologia dal catalogo: le righe salvate su preventivi/
+  // ordini non portano la tipologia, solo marchio e categoria.
+  const tipologiaPerCodice = useMemo(()=>{
+    const m = new Map();
+    (catalog||[]).forEach(p=>{ if(p.cod) m.set(p.cod, p.tip||""); });
+    return m;
+  },[catalog]);
+
+  const anniDisponibili = useMemo(()=>{
+    const anni = new Set();
+    baseP.forEach(p=>{ const d=new Date(p.creato_il); if(!isNaN(d)) anni.add(d.getFullYear()); });
+    return Array.from(anni).sort((a,b)=>b-a);
+  },[baseP]);
+
+  const agenti = useMemo(()=>{
+    const nomi = new Set();
+    baseP.forEach(p=>{ const n = p.referente_telos || p.creato_da_nome; if(n) nomi.add(n); });
+    return [...nomi].sort((a,b)=>a.localeCompare(b));
+  },[baseP]);
+
+  const clientiConPreventivi = useMemo(()=>{
+    const mappa = new Map();
+    baseP.forEach(p=>{ if(p.cliente_codice) mappa.set(p.cliente_codice, p.cliente||p.cliente_codice); });
+    return [...mappa.entries()].map(([codice,nome])=>({codice,nome})).sort((a,b)=>a.nome.localeCompare(b.nome));
+  },[baseP]);
+
+  function filtraPreventivi(agenteFiltro, clienteFiltro, meseSel, annoSel){
+    return baseP.filter(p=>{
+      if(agenteFiltro && (p.referente_telos||p.creato_da_nome)!==agenteFiltro) return false;
+      if(clienteFiltro && p.cliente_codice!==clienteFiltro) return false;
+      if(!dataNelPeriodo(p.creato_il, meseSel, annoSel)) return false;
+      return true;
+    });
+  }
+  function filtraOrdini(agenteFiltro, clienteFiltro, meseSel, annoSel){
+    return baseO.filter(o=>{
+      if(agenteFiltro && (o.referente_telos||o.creato_da_nome)!==agenteFiltro) return false;
+      if(clienteFiltro && o.cliente_codice!==clienteFiltro) return false;
+      if(!dataNelPeriodo(o.creato_il, meseSel, annoSel)) return false;
+      return true;
+    });
+  }
+  function segmentazioniDi(elencoP, elencoO){
+    const documenti = [...elencoP, ...elencoO];
+    return {
+      marchio: segmentazione(documenti, "mar", tipologiaPerCodice),
+      categoria: segmentazione(documenti, "cat", tipologiaPerCodice),
+      tipologia: segmentazione(documenti, "tip", tipologiaPerCodice),
+    };
+  }
+
+  function blocco(titolo, agenteFiltro, clienteFiltro, meseSel, annoSel){
+    const p = filtraPreventivi(agenteFiltro, clienteFiltro, meseSel, annoSel);
+    const o = filtraOrdini(agenteFiltro, clienteFiltro, meseSel, annoSel);
+    return <BloccoStatistiche key={titolo+meseSel+annoSel} titolo={titolo} stat={calcolaStatistiche(p)} statOrdini={calcolaStatisticheOrdini(o)} segmentazioni={segmentazioniDi(p,o)}/>;
+  }
+
+  const selettorePeriodo = (
+    <div style={{...S.card,cursor:"default",marginBottom:16}}>
+      <div style={{fontSize:11,fontFamily:F_MONO,color:"#9AA3AB",textTransform:"uppercase",letterSpacing:"0.05em",marginBottom:8}}>Periodo</div>
+      <SelettoreMeseAnno mese={mese} anno={anno} onCambiaMese={setMese} onCambiaAnno={setAnno} anniDisponibili={anniDisponibili}/>
+      <label style={{display:"flex",alignItems:"center",gap:7,marginTop:10,fontSize:12.5,cursor: modo==="confronto"?"default":"pointer",opacity:modo==="confronto"?0.4:1}}>
+        <input type="checkbox" checked={confrontaPeriodo} disabled={modo==="confronto"} onChange={e=>setConfrontaPeriodo(e.target.checked)}/>
+        Confronta con un altro periodo (es. stesso mese, anno diverso)
+      </label>
+      {modo==="confronto" && <div style={{fontSize:11,color:"#9AA3AB",marginTop:4}}>Non disponibile insieme al confronto tra agenti.</div>}
+      {confrontaPeriodo && modo!=="confronto" && (
+        <div style={{marginTop:10,paddingTop:10,borderTop:`1px solid ${C.paperLine}`}}>
+          <SelettoreMeseAnno mese={mese2} anno={anno2} onCambiaMese={setMese2} onCambiaAnno={setAnno2} anniDisponibili={anniDisponibili}/>
+        </div>
+      )}
+    </div>
+  );
+
+  // Il commerciale non sceglie agente/cliente: vede solo il proprio
+  // perimetro, creato da lui o da un responsabile che lo ha indicato come
+  // referente Telos. Può comunque filtrare/confrontare per periodo.
+  if(!puoScegliere){
+    const nome = sessione?.nome;
+    return (
+      <div>
+        <div style={S.eyebrow}>Statistiche</div>
+        <div style={{fontSize:12.5,color:C.steel,margin:"6px 0 18px",lineHeight:1.6}}>
+          Preventivi inviati e conclusi rispetto a quelli saltati, e ordini diretti rispetto a quelli con preventivo, sui tuoi clienti.
+        </div>
+        {selettorePeriodo}
+        {confrontaPeriodo ? (
+          <div style={{display:"grid",gridTemplateColumns:"repeat(2,1fr)",gap:14}}>
+            {blocco(`${nome} — periodo 1`, null, null, mese, anno)}
+            {blocco(`${nome} — periodo 2`, null, null, mese2, anno2)}
+          </div>
+        ) : blocco(nome||"I miei preventivi", null, null, mese, anno)}
+      </div>
+    );
+  }
+
+  function toggleAgenteConfronto(nome){
+    setAgentiConfronto(prev=>prev.includes(nome) ? prev.filter(n=>n!==nome) : [...prev,nome]);
+  }
+
+  return (
+    <div>
+      <div style={S.eyebrow}>Statistiche</div>
+      <div style={{fontSize:12.5,color:C.steel,margin:"6px 0 18px",lineHeight:1.6}}>
+        Preventivi inviati e conclusi rispetto a quelli saltati, e ordini diretti rispetto a quelli con preventivo.
+      </div>
+
+      <div style={{display:"flex",gap:6,marginBottom:16,flexWrap:"wrap"}}>
+        {[["globale","Globale"],["agente","Un agente"],["cliente","Un cliente"],["confronto","Confronto agenti"]].map(([id,lbl])=>(
+          <button key={id} onClick={()=>{ setModo(id); if(id==="confronto") setConfrontaPeriodo(false); }} style={{
+            padding:"7px 14px",borderRadius:20,fontSize:12.5,cursor:"pointer",fontWeight:600,
+            background:modo===id?C.ink:"#fff", color:modo===id?"#fff":C.charcoal,
+            border:`1px solid ${modo===id?C.ink:C.paperLine}`,
+          }}>{lbl}</button>
+        ))}
+      </div>
+
+      {selettorePeriodo}
+
+      {modo==="globale" && (
+        confrontaPeriodo ? (
+          <div style={{display:"grid",gridTemplateColumns:"repeat(2,1fr)",gap:14}}>
+            {blocco("Tutti gli agenti — periodo 1", null, null, mese, anno)}
+            {blocco("Tutti gli agenti — periodo 2", null, null, mese2, anno2)}
+          </div>
+        ) : blocco("Tutti gli agenti", null, null, mese, anno)
+      )}
+
+      {modo==="agente" && (<>
+        <select value={agenteScelto} onChange={e=>setAgenteScelto(e.target.value)} style={{...S.inp,marginBottom:16,maxWidth:320}}>
+          <option value="">— scegli un agente —</option>
+          {agenti.map(a=>(<option key={a} value={a}>{a}</option>))}
+        </select>
+        {agenteScelto && (
+          confrontaPeriodo ? (
+            <div style={{display:"grid",gridTemplateColumns:"repeat(2,1fr)",gap:14}}>
+              {blocco(`${agenteScelto} — periodo 1`, agenteScelto, null, mese, anno)}
+              {blocco(`${agenteScelto} — periodo 2`, agenteScelto, null, mese2, anno2)}
+            </div>
+          ) : blocco(agenteScelto, agenteScelto, null, mese, anno)
+        )}
+      </>)}
+
+      {modo==="cliente" && (<>
+        <select value={clienteScelto} onChange={e=>setClienteScelto(e.target.value)} style={{...S.inp,marginBottom:16,maxWidth:320}}>
+          <option value="">— scegli un cliente —</option>
+          {clientiConPreventivi.map(c=>(<option key={c.codice} value={c.codice}>{c.nome}</option>))}
+        </select>
+        {clienteScelto && (() => {
+          const nomeCliente = clientiConPreventivi.find(c=>c.codice===clienteScelto)?.nome||clienteScelto;
+          return confrontaPeriodo ? (
+            <div style={{display:"grid",gridTemplateColumns:"repeat(2,1fr)",gap:14}}>
+              {blocco(`${nomeCliente} — periodo 1`, null, clienteScelto, mese, anno)}
+              {blocco(`${nomeCliente} — periodo 2`, null, clienteScelto, mese2, anno2)}
+            </div>
+          ) : blocco(nomeCliente, null, clienteScelto, mese, anno);
+        })()}
+      </>)}
+
+      {modo==="confronto" && (<>
+        <div style={{...S.card,cursor:"default",marginBottom:16}}>
+          <div style={{fontSize:11,fontFamily:F_MONO,color:"#9AA3AB",textTransform:"uppercase",letterSpacing:"0.05em",marginBottom:8}}>Scegli due o più agenti da confrontare</div>
+          <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
+            {agenti.map(a=>{
+              const attivo = agentiConfronto.includes(a);
+              return (
+                <span key={a} onClick={()=>toggleAgenteConfronto(a)}
+                  style={{fontSize:11.5,padding:"5px 10px",borderRadius:20,border:`1px solid ${attivo?C.ink:C.paperLine}`,background:attivo?C.ink:"#fff",color:attivo?"#fff":"#5B6770",cursor:"pointer"}}>
+                  {a}
+                </span>
+              );
+            })}
+          </div>
+        </div>
+        {agentiConfronto.length===0 && <div style={{fontSize:12.5,color:"#9AA3AB"}}>Seleziona almeno due agenti per vedere il confronto.</div>}
+        {agentiConfronto.length===1 && blocco(agentiConfronto[0], agentiConfronto[0], null, mese, anno)}
+        {agentiConfronto.length>1 && (
+          <div style={{display:"grid",gridTemplateColumns:`repeat(${Math.min(agentiConfronto.length,2)},1fr)`,gap:14}}>
+            {agentiConfronto.map(a=>blocco(a, a, null, mese, anno))}
+          </div>
+        )}
+      </>)}
     </div>
   );
 }
