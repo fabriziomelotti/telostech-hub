@@ -325,6 +325,7 @@ const DEMO_INTERVENTI = [
 // Stati possibili di un preventivo, in ordine di avanzamento del ciclo di vita
 const STATI_PREVENTIVO = ["Bozza","Inviato"];
 const STATO_COLORE = { "Bozza":"steel", "Inviato":"warn", "Convertito in ordine":"primary", "Saltato":"danger", "Sospeso":"warn" };
+const MESI_IT = ["Gennaio","Febbraio","Marzo","Aprile","Maggio","Giugno","Luglio","Agosto","Settembre","Ottobre","Novembre","Dicembre"];
 // Ciclo ordine: Convertito in ordine (preventivo) o creazione manuale →
 // "Inserito" (chi vende compila il modulo logistico e "Segna come
 // inviato") → "Inviato" (in attesa che un responsabile lo prenda in
@@ -1359,6 +1360,101 @@ function searchToken(query, index){
 
   scored.sort((a,b)=>b.score-a.score);
   return scored.map(s=>s.entry.prodotto);
+}
+
+// Verifica se una data (stringa ISO) cade nel mese/anno scelti nel filtro.
+// mese è 1-12 o "" (tutti i mesi); anno è una stringa "2026" o "" (tutti gli
+// anni). Se non c'è alcuna data disponibile sul record, non passa il filtro
+// nel momento in cui l'utente ha effettivamente scelto mese e/o anno.
+function dataNelPeriodo(dataISO, mese, anno){
+  if(!mese && !anno) return true;
+  if(!dataISO) return false;
+  const d = new Date(dataISO);
+  if(isNaN(d)) return false;
+  if(mese && (d.getMonth()+1)!==Number(mese)) return false;
+  if(anno && d.getFullYear()!==Number(anno)) return false;
+  return true;
+}
+
+// Selettore compatto per la ricerca "Contiene articoli": fino a 3 articoli
+// scelti dal catalogo (autocomplete su nome/codice/marchio, stesso motore
+// di ricerca usato per aggiungere righe ai preventivi). Usato solo per
+// filtrare elenchi già a video — non aggiunge nulla al preventivo.
+function SelettoreArticoliRicerca({catalog, selezionati, onCambia}){
+  const CATS = catalog && catalog.length ? catalog : CATALOG;
+  const [q,setQ]=useState("");
+  const [searchIndex,setSearchIndex]=useState(null);
+  useEffect(()=>{
+    let annullato=false;
+    const t=setTimeout(()=>{ const idx=buildSearchIndex(CATS); if(!annullato) setSearchIndex(idx); },0);
+    return ()=>{annullato=true;clearTimeout(t);};
+  },[CATS]);
+  const risultati = useMemo(()=>{
+    if(!q.trim() || !searchIndex) return [];
+    return searchToken(q, searchIndex).filter(p=>!selezionati.some(s=>s.cod===p.cod)).slice(0,6);
+  },[q, searchIndex, selezionati]);
+
+  function aggiungi(p){
+    if(selezionati.length>=3) return;
+    onCambia([...selezionati, {cod:p.cod, nome:p.nome}]);
+    setQ("");
+  }
+  function rimuovi(cod){
+    onCambia(selezionati.filter(s=>s.cod!==cod));
+  }
+
+  return (
+    <div>
+      <div style={{fontSize:11,fontFamily:F_MONO,color:"#9AA3AB",textTransform:"uppercase",letterSpacing:"0.05em",marginBottom:6}}>Contiene articoli (fino a 3 — basta uno qualsiasi)</div>
+      {selezionati.length>0 && (
+        <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:8}}>
+          {selezionati.map(s=>(
+            <div key={s.cod} style={{display:"flex",alignItems:"center",gap:6,background:"#f1efe9",borderRadius:20,padding:"5px 10px",fontSize:11.5}}>
+              <span className="tnum" style={{fontFamily:F_MONO,color:"#8A929A"}}>{s.cod}</span>
+              <span>{s.nome}</span>
+              <span onClick={()=>rimuovi(s.cod)} style={{cursor:"pointer",color:C.danger,fontWeight:700,marginLeft:2}}>✕</span>
+            </div>
+          ))}
+        </div>
+      )}
+      {selezionati.length<3 && (
+        <div style={{position:"relative"}}>
+          <input value={q} onChange={e=>setQ(e.target.value)} placeholder="Cerca per nome, codice, marchio…" style={{...S.inp}}/>
+          {risultati.length>0 && (
+            <div style={{position:"absolute",top:"100%",left:0,right:0,background:"#fff",border:`1px solid ${C.paperLine}`,borderRadius:8,marginTop:4,maxHeight:220,overflowY:"auto",zIndex:20,boxShadow:"0 6px 18px rgba(0,0,0,0.08)"}}>
+              {risultati.map(p=>(
+                <div key={p.cod} onClick={()=>aggiungi(p)} style={{padding:"9px 12px",cursor:"pointer",borderBottom:`1px solid ${C.paperLine}`,fontSize:12.5}}>
+                  <div style={{fontWeight:600}}>{p.nome}</div>
+                  <div style={{fontSize:10.5,color:"#9AA3AB",fontFamily:F_MONO,marginTop:1}}>{p.cod}{p.mar?` · ${p.mar}`:""}</div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Select compatti Mese/Anno riusati identici nelle tre ricerche preventivi
+// (Da completare, Inviati, Confermati in ordine). anniDisponibili è un
+// array di anni (numero) da offrire nella tendina, tipicamente ricavato
+// dalle date presenti nei record così da non elencare anni senza nulla.
+function SelettoreMeseAnno({mese, anno, onCambiaMese, onCambiaAnno, anniDisponibili}){
+  return (
+    <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center"}}>
+      <label style={{fontSize:11,fontFamily:F_MONO,color:"#9AA3AB",textTransform:"uppercase",letterSpacing:"0.05em"}}>Mese</label>
+      <select value={mese} onChange={e=>onCambiaMese(e.target.value)} style={{...S.inp,flex:"1 1 140px"}}>
+        <option value="">Tutti</option>
+        {MESI_IT.map((m,i)=><option key={i} value={i+1}>{m}</option>)}
+      </select>
+      <label style={{fontSize:11,fontFamily:F_MONO,color:"#9AA3AB",textTransform:"uppercase",letterSpacing:"0.05em"}}>Anno</label>
+      <select value={anno} onChange={e=>onCambiaAnno(e.target.value)} style={{...S.inp,flex:"1 1 110px"}}>
+        <option value="">Tutti</option>
+        {anniDisponibili.map(a=><option key={a} value={a}>{a}</option>)}
+      </select>
+    </div>
+  );
 }
 
 // Chiama la Edge Function ai-assistant, che tiene la chiave Anthropic lato
@@ -5365,16 +5461,41 @@ function Preventivi({cart,setCart,preventivi,setPreventivi,setOrdini,setArea,ruo
   const [ricercaClienteConfermati,setRicercaClienteConfermati]=useState("");
   const [ricercaDataDaConfermati,setRicercaDataDaConfermati]=useState("");
   const [ricercaDataAConfermati,setRicercaDataAConfermati]=useState("");
+  const [ricercaMeseConfermati,setRicercaMeseConfermati]=useState("");
+  const [ricercaAnnoConfermati,setRicercaAnnoConfermati]=useState("");
+  const [ricercaArticoliConfermati,setRicercaArticoliConfermati]=useState([]);
   const [filtriConfermati,setFiltriConfermati]=useState(null); // null = nessun filtro attivo
   function eseguiRicercaConfermati(){
     const codice = ricercaCodiceConfermati.trim();
     const cliente = normalizzaRagioneSociale(ricercaClienteConfermati);
     const dataDa = ricercaDataDaConfermati, dataA = ricercaDataAConfermati;
-    if(!codice && !cliente && !dataDa && !dataA){ setFiltriConfermati(null); return; }
-    setFiltriConfermati({codice, cliente, dataDa, dataA});
+    const mese = ricercaMeseConfermati, anno = ricercaAnnoConfermati;
+    const articoli = ricercaArticoliConfermati;
+    if(!codice && !cliente && !dataDa && !dataA && !mese && !anno && articoli.length===0){ setFiltriConfermati(null); return; }
+    setFiltriConfermati({codice, cliente, dataDa, dataA, mese, anno, articoli});
   }
   function pulisciRicercaConfermati(){
-    setRicercaCodiceConfermati(""); setRicercaClienteConfermati(""); setRicercaDataDaConfermati(""); setRicercaDataAConfermati(""); setFiltriConfermati(null);
+    setRicercaCodiceConfermati(""); setRicercaClienteConfermati(""); setRicercaDataDaConfermati(""); setRicercaDataAConfermati("");
+    setRicercaMeseConfermati(""); setRicercaAnnoConfermati(""); setRicercaArticoliConfermati([]);
+    setFiltriConfermati(null);
+  }
+  // Ricerca sull'archivio "Da gestire" (Inviati) — cliente + mese/anno +
+  // contiene articoli, stesso principio delle altre due ricerche.
+  const [ricercaClienteInviati,setRicercaClienteInviati]=useState("");
+  const [ricercaMeseInviati,setRicercaMeseInviati]=useState("");
+  const [ricercaAnnoInviati,setRicercaAnnoInviati]=useState("");
+  const [ricercaArticoliInviati,setRicercaArticoliInviati]=useState([]);
+  const [filtriInviati,setFiltriInviati]=useState(null); // null = nessun filtro attivo
+  function eseguiRicercaInviati(){
+    const cliente = normalizzaRagioneSociale(ricercaClienteInviati);
+    const mese = ricercaMeseInviati, anno = ricercaAnnoInviati;
+    const articoli = ricercaArticoliInviati;
+    if(!cliente && !mese && !anno && articoli.length===0){ setFiltriInviati(null); return; }
+    setFiltriInviati({cliente, mese, anno, articoli});
+  }
+  function pulisciRicercaInviati(){
+    setRicercaClienteInviati(""); setRicercaMeseInviati(""); setRicercaAnnoInviati(""); setRicercaArticoliInviati([]);
+    setFiltriInviati(null);
   }
   const total=cart.reduce((s,p)=>s+p.netto,0);
   const accessToken = trovaAccessToken(sessione);
@@ -5850,13 +5971,14 @@ function Preventivi({cart,setCart,preventivi,setPreventivi,setOrdini,setArea,ruo
             <button onClick={()=>setCart([])} style={S.btnS}>Svuota</button>
           </div>
         </div>
-        <ListaPreventivi preventivi={preventivi} onApri={(id)=>{setSelId(id);setView("dettaglio");}} sessione={sessione}/>
+        <ListaPreventivi preventivi={preventivi} onApri={(id)=>{setSelId(id);setView("dettaglio");}} sessione={sessione} catalog={catalog}/>
       </div>
     );
   }
 
   // ── VISTA: HOME (pulsanti: Nuovo, Cerca, Da gestire, Confermati in ordine, Trattative bloccate) ──
   if(view==="home"){
+    const daCompletareN = preventivi.filter(p=>["Bozza","Sospeso"].includes(p.stato) || (p.stato==="Saltato" && p.motivo_saltato_tipo==="rimandata" && p.promemoria_recupero)).length;
     const daGestireN = preventivi.filter(p=>p.stato==="Inviato").length;
     const inOrdineN = preventivi.filter(p=>p.stato==="Convertito in ordine").length;
     const bloccateN = RUOLI_APPROVATORI.includes(ruolo)
@@ -5870,7 +5992,7 @@ function Preventivi({cart,setCart,preventivi,setPreventivi,setOrdini,setArea,ruo
         </button>
         <div style={isMobile ? {display:"flex",flexDirection:"column",gap:8} : {display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:12}}>
           {[
-            ["cerca","search","Cerca preventivo",preventivi.length,"Tutti i preventivi, con ricerca per cliente","rgba(200,75,58,0.09)",C.danger],
+            ["cerca","search","Da completare",daCompletareN,"Preventivi iniziati non conclusi/in sospeso","rgba(200,75,58,0.09)",C.danger],
             ["da-gestire","reply","Da gestire",daGestireN,"Inviati al cliente, in attesa di firma/conferma","rgba(217,164,65,0.12)",C.warn],
             ["in-ordine","checkCircle","Confermati in ordine",inOrdineN,"Preventivi già convertiti in ordine","rgba(74,157,110,0.1)",C.ok],
           ].map(([id,icona,lbl,n,sub,sfondo,colore])=>(
@@ -5908,24 +6030,61 @@ function Preventivi({cart,setCart,preventivi,setPreventivi,setOrdini,setArea,ruo
       <div>
         <button onClick={()=>setView("home")} style={{...S.btnS,marginBottom:14}}>← Preventivi</button>
         {erroreSync && <div style={{fontSize:12,color:C.danger,background:"rgba(200,75,58,0.08)",borderRadius:6,padding:"9px 11px",marginBottom:14}}>⚠ {erroreSync}</div>}
-        <ListaPreventivi preventivi={preventivi} onApri={(id)=>{setSelId(id);setView("dettaglio");}} sessione={sessione}/>
+        <ListaPreventivi preventivi={preventivi} onApri={(id)=>{setSelId(id);setView("dettaglio");}} sessione={sessione} catalog={catalog}/>
       </div>
     );
   }
 
   if(view==="da-gestire"){
-    const elenco = preventivi.filter(p=>p.stato==="Inviato");
+    // Archivio "Da gestire" (Inviati): ricerca per cliente + mese/anno +
+    // contiene articoli — stesso principio delle altre due ricerche.
+    const anniDisponibiliInviati = Array.from(new Set(
+      preventivi.filter(p=>p.stato==="Inviato").map(p=>{ const d=new Date(p.creato_il); return isNaN(d)?null:d.getFullYear(); }).filter(Boolean)
+    )).sort((a,b)=>b-a);
+    const inviati = preventivi.filter(p=>p.stato==="Inviato");
+    const inviatiFiltrati = !filtriInviati ? inviati : inviati.filter(p=>{
+      const {cliente, mese, anno, articoli} = filtriInviati;
+      if(cliente && !corrispondeRicerca(cliente, [p.cliente])) return false;
+      if(!dataNelPeriodo(p.creato_il, mese, anno)) return false;
+      if(articoli.length>0){
+        const codici = articoli.map(a=>a.cod);
+        if(!(p.righe||[]).some(r=>codici.includes(r.cod))) return false;
+      }
+      return true;
+    });
     return (
       <div>
         <button onClick={()=>setView("home")} style={{...S.btnS,marginBottom:14}}>← Preventivi</button>
-        <div style={S.eyebrow}>Da gestire ({elenco.length})</div>
-        {elenco.length===0 && <div style={{fontSize:12.5,color:"#9AA3AB",padding:"8px 0"}}>Nessun preventivo qui.</div>}
-        {elenco.map(p=>(
+        <div style={S.eyebrow}>Da gestire ({inviati.length})</div>
+        {inviati.length>0 && (
+          <div style={{...S.card,cursor:"default",marginTop:14,marginBottom:14}}>
+            <div style={{marginBottom:12}}>
+              <input
+                value={ricercaClienteInviati} onChange={e=>setRicercaClienteInviati(e.target.value)}
+                onKeyDown={e=>{ if(e.key==="Enter"){ e.preventDefault(); eseguiRicercaInviati(); } }}
+                placeholder="Ragione sociale cliente" style={{...S.inp,width:"100%"}}
+              />
+            </div>
+            <div style={{marginBottom:12}}>
+              <SelettoreMeseAnno mese={ricercaMeseInviati} anno={ricercaAnnoInviati} onCambiaMese={setRicercaMeseInviati} onCambiaAnno={setRicercaAnnoInviati} anniDisponibili={anniDisponibiliInviati}/>
+            </div>
+            <div style={{marginBottom:12}}>
+              <SelettoreArticoliRicerca catalog={catalog} selezionati={ricercaArticoliInviati} onCambia={setRicercaArticoliInviati}/>
+            </div>
+            <div style={{display:"flex",gap:8}}>
+              <button onClick={eseguiRicercaInviati} style={{...S.btnAccent,padding:"9px 16px",fontSize:12.5}}>🔍 Cerca</button>
+              {filtriInviati && <button onClick={pulisciRicercaInviati} style={{...S.btnS,padding:"9px 16px",fontSize:12.5}}>Pulisci</button>}
+            </div>
+          </div>
+        )}
+        {inviati.length===0 && <div style={{fontSize:12.5,color:"#9AA3AB",padding:"8px 0"}}>Nessun preventivo qui.</div>}
+        {inviati.length>0 && inviatiFiltrati.length===0 && <div style={{fontSize:12.5,color:"#9AA3AB",padding:"8px 0"}}>Nessun preventivo trovato con questi filtri.</div>}
+        {inviatiFiltrati.map(p=>(
           <div key={p.id} onClick={()=>{setSelId(p.id);setView("dettaglio");}} style={{...S.card,cursor:"pointer",display:"flex",justifyContent:"space-between",alignItems:"center",gap:10}}>
             <div style={{minWidth:0}}>
               <div className="tnum" style={{fontSize:10.5,color:"#9AA3AB",fontFamily:F_MONO}}>{codicePreventivo(p)}</div>
               <div style={{fontWeight:600,fontSize:13.5,marginTop:2}}>{p.cliente || "Cliente non specificato"}</div>
-              <div style={{fontSize:11.5,color:"#8A929A",marginTop:1}}>{p.righe.length} articol{p.righe.length===1?"o":"i"}</div>
+              <div style={{fontSize:11.5,color:"#8A929A",marginTop:1}}>{p.righe.length} articol{p.righe.length===1?"o":"i"}{p.creato_il ? ` · ${new Date(p.creato_il).toLocaleDateString("it-IT")}` : ""}</div>
             </div>
             <div style={{textAlign:"right",flexShrink:0}}>
               <div className="tnum" style={{fontWeight:700,fontSize:14,fontFamily:F_MONO}}>€{p.val.toLocaleString("it-IT")}</div>
@@ -5939,18 +6098,28 @@ function Preventivi({cart,setCart,preventivi,setPreventivi,setOrdini,setArea,ruo
 
   if(view==="in-ordine"){
     // Archivio "Confermati in ordine": cresce nel tempo — ricerca per
-    // cliente + filtro per intervallo di date (sulla data di conferma se
-    // disponibile, altrimenti sulla data di creazione del preventivo).
+    // cliente + filtro per intervallo di date/mese/anno (sulla data di
+    // conferma se disponibile, altrimenti sulla data di creazione del
+    // preventivo) + contiene articoli.
     const confermati = preventivi.filter(p=>p.stato==="Convertito in ordine");
+    const anniDisponibiliConfermati = Array.from(new Set(
+      confermati.map(p=>{ const d=new Date(p.aggiornato_il||p.creato_il); return isNaN(d)?null:d.getFullYear(); }).filter(Boolean)
+    )).sort((a,b)=>b-a);
     const confermatiFiltrati = !filtriConfermati ? confermati : confermati.filter(p=>{
-      const {codice, cliente, dataDa, dataA} = filtriConfermati;
+      const {codice, cliente, dataDa, dataA, mese, anno, articoli} = filtriConfermati;
       if(codice && !(p.cliente_codice||"").toLowerCase().includes(codice.toLowerCase())) return false;
       if(cliente && !corrispondeRicerca(cliente, [p.cliente])) return false;
+      const dataRif = p.aggiornato_il || p.creato_il || "";
       if(dataDa || dataA){
-        const d = (p.aggiornato_il || p.creato_il || "").slice(0,10);
+        const d = dataRif.slice(0,10);
         if(!d) return false;
         if(dataDa && d<dataDa) return false;
         if(dataA && d>dataA) return false;
+      }
+      if(!dataNelPeriodo(dataRif, mese, anno)) return false;
+      if(articoli && articoli.length>0){
+        const codici = articoli.map(a=>a.cod);
+        if(!(p.righe||[]).some(r=>codici.includes(r.cod))) return false;
       }
       return true;
     });
@@ -5960,7 +6129,7 @@ function Preventivi({cart,setCart,preventivi,setPreventivi,setOrdini,setArea,ruo
         <div style={S.eyebrow}>Confermati in ordine ({confermati.length})</div>
         {confermati.length>0 && (
           <div style={{...S.card,cursor:"default",marginTop:14,marginBottom:14}}>
-            <div style={{display:"flex",gap:8,marginBottom:8,flexWrap:"wrap"}}>
+            <div style={{display:"flex",gap:8,marginBottom:12,flexWrap:"wrap"}}>
               <input
                 value={ricercaCodiceConfermati} onChange={e=>setRicercaCodiceConfermati(e.target.value)}
                 onKeyDown={e=>{ if(e.key==="Enter"){ e.preventDefault(); eseguiRicercaConfermati(); } }}
@@ -5972,11 +6141,17 @@ function Preventivi({cart,setCart,preventivi,setPreventivi,setOrdini,setArea,ruo
                 placeholder="Ragione sociale" style={{...S.inp,flex:"1 1 200px"}}
               />
             </div>
-            <div style={{display:"flex",gap:8,marginBottom:8,flexWrap:"wrap",alignItems:"center"}}>
+            <div style={{display:"flex",gap:8,marginBottom:12,flexWrap:"wrap",alignItems:"center"}}>
               <label style={{fontSize:11,fontFamily:F_MONO,color:"#9AA3AB",textTransform:"uppercase",letterSpacing:"0.05em"}}>Dal</label>
               <input type="date" value={ricercaDataDaConfermati} onChange={e=>setRicercaDataDaConfermati(e.target.value)} style={{...S.inp,flex:"1 1 140px"}}/>
               <label style={{fontSize:11,fontFamily:F_MONO,color:"#9AA3AB",textTransform:"uppercase",letterSpacing:"0.05em"}}>Al</label>
               <input type="date" value={ricercaDataAConfermati} onChange={e=>setRicercaDataAConfermati(e.target.value)} style={{...S.inp,flex:"1 1 140px"}}/>
+            </div>
+            <div style={{marginBottom:12}}>
+              <SelettoreMeseAnno mese={ricercaMeseConfermati} anno={ricercaAnnoConfermati} onCambiaMese={setRicercaMeseConfermati} onCambiaAnno={setRicercaAnnoConfermati} anniDisponibili={anniDisponibiliConfermati}/>
+            </div>
+            <div style={{marginBottom:12}}>
+              <SelettoreArticoliRicerca catalog={catalog} selezionati={ricercaArticoliConfermati} onCambia={setRicercaArticoliConfermati}/>
             </div>
             <div style={{display:"flex",gap:8}}>
               <button onClick={eseguiRicercaConfermati} style={{...S.btnAccent,padding:"9px 16px",fontSize:12.5}}>🔍 Cerca</button>
@@ -7007,15 +7182,36 @@ function FirmaPad({ onSalva, onAnnulla }){
   );
 }
 
-function ListaPreventivi({preventivi,onApri,sessione}){
+function ListaPreventivi({preventivi,onApri,sessione,catalog}){
   const [filtro,setFiltro]=useState("");
   const [termineCercato,setTermineCercato]=useState(""); // valorizzato solo al click su Cerca/invio
-  const filtra = arr => termineCercato ? arr.filter(p=>corrispondeRicerca(termineCercato, [p.cliente])) : arr;
+  const [mese,setMese]=useState("");
+  const [anno,setAnno]=useState("");
+  const [articoli,setArticoli]=useState([]); // fino a 3 {cod,nome}, match OR
+
+  const anniDisponibili = useMemo(()=>{
+    const anni = new Set(preventivi.map(p=>{
+      const d = new Date(p.creato_il);
+      return isNaN(d) ? null : d.getFullYear();
+    }).filter(Boolean));
+    return Array.from(anni).sort((a,b)=>b-a);
+  },[preventivi]);
+
+  const filtra = arr => arr.filter(p=>{
+    if(termineCercato && !corrispondeRicerca(termineCercato, [p.cliente])) return false;
+    if(!dataNelPeriodo(p.creato_il, mese, anno)) return false;
+    if(articoli.length>0){
+      const codici = articoli.map(a=>a.cod);
+      if(!(p.righe||[]).some(r=>codici.includes(r.cod))) return false;
+    }
+    return true;
+  });
 
   const daCompletare = filtra(preventivi.filter(p=>p.stato==="Bozza"));
-  const daGestire = filtra(preventivi.filter(p=>p.stato==="Inviato"));
-  // I preventivi già "Convertito in ordine" NON compaiono qui: hanno una
-  // ricerca dedicata nella tile "Confermati in ordine" (con filtro data).
+  // I preventivi "Inviato" NON compaiono qui: hanno la loro tile dedicata
+  // "Da gestire". I preventivi già "Convertito in ordine" NON compaiono
+  // qui: hanno una ricerca dedicata nella tile "Confermati in ordine" (con
+  // filtro data).
   // Preventivo il cui ordine collegato è stato sospeso (vedi Ordini →
   // Sospendi/Riattiva) — resta visibile qui finché l'ordine non riparte.
   const sospesi = filtra(preventivi.filter(p=>p.stato==="Sospeso"));
@@ -7025,7 +7221,8 @@ function ListaPreventivi({preventivi,onApri,sessione}){
   const daRecuperare = filtra(preventivi.filter(p=>p.stato==="Saltato" && p.motivo_saltato_tipo==="rimandata" && p.promemoria_recupero))
     .sort((a,b)=>new Date(a.promemoria_recupero)-new Date(b.promemoria_recupero));
 
-  const totaleVisibile = daCompletare.length+daGestire.length+sospesi.length+daRecuperare.length;
+  const totaleVisibile = daCompletare.length+sospesi.length+daRecuperare.length;
+  const filtriAttivi = termineCercato || mese || anno || articoli.length>0;
 
   function rigaPreventivo(p){
     return (
@@ -7033,7 +7230,7 @@ function ListaPreventivi({preventivi,onApri,sessione}){
         <div style={{minWidth:0}}>
           <div className="tnum" style={{fontSize:10.5,color:"#9AA3AB",fontFamily:F_MONO}}>{codicePreventivo(p)}</div>
           <div style={{fontWeight:600,fontSize:13.5,marginTop:2}}>{p.cliente || "Cliente non specificato"}</div>
-          <div style={{fontSize:11.5,color:"#8A929A",marginTop:1}}>{p.righe.length} articol{p.righe.length===1?"o":"i"}</div>
+          <div style={{fontSize:11.5,color:"#8A929A",marginTop:1}}>{p.righe.length} articol{p.righe.length===1?"o":"i"}{p.creato_il ? ` · ${new Date(p.creato_il).toLocaleDateString("it-IT")}` : ""}</div>
         </div>
         <div style={{textAlign:"right",flexShrink:0}}>
           <div className="tnum" style={{fontWeight:700,fontSize:14,fontFamily:F_MONO}}>€{p.val.toLocaleString("it-IT")}</div>
@@ -7074,7 +7271,7 @@ function ListaPreventivi({preventivi,onApri,sessione}){
 
   return (
     <div>
-      <div style={{display:"flex",gap:8,marginBottom:22}}>
+      <div style={{display:"flex",gap:8,marginBottom:12}}>
         <input
           value={filtro}
           onChange={e=>setFiltro(e.target.value)}
@@ -7083,8 +7280,15 @@ function ListaPreventivi({preventivi,onApri,sessione}){
           style={{...S.inp,padding:"13px 16px",fontSize:14,flex:1}}
         />
         <button onClick={()=>setTermineCercato(filtro)} style={{...S.btnAccent,padding:"0 18px",flexShrink:0}}>Cerca</button>
-        {termineCercato && (
-          <button onClick={()=>{ setFiltro(""); setTermineCercato(""); }} style={{...S.btnS,flexShrink:0}}>✕</button>
+      </div>
+
+      <div style={{...S.card,cursor:"default",marginBottom:22}}>
+        <div style={{marginBottom:12}}>
+          <SelettoreMeseAnno mese={mese} anno={anno} onCambiaMese={setMese} onCambiaAnno={setAnno} anniDisponibili={anniDisponibili}/>
+        </div>
+        <SelettoreArticoliRicerca catalog={catalog} selezionati={articoli} onCambia={setArticoli}/>
+        {filtriAttivi && (
+          <button onClick={()=>{ setFiltro(""); setTermineCercato(""); setMese(""); setAnno(""); setArticoli([]); }} style={{...S.btnS,marginTop:12,padding:"8px 14px",fontSize:12}}>Pulisci filtri</button>
         )}
       </div>
 
@@ -7096,12 +7300,11 @@ function ListaPreventivi({preventivi,onApri,sessione}){
       )}
       {preventivi.length>0 && totaleVisibile===0 && (
         <div style={{textAlign:"center",padding:"2rem 1rem",color:"#9AA3AB",fontSize:13}}>
-          {termineCercato ? `Nessun preventivo per «${termineCercato}»` : "Nessun preventivo in queste categorie."}
+          {filtriAttivi ? "Nessun preventivo trovato con questi filtri." : "Nessun preventivo in queste categorie."}
         </div>
       )}
 
       {sezione("Da completare", daCompletare)}
-      {sezione("Da gestire", daGestire)}
       {sezione("Sospesi", sospesi)}
       {daRecuperare.length>0 && (
         <div style={{marginBottom:24}}>
