@@ -777,6 +777,29 @@ export default function App(){
       .catch(err => console.warn("Margini per categoria non raggiungibili:", err.message));
   },[role]);
 
+  // Badge rosso accanto a "Ticket" nel menu: quanti messaggi/notifiche
+  // legate a un ticket sono ancora da leggere per l'utente corrente. Stessa
+  // tabella "notifiche" già usata dalla campanella (NotificheBell) e da
+  // invia-push, qui interrogata a parte solo per il conteggio, con lo
+  // stesso ritmo di aggiornamento (ogni 45s) — la campanella resta
+  // indipendente, questo è solo il pallino sul menu.
+  const [ticketNonLetti,setTicketNonLetti] = useState(0);
+  useEffect(()=>{
+    if(!role || role==="cliente") return;
+    const mioId = sessione?.user?.id;
+    const accessToken = trovaAccessToken(sessione);
+    if(!mioId || !accessToken) return;
+    let annullato = false;
+    function carica(){
+      sbGetAuth("notifiche", `select=id&profilo_id=eq.${mioId}&letta=eq.false&ticket_id=not.is.null`, accessToken)
+        .then(dati => { if(!annullato) setTicketNonLetti((dati||[]).length); })
+        .catch(()=>{}); // il badge è solo un avviso in più, non deve mai rompere il resto dell'app
+    }
+    carica();
+    const interval = setInterval(carica, 45000);
+    return ()=>{ annullato=true; clearInterval(interval); };
+  },[role, sessione?.user?.id]);
+
   // permessi/nav dal ruolo, ma nome reale dalla sessione
   const r = role ? { ...RUOLI[role], nome: sessione?.nome || RUOLI[role].nome } : null;
 
@@ -858,6 +881,9 @@ export default function App(){
               <div key={id} onClick={()=>setArea(id)} style={{...S.navItem,...(area===id?S.navActive:{})}}>
                 <span style={{width:18,display:"flex",justifyContent:"center",opacity:area===id?1:0.7}}><Icon name={NAV_META[id].icon} size={17}/></span>
                 <span style={{flex:1,fontWeight:area===id?600:400}}>{NAV_META[id].label}</span>
+                {id==="ticket" && ticketNonLetti>0 && (
+                  <span className="tnum" style={{background:C.danger,color:"#fff",fontSize:10.5,fontWeight:700,fontFamily:F_MONO,borderRadius:10,minWidth:18,height:18,display:"flex",alignItems:"center",justifyContent:"center",padding:"0 5px",flexShrink:0}}>{ticketNonLetti>99?"99+":ticketNonLetti}</span>
+                )}
               </div>
             ))}
           </div>
@@ -927,9 +953,17 @@ export default function App(){
           <div style={{position:"sticky",bottom:0,background:C.inkDeep,borderTop:`1px solid ${C.surface}`,display:"flex",paddingBottom:"env(safe-area-inset-bottom)"}}>
             {navList.map(id=>{
               if(id==="more"){
+                // "Ticket" può finire nascosto dentro "Altro" se non rientra
+                // tra le prime 4 voci (vedi navMobile) — in quel caso il
+                // pallino rosso compare qui, altrimenti nessuno se ne
+                // accorgerebbe senza aprire il menu.
+                const ticketNascosto = ticketNonLetti>0 && !navList.includes("ticket");
                 return (
-                  <button key="more" onClick={()=>setShowMore(true)} style={{flex:1,background:"none",border:"none",padding:"7px 4px 8px",display:"flex",flexDirection:"column",alignItems:"center",gap:4,cursor:"pointer",color:C.steelLight}}>
-                    <span style={{width:34,height:34,borderRadius:9,display:"flex",alignItems:"center",justifyContent:"center"}}><Icon name="more" size={19}/></span>
+                  <button key="more" onClick={()=>setShowMore(true)} style={{flex:1,background:"none",border:"none",padding:"7px 4px 8px",display:"flex",flexDirection:"column",alignItems:"center",gap:4,cursor:"pointer",color:C.steelLight,position:"relative"}}>
+                    <span style={{width:34,height:34,borderRadius:9,display:"flex",alignItems:"center",justifyContent:"center",position:"relative"}}>
+                      <Icon name="more" size={19}/>
+                      {ticketNascosto && <span style={{position:"absolute",top:2,right:2,width:9,height:9,borderRadius:5,background:C.danger,border:`1.5px solid ${C.inkDeep}`}}/>}
+                    </span>
                     <span style={{fontSize:9.5,fontFamily:F_MONO,letterSpacing:"0.02em"}}>ALTRO</span>
                   </button>
                 );
@@ -937,8 +971,11 @@ export default function App(){
               const active = area===id;
               return (
                 <button key={id} onClick={()=>setArea(id)} style={{flex:1,background:"none",border:"none",padding:"7px 4px 8px",display:"flex",flexDirection:"column",alignItems:"center",gap:4,cursor:"pointer",color:active?C.cyan:C.steelLight,position:"relative"}}>
-                  <span style={{width:34,height:34,borderRadius:9,display:"flex",alignItems:"center",justifyContent:"center",background:active?"rgba(87,206,202,0.14)":"transparent"}}>
+                  <span style={{width:34,height:34,borderRadius:9,display:"flex",alignItems:"center",justifyContent:"center",background:active?"rgba(87,206,202,0.14)":"transparent",position:"relative"}}>
                     <Icon name={NAV_META[id].icon} size={19}/>
+                    {id==="ticket" && ticketNonLetti>0 && (
+                      <span className="tnum" style={{position:"absolute",top:-3,right:-3,background:C.danger,color:"#fff",fontSize:9.5,fontWeight:700,fontFamily:F_MONO,borderRadius:9,minWidth:16,height:16,display:"flex",alignItems:"center",justifyContent:"center",padding:"0 3px",border:`1.5px solid ${C.inkDeep}`}}>{ticketNonLetti>99?"99+":ticketNonLetti}</span>
+                    )}
                   </span>
                   <span style={{fontSize:9.5,fontFamily:F_MONO,letterSpacing:"0.02em",fontWeight:active?700:400}}>{NAV_META[id].label.toUpperCase()}</span>
                 </button>
@@ -955,7 +992,10 @@ export default function App(){
             {r.nav.map(id=>(
               <div key={id} onClick={()=>{setArea(id);setShowMore(false);}} style={{display:"flex",alignItems:"center",gap:12,padding:"13px 20px",cursor:"pointer",color:area===id?"#fff":C.steelLight}}>
                 <span style={{width:20,display:"flex",justifyContent:"center"}}><Icon name={NAV_META[id].icon} size={18}/></span>
-                <span style={{fontSize:14,fontWeight:area===id?600:400}}>{NAV_META[id].label}</span>
+                <span style={{flex:1,fontSize:14,fontWeight:area===id?600:400}}>{NAV_META[id].label}</span>
+                {id==="ticket" && ticketNonLetti>0 && (
+                  <span className="tnum" style={{background:C.danger,color:"#fff",fontSize:10.5,fontWeight:700,fontFamily:F_MONO,borderRadius:10,minWidth:18,height:18,display:"flex",alignItems:"center",justifyContent:"center",padding:"0 5px",flexShrink:0}}>{ticketNonLetti>99?"99+":ticketNonLetti}</span>
+                )}
               </div>
             ))}
             <div style={{borderTop:`1px solid ${C.surface}`,marginTop:6}}>
@@ -14624,15 +14664,21 @@ function marchiECategorieDaCatalogo(catalog){
 }
 
 // Tipologia del ticket — sostituisce il titolo libero con una scelta
-// fissa tra 4 casi ricorrenti, ciascuno con una spiegazione mostrata sotto
-// la tendina così chi apre il ticket (staff o cliente) sceglie quello giusto
-// senza doverlo indovinare dal nome.
+// fissa tra 3 casi ricorrenti (uguale per staff e cliente: entrambi vedono
+// esattamente le stesse opzioni), ciascuno con una spiegazione mostrata
+// sotto la tendina così chi apre il ticket sceglie quello giusto senza
+// doverlo indovinare dal nome.
 const TIPI_TICKET = [
-  { valore: "Contatto a cliente", descrizione: "Richiesta di contattare il cliente direttamente." },
+  { valore: "Teleassistenza", descrizione: "Richiesta di contattare il cliente direttamente." },
   { valore: "Ricambio per attrezzatura", descrizione: "Richiesta di un particolare ricambio/accessorio da identificare (es. caricabatterie per tablet diagnosi)." },
   { valore: "Segnalazione guasto", descrizione: "Richiesta di presa in carico per un guasto su un'attrezzatura." },
-  { valore: "Identificazione prodotto", descrizione: "Richiesta di un cliente per un prodotto complessivo da ricercare a catalogo, che non si riesce a identificare da soli." },
 ];
+// "Identificazione prodotto" resta fuori dall'elenco base: non deve
+// comparire al cliente, solo al commerciale quando apre un ticket per
+// conto suo (vedi NuovoTicketStaff) — es. il cliente descrive un prodotto
+// a voce/telefono e serve identificarlo a catalogo.
+const TIPO_IDENTIFICAZIONE_PRODOTTO =
+  { valore: "Identificazione prodotto", descrizione: "Richiesta di un cliente per un prodotto complessivo da ricercare a catalogo, che non si riesce a identificare da soli." };
 
 // Selettore foto condiviso tra creazione ticket staff e cliente: anteprime
 // locali (nessun upload finché non si conferma l'invio del ticket), con
@@ -14746,7 +14792,7 @@ function TicketAssistenza({ sessione, ruolo, ticketDaAprire, setTicketDaAprire, 
   }
 
   if(nuovoAperto){
-    return <NuovoTicketStaff sessione={sessione} catalog={catalog} onAnnulla={()=>setNuovoAperto(false)} onCreato={()=>{ setNuovoAperto(false); carica(); }}/>;
+    return <NuovoTicketStaff sessione={sessione} ruolo={ruolo} catalog={catalog} onAnnulla={()=>setNuovoAperto(false)} onCreato={()=>{ setNuovoAperto(false); carica(); }}/>;
   }
 
   const chiusiBase = ticket.filter(t=>t.stato==="Chiuso");
@@ -14842,7 +14888,7 @@ function TicketAssistenza({ sessione, ruolo, ticketDaAprire, setTicketDaAprire, 
 // ClientiComponenti.jsx), non l'anagrafica libera: un ticket richiede
 // sempre un cliente_codice valido, quindi qui non ammettiamo il cliente
 // "a mano" come invece fanno preventivi/ordini.
-function NuovoTicketStaff({ sessione, catalog, onAnnulla, onCreato }){
+function NuovoTicketStaff({ sessione, ruolo, catalog, onAnnulla, onCreato }){
   const accessToken = trovaAccessToken(sessione);
   const { marchi, categorie } = useMemo(()=>marchiECategorieDaCatalogo(catalog),[catalog]);
   const [clienteScelto, setClienteScelto] = useState(null);
@@ -14913,11 +14959,14 @@ function NuovoTicketStaff({ sessione, catalog, onAnnulla, onCreato }){
         <div style={{height:14}}/>
         <select value={tipo} onChange={e=>setTipo(e.target.value)} style={{...S.sel,width:"100%",marginBottom:6}}>
           <option value="">Tipologia del ticket *</option>
-          {TIPI_TICKET.map(t=><option key={t.valore} value={t.valore}>{t.valore}</option>)}
+          {/* "Identificazione prodotto" è riservata al commerciale — il */}
+          {/* cliente non la vede mai (vedi NuovaRichiestaCliente più sotto), */}
+          {/* per lo staff resta fuori dall'elenco base condiviso. */}
+          {(ruolo==="commerciale" ? [...TIPI_TICKET, TIPO_IDENTIFICAZIONE_PRODOTTO] : TIPI_TICKET).map(t=><option key={t.valore} value={t.valore}>{t.valore}</option>)}
         </select>
         {tipo && (
           <div style={{fontSize:11.5,color:C.steel,marginBottom:10,fontStyle:"italic"}}>
-            {TIPI_TICKET.find(t=>t.valore===tipo)?.descrizione}
+            {(ruolo==="commerciale" ? [...TIPI_TICKET, TIPO_IDENTIFICAZIONE_PRODOTTO] : TIPI_TICKET).find(t=>t.valore===tipo)?.descrizione}
           </div>
         )}
         <textarea value={descrizione} onChange={e=>setDescrizione(e.target.value)} placeholder="Descrizione (diventa il primo messaggio del thread)" rows={4} style={{...S.inp,marginBottom:8,resize:"vertical",fontFamily:F_BODY}}/>
