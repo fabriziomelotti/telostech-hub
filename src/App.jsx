@@ -286,6 +286,7 @@ const ICONE_PATH = {
   reply: "M9 8 4 12l5 4M4 12h9a6 6 0 0 1 6 6v1",
   attach: "M17 6.5 8.5 15a3 3 0 1 0 4.2 4.2L20 12",
   printer: "M6 9V4h12v5M6 18H4v-6h16v6h-2M6 14h12v6H6z",
+  cart: "M3 4h2l2.4 12.4a2 2 0 0 0 2 1.6h7.2a2 2 0 0 0 2-1.6L21 8H6.5M9 20a1 1 0 1 0 0-2 1 1 0 0 0 0 2ZM17 20a1 1 0 1 0 0-2 1 1 0 0 0 0 2Z",
 };
 function Icon({ name, size=20, color="currentColor", strokeWidth=1.6 }){
   const d = ICONE_PATH[name];
@@ -891,7 +892,9 @@ export default function App(){
             <span title="Dati demo — DB non raggiungibile" style={{fontSize:10,fontFamily:F_MONO,color:C.warn,flexShrink:0}}>● DEMO</span>
           )}
           {cart.length>0 && area!=="ai" && (
-            <span onClick={()=>setArea("preventivi")} className="tnum" style={{fontFamily:F_MONO,fontSize:11.5,fontWeight:600,color:"#fff",background:C.ink,padding:"5px 10px",borderRadius:5,cursor:"pointer",flexShrink:0}}>
+            <span onClick={()=>setArea("preventivi")} title={`${cart.length} articoli selezionati dal catalogo — clicca per completare il preventivo`}
+              className="tnum" style={{display:"flex",alignItems:"center",gap:6,fontFamily:F_MONO,fontSize:11.5,fontWeight:700,color:"#fff",background:C.ink,padding:"6px 11px 6px 9px",borderRadius:20,cursor:"pointer",flexShrink:0,boxShadow:"0 0 0 2px rgba(87,206,202,0.35)"}}>
+              <Icon name="cart" size={16} color={C.cyan}/>
               {cart.length} · €{cart.reduce((s,p)=>s+p.netto,0).toFixed(0)}
             </span>
           )}
