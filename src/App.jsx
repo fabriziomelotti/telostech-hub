@@ -423,7 +423,7 @@ function statoScadenza(dataStr){
 // Telos" — riservato lato server a responsabili/admin (vedi Edge Function
 // utenti-info); chi non ha i permessi riceve semplicemente un errore 403
 // e il chiamante mostra il proprio nome senza menu a tendina.
-async function chiamaUtentiInfo(accessToken) {
+async function chiamaUtentiInfo(accessToken, opzioni={}) {
   if (!accessToken) throw new Error("Sessione non trovata: ricarica la pagina e rieffettua il login.");
   const res = await fetch(`${SUPABASE_URL}/functions/v1/utenti-info`, {
     method: "POST",
@@ -443,6 +443,10 @@ async function chiamaUtentiInfo(accessToken) {
   // "cliente" del portale esterno — che da qui in poi non vi comparirà mai
   // più, anche in eventuali nuovi punti che in futuro useranno questa
   // stessa funzione.
+  // opzioni.includeClienti=true salta questo filtro: serve solo dove
+  // vogliamo sapere il contrario, cioè se un cliente HA un account portale
+  // (anagrafica clienti — badge "Account cliente attivo").
+  if(opzioni.includeClienti) return data;
   return { ...data, utenti: (data?.utenti || []).filter(u => u.ruolo !== "cliente") };
 }
 
@@ -2569,6 +2573,23 @@ function Clienti({sessione, preventivi, ordini, attrezzature, setAttrezzature, i
   // font diversi tra loro, confuso su mobile) — ora si sceglie con un
   // pulsante grande e compare solo il campo pertinente.
   const [modalita,setModalita] = useState(null);
+  // Codice cliente -> true se esiste un account portale attivo (non
+  // sospeso) per quella ragione sociale. Caricato una sola volta appena si
+  // entra in modalità "clienti", stesso principio delle tendine di
+  // località/provincia/categoria qui sopra.
+  const [accountClienti,setAccountClienti] = useState({});
+  useEffect(()=>{
+    if(modalita!=="clienti" || Object.keys(accountClienti).length>0) return;
+    chiamaUtentiInfo(accessToken,{includeClienti:true})
+      .then(d=>{
+        const mappa={};
+        (d?.utenti||[]).forEach(u=>{
+          if(u.ruolo==="cliente" && u.cliente_codice && !u.sospeso) mappa[u.cliente_codice]=true;
+        });
+        setAccountClienti(mappa);
+      })
+      .catch(()=>{}); // badge informativo: se il caricamento fallisce, semplicemente non compare
+  },[modalita]);
 
   function selezionaModalita(m){
     setModalita(prev=>prev===m?null:m);
@@ -2793,7 +2814,10 @@ function Clienti({sessione, preventivi, ordini, attrezzature, setAttrezzature, i
                   {c.partita_iva && <span className="tnum" style={{fontFamily:F_MONO,marginLeft:8}}>P.IVA {c.partita_iva}</span>}
                 </div>
               </div>
-              {c.categoria && <Tag tone="steel" style={{flexShrink:0}}>{c.categoria}</Tag>}
+              <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:5,flexShrink:0}}>
+                {c.categoria && <Tag tone="steel">{c.categoria}</Tag>}
+                {accountClienti[c.codice] && <Tag tone="ok">Account attivo</Tag>}
+              </div>
             </div>
           </div>
         ))}
@@ -3290,6 +3314,18 @@ function ClienteDettaglio({cliente, onIndietro, preventivi, ordini, attrezzature
   const [agenteId,setAgenteId] = useState(cliente.agente_profilo_id || "");
   const [utentiCommerciali,setUtentiCommerciali] = useState([]);
   const [salvandoCampo,setSalvandoCampo] = useState(false);
+  // null = non ancora verificato, true/false = ha (o non ha) un account
+  // portale attivo (non sospeso) legato a questo codice cliente.
+  const [accountClienteAttivo,setAccountClienteAttivo] = useState(null);
+
+  useEffect(()=>{
+    chiamaUtentiInfo(accessToken,{includeClienti:true})
+      .then(d=>{
+        const ha = (d?.utenti||[]).some(u=>u.ruolo==="cliente" && u.cliente_codice===cliente.codice && !u.sospeso);
+        setAccountClienteAttivo(ha);
+      })
+      .catch(()=>setAccountClienteAttivo(null)); // badge informativo: se il caricamento fallisce, semplicemente non compare
+  },[cliente.codice]);
 
   useEffect(()=>{
     chiamaUtentiInfo(accessToken)
@@ -3436,9 +3472,14 @@ function ClienteDettaglio({cliente, onIndietro, preventivi, ordini, attrezzature
       <button onClick={onIndietro} style={{...S.btnS,marginBottom:14}}>← Tutti i clienti</button>
 
       <div style={{...S.card,cursor:"default",marginBottom:16}}>
-        <div style={{fontFamily:F_DISPLAY,fontSize:19,fontWeight:600}}>{cliente.ragione_sociale}</div>
-        {cliente.rag_sociale_agg && <div style={{fontSize:13,color:C.steel,marginTop:2}}>{cliente.rag_sociale_agg}</div>}
-        <div className="tnum" style={{fontSize:11.5,color:"#9AA3AB",fontFamily:F_MONO,marginTop:6}}>COD {cliente.codice}</div>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:10}}>
+          <div style={{minWidth:0}}>
+            <div style={{fontFamily:F_DISPLAY,fontSize:19,fontWeight:600}}>{cliente.ragione_sociale}</div>
+            {cliente.rag_sociale_agg && <div style={{fontSize:13,color:C.steel,marginTop:2}}>{cliente.rag_sociale_agg}</div>}
+            <div className="tnum" style={{fontSize:11.5,color:"#9AA3AB",fontFamily:F_MONO,marginTop:6}}>COD {cliente.codice}</div>
+          </div>
+          {accountClienteAttivo && <Tag tone="ok" style={{flexShrink:0}}>Account cliente attivo</Tag>}
+        </div>
       </div>
 
       {erroreLocale && <div style={{fontSize:12,color:C.danger,background:"rgba(200,75,58,0.08)",borderRadius:6,padding:"9px 11px",marginBottom:14}}>⚠ {erroreLocale}</div>}
@@ -13723,13 +13764,11 @@ function NotificheBell({ sessione, onApriTicket }){
       {permessoNotifiche==="denied" && (
         // Una volta negato, nessun sito può richiedere di nuovo il permesso
         // da solo (protezione del browser) — va riattivato a mano dalle
-        // Impostazioni del telefono. Qui ci limitiamo a spiegarlo, il
-        // pulsante "Attiva notifiche" non servirebbe a nulla in questo stato.
-        <span
-          title="Notifiche bloccate — riattivale dalle impostazioni del browser o del dispositivo (su desktop: icona del lucchetto nella barra indirizzi)"
-          style={{fontSize:10.5,color:C.danger,fontWeight:600,whiteSpace:"nowrap",cursor:"help"}}
-        >
-          🔕 Notifiche bloccate
+        // Impostazioni del browser/dispositivo. Badge inequivocabile invece
+        // di un piccolo testo rosso facile da non notare: stesso stile dei
+        // Tag di stato usati nel resto dell'app, per coerenza visiva.
+        <span title="Riattivale dalle impostazioni del browser (icona del lucchetto nella barra indirizzi)">
+          <Tag tone="danger">🔕 Notifiche bloccate</Tag>
         </span>
       )}
       <button onClick={()=>setAperto(a=>!a)} style={{background:"none",border:"none",cursor:"pointer",position:"relative",padding:6,display:"flex"}}>
