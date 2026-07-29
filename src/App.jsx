@@ -3309,9 +3309,18 @@ function ModificaAttrezzatura({ attrezzatura, onChiudi, onSalvata, onEliminata, 
   const [scadenzaVerifiche,setScadenzaVerifiche] = useState(attrezzatura.scadenza_verifiche||"");
   const [note,setNote] = useState(attrezzatura.note||"");
   const [stato,setStato] = useState(attrezzatura.stato||"Attiva");
+  const [tecniciAssegnati,setTecniciAssegnati] = useState(attrezzatura.tecnici_assegnati_ids||[]);
+  const [tecniciDisponibili,setTecniciDisponibili] = useState([]);
   const [salvando,setSalvando] = useState(false);
   const [errore,setErrore] = useState("");
   const [confermaElimina,setConfermaElimina] = useState(false);
+
+  useEffect(()=>{
+    chiamaUtentiInfo(accessToken)
+      .then(d=>setTecniciDisponibili((d?.utenti||[]).filter(u=>u.ruolo==="tecnico")))
+      .catch(()=>setTecniciDisponibili([]));
+  },[]);
+
 
   // Cliente attuale (mostrato per nome) e cambio cliente (spostamento)
   const [clienteAttuale,setClienteAttuale] = useState(null);
@@ -3349,6 +3358,7 @@ function ModificaAttrezzatura({ attrezzatura, onChiudi, onSalvata, onEliminata, 
         scadenza_verifiche: scadenzaVerifiche || null,
         note: note.trim() || null,
         stato,
+        tecnici_assegnati_ids: tecniciAssegnati.length>0 ? tecniciAssegnati : null,
       };
       if(nuovoCliente) payload.cliente_codice = nuovoCliente.codice;
       await sbAuth("PATCH","attrezzature",`id=eq.${attrezzatura.id}`,payload,accessToken);
@@ -3455,6 +3465,24 @@ function ModificaAttrezzatura({ attrezzatura, onChiudi, onSalvata, onEliminata, 
         <textarea value={note} onChange={e=>setNote(e.target.value)} rows={2} style={{...S.inp,resize:"vertical",fontFamily:F_BODY}}/>
       </div>
 
+      {tecniciDisponibili.length>0 && (
+        <div style={{...S.card,cursor:"default",marginBottom:16}}>
+          <div style={{fontSize:11,fontFamily:F_MONO,color:"#9AA3AB",textTransform:"uppercase",letterSpacing:"0.05em",marginBottom:8}}>Tecnici assegnati</div>
+          <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
+            {tecniciDisponibili.map(t=>{
+              const attivo = tecniciAssegnati.includes(t.id);
+              return (
+                <span key={t.id} onClick={()=>setTecniciAssegnati(prev=>attivo?prev.filter(id=>id!==t.id):[...prev,t.id])}
+                  style={{fontSize:11.5,padding:"5px 10px",borderRadius:20,border:`1px solid ${attivo?C.ink:C.paperLine}`,background:attivo?C.ink:"#fff",color:attivo?"#fff":"#5B6770",cursor:"pointer"}}>
+                  {t.nome} {t.cognome||""}
+                </span>
+              );
+            })}
+          </div>
+          <div style={{fontSize:11,color:"#9AA3AB",marginTop:8}}>Riceveranno un promemoria push quando si avvicina la scadenza di verifica/aggiornamento.</div>
+        </div>
+      )}
+
       <div style={{...S.card,cursor:"default",marginBottom:16}}>
         <div style={{fontSize:11,fontFamily:F_MONO,color:"#9AA3AB",textTransform:"uppercase",letterSpacing:"0.05em",marginBottom:8}}>Stato</div>
         <div style={{display:"flex",gap:8}}>
@@ -3527,6 +3555,16 @@ function ClienteDettaglio({cliente, onIndietro, preventivi, ordini, attrezzature
       .catch(()=>setUtentiCommerciali([]));
   },[]);
 
+  // Tecnici disponibili per l'assegnazione sulle attrezzature — chi viene
+  // assegnato riceve il promemoria push quando si avvicina la scadenza di
+  // verifica/aggiornamento (vedi salvaAttrezzatura più sotto).
+  const [tecniciDisponibili,setTecniciDisponibili] = useState([]);
+  useEffect(()=>{
+    chiamaUtentiInfo(accessToken)
+      .then(d=>setTecniciDisponibili((d?.utenti||[]).filter(u=>u.ruolo==="tecnico")))
+      .catch(()=>setTecniciDisponibili([]));
+  },[]);
+
   // Se l'agente già assegnato al cliente non compare tra le opzioni
   // caricate (es. utenti-info restituisce un elenco diverso a seconda di
   // chi chiama — un commerciale potrebbe non vedere sé stesso nell'elenco
@@ -3549,16 +3587,6 @@ function ClienteDettaglio({cliente, onIndietro, preventivi, ordini, attrezzature
     setSalvandoCampo(false);
   }
 
-  if(attrezzaturaInModifica){
-    return <ModificaAttrezzatura
-      attrezzatura={attrezzaturaInModifica}
-      onChiudi={()=>setAttrezzaturaInModifica(null)}
-      onSalvata={(agg)=>{ setAttrezzature(prev=>prev.map(x=>x.id===agg.id?agg:x)); setAttrezzaturaInModifica(null); }}
-      onEliminata={(id)=>{ setAttrezzature(prev=>prev.filter(x=>x.id!==id)); setAttrezzaturaInModifica(null); }}
-      catalog={catalog} sessione={sessione} ruolo={ruolo}
-    />;
-  }
-
   // ── Form: aggiungi attrezzatura ──
   const [formAttrezzaturaAperto,setFormAttrezzaturaAperto] = useState(false);
   const [qProdotto,setQProdotto] = useState("");
@@ -3571,6 +3599,7 @@ function ClienteDettaglio({cliente, onIndietro, preventivi, ordini, attrezzature
   const [scadenzaVerifiche,setScadenzaVerifiche] = useState("");
   const [noteAttrezzatura,setNoteAttrezzatura] = useState("");
   const [salvandoAttrezzatura,setSalvandoAttrezzatura] = useState(false);
+  const [tecniciAssegnati,setTecniciAssegnati] = useState([]); // array di id tecnico
 
   // Elenco marchi già in uso nel catalogo, per il menu a tendina quando
   // l'attrezzatura non viene scelta da lì (es. attrezzatura di terzi, o non
@@ -3591,7 +3620,7 @@ function ClienteDettaglio({cliente, onIndietro, preventivi, ordini, attrezzature
   function resetFormAttrezzatura(){
     setFormAttrezzaturaAperto(false); setQProdotto(""); setProdottoScelto(null);
     setNomeLibero(""); setMarchioLibero(""); setNumeroSerie(""); setDataInstallazione("");
-    setScadenzaAggiornamenti(""); setScadenzaVerifiche(""); setNoteAttrezzatura("");
+    setScadenzaAggiornamenti(""); setScadenzaVerifiche(""); setNoteAttrezzatura(""); setTecniciAssegnati([]);
   }
   async function salvaAttrezzatura(){
     const nome = prodottoScelto ? prodottoScelto.nome : nomeLibero.trim();
@@ -3609,6 +3638,7 @@ function ClienteDettaglio({cliente, onIndietro, preventivi, ordini, attrezzature
         scadenza_aggiornamenti: scadenzaAggiornamenti || null,
         scadenza_verifiche: scadenzaVerifiche || null,
         note: noteAttrezzatura.trim() || null,
+        tecnici_assegnati_ids: tecniciAssegnati.length>0 ? tecniciAssegnati : null,
         creato_da_nome: sessione?.nome || null,
       };
       const [salvato] = await sbAuth("POST","attrezzature","",payload,accessToken);
@@ -3659,6 +3689,22 @@ function ClienteDettaglio({cliente, onIndietro, preventivi, ordini, attrezzature
       setErroreLocale("Salvataggio non riuscito: "+err.message);
     }
     setSalvandoIntervento(false);
+  }
+
+  // L'apertura del form di modifica attrezzatura DEVE stare dopo TUTTI gli
+  // hook del componente (non prima, come accadeva in precedenza): un
+  // return anticipato messo prima di altri useState/useMemo li salta al
+  // render successivo, e React va in errore ("Rendered fewer hooks than
+  // expected") — che senza un Error Boundary sopra si traduce in una
+  // pagina bianca.
+  if(attrezzaturaInModifica){
+    return <ModificaAttrezzatura
+      attrezzatura={attrezzaturaInModifica}
+      onChiudi={()=>setAttrezzaturaInModifica(null)}
+      onSalvata={(agg)=>{ setAttrezzature(prev=>prev.map(x=>x.id===agg.id?agg:x)); setAttrezzaturaInModifica(null); }}
+      onEliminata={(id)=>{ setAttrezzature(prev=>prev.filter(x=>x.id!==id)); setAttrezzaturaInModifica(null); }}
+      catalog={catalog} sessione={sessione} ruolo={ruolo}
+    />;
   }
 
   return (
@@ -3885,6 +3931,24 @@ function ClienteDettaglio({cliente, onIndietro, preventivi, ordini, attrezzature
               <input type="date" value={scadenzaVerifiche} onChange={e=>setScadenzaVerifiche(e.target.value)} style={{...S.inp,marginBottom:8}}/>
               {(scadenzaAggiornamenti || scadenzaVerifiche) && (
                 <div style={{fontSize:11,color:"#9AA3AB",marginBottom:12}}>Un promemoria comparirà a responsabili e tecnici 30 giorni prima di ciascuna scadenza.</div>
+              )}
+
+              {tecniciDisponibili.length>0 && (
+                <div style={{marginBottom:12}}>
+                  <label style={{fontSize:11,fontFamily:F_MONO,color:"#9AA3AB",textTransform:"uppercase",letterSpacing:"0.05em",display:"block",marginBottom:6}}>Tecnici assegnati (opzionale)</label>
+                  <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
+                    {tecniciDisponibili.map(t=>{
+                      const attivo = tecniciAssegnati.includes(t.id);
+                      return (
+                        <span key={t.id} onClick={()=>setTecniciAssegnati(prev=>attivo?prev.filter(id=>id!==t.id):[...prev,t.id])}
+                          style={{fontSize:11.5,padding:"5px 10px",borderRadius:20,border:`1px solid ${attivo?C.ink:C.paperLine}`,background:attivo?C.ink:"#fff",color:attivo?"#fff":"#5B6770",cursor:"pointer"}}>
+                          {t.nome} {t.cognome||""}
+                        </span>
+                      );
+                    })}
+                  </div>
+                  <div style={{fontSize:11,color:"#9AA3AB",marginTop:6}}>Riceveranno un promemoria push quando si avvicina la scadenza di verifica/aggiornamento.</div>
+                </div>
               )}
 
               <textarea value={noteAttrezzatura} onChange={e=>setNoteAttrezzatura(e.target.value)} rows={2} placeholder="Note (opzionale)" style={{...S.inp,resize:"vertical",fontFamily:F_BODY,marginBottom:12}}/>
