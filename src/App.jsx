@@ -106,7 +106,7 @@ const sbHeaders = {
 };
 
 async function sbGet(table, params = "") {
-  const res = await fetch(`${SUPABASE_URL}/rest/v1/${table}?${params}`, { headers: sbHeaders });
+  const res = await fetch(`${SUPABASE_URL}/rest/v1/${table}?${params}`, { headers: sbHeaders, cache: "no-store" });
   if (!res.ok) throw new Error(`Supabase ${res.status}`);
   return res.json();
 }
@@ -15206,6 +15206,26 @@ function NotificheBell({ sessione, onApriTicket }){
   useEffect(()=>{
     if(permessoNotifiche === "granted" && mioId) iscriviPush(false);
   },[permessoNotifiche, mioId]);
+
+  // Quando un nuovo service worker prende il controllo della pagina — cioè
+  // dopo un deploy, mentre l'app era già aperta (sw.js fa skipWaiting() +
+  // clients.claim() apposta per aggiornare subito) — il browser può tenersi
+  // l'iscrizione push legata al service worker precedente, che in alcuni
+  // casi (soprattutto iOS) risulta ancora presente ma "silenziosamente
+  // rotta": il permesso resta "granted" ma le notifiche smettono di
+  // arrivare, finché l'utente non nota il problema e ripreme "Attiva
+  // notifiche" a mano. Rifare l'iscrizione da zero (forzaRinnovo=true)
+  // proprio in quel momento evita che se ne debba accorgere.
+  useEffect(()=>{
+    if(!("serviceWorker" in navigator)) return;
+    const onCambioControllo = () => {
+      if(typeof Notification !== "undefined" && Notification.permission === "granted" && mioId){
+        iscriviPush(true);
+      }
+    };
+    navigator.serviceWorker.addEventListener("controllerchange", onCambioControllo);
+    return () => navigator.serviceWorker.removeEventListener("controllerchange", onCambioControllo);
+  },[mioId, accessToken]);
 
   async function carica(){
     if(!accessToken || !mioId) return;
