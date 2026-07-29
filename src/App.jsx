@@ -5763,18 +5763,23 @@ function Preventivi({cart,setCart,preventivi,setPreventivi,setOrdini,setArea,ruo
   // sul server fallisce, per non far credere all'utente che sia sparito
   // quando in realtà è ancora lì.
   // Crea un nuovo preventivo (Bozza) a partire da uno esistente — stessi
-  // articoli/soluzioni, cliente, pagamento e finanziaria; scadenza
-  // ricalcolata da oggi e tutto ciò che riguarda l'iter (stato, firma,
-  // conferma) riparte da zero, per non trascinarsi dietro l'accettazione
-  // di un altro documento.
+  // articoli/soluzioni, pagamento e finanziaria; il CLIENTE viene azzerato
+  // (va scelto da capo: evita di ritrovarsi per sbaglio un'offerta pensata
+  // per un cliente diverso), la scadenza è ricalcolata da oggi e tutto ciò
+  // che riguarda l'iter (stato, firma, conferma) riparte da zero, per non
+  // trascinarsi dietro l'accettazione di un altro documento.
+  const [duplicandoPreventivo, setDuplicandoPreventivo] = useState(false);
+  const [duplicatoConferma, setDuplicatoConferma] = useState(false);
   async function duplicaPreventivo(p){
     setErroreSync("");
+    setDuplicandoPreventivo(true);
+    setDuplicatoConferma(false);
     const payload = {
-      cliente: p.cliente, cliente_codice: p.cliente_codice||null,
-      cliente_localita: p.cliente_localita||null, cliente_provincia: p.cliente_provincia||null,
-      cliente_piva: p.cliente_piva||null, cliente_agente: p.cliente_agente||null,
-      cliente_indirizzo: p.cliente_indirizzo||null, cliente_referente: p.cliente_referente||null,
-      cliente_telefono: p.cliente_telefono||null, cliente_email: p.cliente_email||null,
+      cliente: "", cliente_codice: null,
+      cliente_localita: null, cliente_provincia: null,
+      cliente_piva: null, cliente_agente: null,
+      cliente_indirizzo: null, cliente_referente: null,
+      cliente_telefono: null, cliente_email: null,
       righe: p.righe||[], val: p.val||0, soluzioni: p.soluzioni||null,
       pagamento_modalita: p.pagamento_modalita||"USUALE CODIFICATA", pagamento_dettagli: p.pagamento_dettagli||"",
       referente_telos: p.referente_telos||sessione?.nome||"", note: p.note||"",
@@ -5792,9 +5797,12 @@ function Preventivi({cart,setCart,preventivi,setPreventivi,setOrdini,setArea,ruo
       setPreventivi(prev=>[salvato,...prev]);
       setSelId(salvato.id);
       setView("dettaglio");
+      setDuplicatoConferma(true);
+      setTimeout(()=>setDuplicatoConferma(false), 6000);
     }catch(err){
       setErroreSync("Duplicazione non riuscita: "+err.message);
     }
+    setDuplicandoPreventivo(false);
   }
   async function eliminaPreventivo(id){
     setConfermaEliminazione(false);
@@ -6046,6 +6054,12 @@ function Preventivi({cart,setCart,preventivi,setPreventivi,setOrdini,setArea,ruo
         )}
 
         {erroreSync && <div style={{fontSize:12,color:C.danger,background:"rgba(200,75,58,0.08)",borderRadius:6,padding:"9px 11px",marginBottom:14}}>⚠ {erroreSync}</div>}
+
+        {duplicatoConferma && (
+          <div style={{fontSize:12,color:"#2f6b46",background:"rgba(74,157,110,0.12)",borderRadius:6,padding:"9px 11px",marginBottom:14}}>
+            ✓ Preventivo duplicato — seleziona il cliente per questa nuova offerta.
+          </div>
+        )}
 
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:6}}>
           <div className="tnum" style={{fontFamily:F_MONO,fontSize:12,color:"#9AA3AB"}}>{codicePreventivo(selezionato)}</div>
@@ -6703,8 +6717,8 @@ function Preventivi({cart,setCart,preventivi,setPreventivi,setOrdini,setArea,ruo
 
         {selezionato.id!=="__nuovo__" && (
           <div style={{marginTop:20,paddingTop:20,borderTop:`1px solid ${C.paperLine}`}}>
-            <button onClick={()=>duplicaPreventivo(selezionato)} style={{width:"100%",padding:"12px",background:"#fff",color:C.ink,border:`1px solid ${C.ink}`,borderRadius:9,fontSize:13.5,fontWeight:600,cursor:"pointer"}}>
-              📋 Duplica in un nuovo preventivo
+            <button onClick={()=>duplicaPreventivo(selezionato)} disabled={duplicandoPreventivo} style={{width:"100%",padding:"12px",background:"#fff",color:C.ink,border:`1px solid ${C.ink}`,borderRadius:9,fontSize:13.5,fontWeight:600,cursor:duplicandoPreventivo?"default":"pointer",opacity:duplicandoPreventivo?0.6:1}}>
+              {duplicandoPreventivo ? "Duplico…" : "📋 Duplica in un nuovo preventivo"}
             </button>
           </div>
         )}
