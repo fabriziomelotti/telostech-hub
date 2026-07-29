@@ -2092,15 +2092,36 @@ function CompletaCategoria({ prodotti, categorieEsistenti, tipologieEsistenti, m
 
   async function applicaImportExcel(){
     setStatoImport("salvo"); setConfermaImportAperta(false);
+    // La Edge Function accetta al massimo 1000 righe per chiamata — con
+    // file più grandi (facile con migliaia di codici da completare) va
+    // spezzato in blocchi. 900 invece di 1000 lascia un margine di
+    // sicurezza. I risultati dei singoli blocchi si sommano.
+    const BLOCCO = 900;
+    const blocchi = [];
+    for(let i=0;i<righeImportate.length;i+=BLOCCO) blocchi.push(righeImportate.slice(i,i+BLOCCO));
+    let aggiornatiTot = 0;
+    const codiciAggiornatiTot = [];
+    const nonTrovatiTot = [];
     try{
-      const { aggiornati, codiciAggiornati, nonTrovati } = await chiamaCatalogAdmin("completaDaFile", { righe: righeImportate }, accessToken);
-      setRisultatoImport({ aggiornati, codiciAggiornati: codiciAggiornati||[], nonTrovati: nonTrovati||[] });
+      for(let i=0;i<blocchi.length;i++){
+        setMsgImport(blocchi.length>1 ? `Applico blocco ${i+1} di ${blocchi.length}…` : "");
+        const { aggiornati, codiciAggiornati, nonTrovati } = await chiamaCatalogAdmin("completaDaFile", { righe: blocchi[i] }, accessToken);
+        aggiornatiTot += aggiornati||0;
+        codiciAggiornatiTot.push(...(codiciAggiornati||[]));
+        nonTrovatiTot.push(...(nonTrovati||[]));
+      }
+      setRisultatoImport({ aggiornati: aggiornatiTot, codiciAggiornati: codiciAggiornatiTot, nonTrovati: nonTrovatiTot });
       setStatoImport("fatto");
+      setMsgImport("");
       setRigheImportate([]); setNomeFileImportato("");
       if(onFatto) onFatto();
     }catch(err){
+      // Se un blocco successivo fallisce, i precedenti sono comunque già
+      // stati applicati: lo segnaliamo invece di far sembrare che non sia
+      // successo nulla.
       setStatoImport("errore");
-      setMsgImport("Errore: "+err.message);
+      const fattoPrima = aggiornatiTot>0 ? ` (${aggiornatiTot} prodotti già aggiornati nei blocchi precedenti a questo errore)` : "";
+      setMsgImport("Errore: "+err.message+fattoPrima);
     }
   }
 
@@ -2182,7 +2203,7 @@ function CompletaCategoria({ prodotti, categorieEsistenti, tipologieEsistenti, m
                 </div>
               )}
             </>)}
-            {statoImport==="salvo" && <div style={{fontSize:11.5,color:C.steel}}>Applico…</div>}
+            {statoImport==="salvo" && <div style={{fontSize:11.5,color:C.steel}}>{msgImport || "Applico…"}</div>}
           </div>
         )}
 
