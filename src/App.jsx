@@ -10488,6 +10488,28 @@ function FormNuovoInterventoDaPianificare({ attrezzature, sessione, onCreato, on
   );
 }
 
+// Quando un intervento generato da un ticket viene completato, il ticket di
+// origine deve chiudersi con lui — altrimenti resterebbe "In lavorazione"
+// per sempre anche a intervento finito, ed è l'unico modo per capire dal
+// ticket che il problema è stato davvero risolto sul campo. Il collegamento
+// esiste solo in un verso (ticket.intervento_collegato_id -> intervento),
+// quindi si cerca "all'indietro" via REST invece di aggiungere una colonna
+// ticket_id su interventi solo per questo — interventi nati da un ticket
+// sono pochi, il filtro è comunque su una chiave indicizzata (id).
+async function chiudiTicketCollegato(interventoId, accessToken){
+  try{
+    const trovati = await sbGetAuth("ticket_assistenza", `select=id,stato&intervento_collegato_id=eq.${interventoId}`, accessToken);
+    const t = (trovati||[])[0];
+    if(t && t.stato!=="Chiuso"){
+      await sbAuth("PATCH","ticket_assistenza",`id=eq.${t.id}`,{
+        stato:"Chiuso",
+        esito_tipo:"risolto",
+        esito_chiusura:"Intervento tecnico completato.",
+      },accessToken);
+    }
+  }catch{ /* mai bloccante: la chiusura dell'intervento resta valida anche se questo passo fallisce */ }
+}
+
 function DettaglioIntervento({ intervento, attrezzature, sessione, onIndietro, onAggiornato, precodici }){
   const accessToken = trovaAccessToken(sessione);
   const [assistenze, setAssistenze] = useState(null);
@@ -10610,7 +10632,7 @@ function DettaglioIntervento({ intervento, attrezzature, sessione, onIndietro, o
     if(!serialiCompleti) return;
     if(!esitoCollaudo) return;
     salvaPatch({ stato:"Completato", completato_il:new Date().toISOString(), checklist, note: note.trim()||null, esito_collaudo: esitoCollaudo, note_interne: noteInterne.trim()||null })
-      .then(creaAttrezzatureDaInstallazione);
+      .then(()=>{ creaAttrezzatureDaInstallazione(); chiudiTicketCollegato(intervento.id, accessToken); });
   }
   // Chiusura semplificata per le assistenze esterne: il rapporto
   // firmato (checklist + conferma cliente) è il modo in cui chiudiamo un
@@ -10626,7 +10648,7 @@ function DettaglioIntervento({ intervento, attrezzature, sessione, onIndietro, o
       stato:"Completato", completato_il:new Date().toISOString(),
       checklist, note: note.trim()||null, esito_collaudo: esitoCollaudo, note_interne: noteInterne.trim()||null,
       ...confermaLocale,
-    }).then(creaAttrezzatureDaInstallazione);
+    }).then(()=>{ creaAttrezzatureDaInstallazione(); chiudiTicketCollegato(intervento.id, accessToken); });
   }
   // Registra in "attrezzature" ogni unità effettivamente installata (vedi
   // unitaInstallazione sopra) — numero di serie se compilato, altrimenti
@@ -11998,6 +12020,7 @@ function RapportoDemo({sessione, interventi, setInterventi, interventoDaCompleta
         // completa un intervento già pianificato: aggiorna lo stesso record
         await sbAuth("PATCH","interventi",`id=eq.${daCompletare.id}`,payloadComune,accessToken);
         setInterventi(prev=>prev.map(i=>i.id===daCompletare.id?{...i,...payloadComune}:i));
+        chiudiTicketCollegato(daCompletare.id, accessToken);
       } else {
         // rapporto nuovo, non legato a un intervento pianificato in precedenza
         const payload = {
@@ -15415,6 +15438,14 @@ async function caricaFotoTicket(foto, prefisso, accessToken){
 }
 
 const STATI_TICKET = ["Aperto","In lavorazione","In attesa cliente","Risolto","Chiuso"];
+// "Risolto" resta qui solo per colorare/filtrare correttamente i ticket
+// storici già chiusi con quel valore prima di questa modifica — non è più
+// uno stato in cui un ticket resta "in sospeso": chiudere via chat porta
+// direttamente e automaticamente a "Chiuso" (con l'esito risolto/non
+// risolto registrato a parte). Per lo stesso motivo "Chiuso" non è più tra
+// le opzioni selezionabili a mano: ci si arriva solo dal flusso guidato
+// (Risolto/Non risolto, o intervento tecnico concluso).
+const STATI_TICKET_SELEZIONABILI = ["Aperto","In lavorazione","In attesa cliente"];
 const PRIORITA_TICKET = ["Bassa","Normale","Alta","Urgente"];
 const TONO_STATO_TICKET = {"Aperto":C.danger,"In lavorazione":C.warn,"In attesa cliente":C.steel,"Risolto":C.ok,"Chiuso":C.steel};
 const TONO_PRIORITA_TICKET = {"Bassa":"steel","Normale":"steel","Alta":"warn","Urgente":"danger"};
@@ -15710,9 +15741,30 @@ function DettaglioTicket({ ticket, sessione, ruolo, utenti, catalog, clienteInfo
   const [suggeriti, setSuggeriti] = useState([]);
   const [generandoIntervento, setGenerandoIntervento] = useState(false);
   const [salvandoCampo, setSalvandoCampo] = useState(false);
-  const [chiusuraInCorso, setChiusuraInCorso] = useState(false);
-  const [esitoChiusura, setEsitoChiusura] = useState("");
+  const [chiediEsitoTipo, setChiediEsitoTipo] = useState(null); // null | "risolto" | "non_risolto"
+  const [spiegazioneEsito, setSpiegazioneEsito] = useState("");
   const [eliminando, setEliminando] = useState(false);
+  const presoInCaricoRef = useRef(false);
+
+  // Aprire un ticket "Aperto" da parte di un membro dello staff (tecnico,
+  // responsabile, admin — mai un commerciale, che è soloLettura) lo prende
+  // automaticamente in carico: nessun passaggio manuale, evita ticket che
+  // restano "Aperto" solo perché nessuno ha mai toccato la tendina di stato.
+  useEffect(()=>{
+    if(soloLettura || presoInCaricoRef.current || ticket.stato!=="Aperto") return;
+    presoInCaricoRef.current = true;
+    (async()=>{
+      try{
+        const [agg] = await sbAuth("PATCH","ticket_assistenza",`id=eq.${ticket.id}`,{stato:"In lavorazione"},accessToken);
+        onAggiornato(agg);
+        await sbAuth("POST","ticket_messaggi","",{
+          ticket_id: ticket.id, autore_tipo:"sistema", visibile_al_cliente:false,
+          testo:`${sessione?.nome || "Un operatore"} ha aperto il ticket — passato a "In lavorazione".`,
+        },accessToken);
+        caricaMessaggi();
+      }catch{ /* silenzioso: non deve bloccare l'apertura del ticket */ }
+    })();
+  },[ticket.id]);
 
   async function caricaMessaggi(sfondo){
     if(!sfondo) setCaricandoMsg(true);
@@ -15769,25 +15821,44 @@ function DettaglioTicket({ ticket, sessione, ruolo, utenti, catalog, clienteInfo
     setSalvandoCampo(false);
   }
 
-  // Chiudere un ticket richiede sempre un esito finale in archivio — invece
-  // di chiudere subito al cambio select, apriamo un piccolo pannello che
-  // blocca la conferma finché il testo non è compilato.
-  function chiediChiusura(){
-    setEsitoChiusura(ticket.esito_chiusura || "");
-    setChiusuraInCorso(true);
+  // Chiudere il ticket via chat/telefono (senza bisogno di un intervento sul
+  // posto) richiede sempre di dire come è andata: "Risolto" o "Non risolto"
+  // sono due esiti distinti — servono a chi rilegge in seguito per capire
+  // se il problema è stato davvero sistemato — entrambi con una spiegazione
+  // tecnica obbligatoria, e chiudono il ticket in automatico. Chi ha
+  // gestito il ticket viene registrato a parte (gestito_da_id/nome), non
+  // solo dedotto dal testo libero.
+  function chiediEsitoChat(tipo){
+    setChiediEsitoTipo(tipo);
+    setSpiegazioneEsito("");
   }
-  async function confermaChiusura(){
-    if(!esitoChiusura.trim()) return;
+  async function confermaEsitoChat(){
+    if(!spiegazioneEsito.trim()) return;
     setSalvandoCampo(true);
     try{
-      const [agg] = await sbAuth("PATCH","ticket_assistenza",`id=eq.${ticket.id}`,{stato:"Chiuso", esito_chiusura: esitoChiusura.trim()},accessToken);
+      const patch = {
+        stato: "Chiuso",
+        esito_chiusura: spiegazioneEsito.trim(),
+        esito_tipo: chiediEsitoTipo,
+        gestito_da_id: mioId,
+        gestito_da_nome: sessione?.nome || null,
+      };
+      const [agg] = await sbAuth("PATCH","ticket_assistenza",`id=eq.${ticket.id}`,patch,accessToken);
+      // Come per la generazione dell'intervento: al cliente arriva solo
+      // l'esito in forma semplice, la spiegazione tecnica (e chi l'ha
+      // scritta) resta interna.
+      await sbAuth("POST","ticket_messaggi","",{
+        ticket_id: ticket.id, autore_tipo:"sistema", visibile_al_cliente:false,
+        testo:`Ticket chiuso da ${sessione?.nome || "—"} — esito: ${chiediEsitoTipo==="risolto"?"Risolto":"Non risolto"}.\n${spiegazioneEsito.trim()}`,
+      },accessToken);
       await sbAuth("POST","ticket_messaggi","",{
         ticket_id: ticket.id, autore_tipo:"sistema", visibile_al_cliente:true,
-        testo:`Ticket chiuso — esito: ${esitoChiusura.trim()}`,
+        testo: chiediEsitoTipo==="risolto" ? "Il ticket è stato risolto e chiuso." : "Il ticket è stato chiuso.",
       },accessToken);
       onAggiornato(agg);
       caricaMessaggi();
-      setChiusuraInCorso(false);
+      setChiediEsitoTipo(null);
+      setSpiegazioneEsito("");
     }catch(err){ alert("Errore: "+err.message); }
     setSalvandoCampo(false);
   }
@@ -15815,9 +15886,14 @@ function DettaglioTicket({ ticket, sessione, ruolo, utenti, catalog, clienteInfo
   // 2) un report di chi ha gestito il ticket finora — cosa è stato provato/
   //    fatto in chat o al telefono, e perché secondo lui serve un
   //    intervento sul posto — così il tecnico non riparte da zero.
-  // Stesso pattern già usato per la chiusura (chiediChiusura/confermaChiusura):
+  // Stesso pattern già usato per l'esito di chiusura (chiediEsitoChat/confermaEsitoChat):
   // click apre un pannello che blocca la conferma finché non è compilato.
   const [generazioneInCorso, setGenerazioneInCorso] = useState(false);
+  // La selezione del tecnico resta nascosta finché non si tocca questo
+  // flag: "Risolto"/"Non risolto" sono l'azione principale mentre il
+  // ticket è "In lavorazione", l'invio a un collega è il percorso
+  // secondario per quando da chat/telefono non si risolve.
+  const [modalitaInvioCollega, setModalitaInvioCollega] = useState(false);
   const [reportFinale, setReportFinale] = useState("");
 
   function chiediGenerazioneIntervento(){
@@ -15933,11 +16009,13 @@ function DettaglioTicket({ ticket, sessione, ruolo, utenti, catalog, clienteInfo
           </div>
         ) : (
           <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
-            <select value={ticket.stato} onChange={e=>{
-              const nuovo = e.target.value;
-              if(nuovo==="Chiuso") chiediChiusura(); else aggiornaCampo("stato",nuovo);
-            }} disabled={salvandoCampo} style={S.sel}>
-              {STATI_TICKET.map(s=><option key={s} value={s}>{s}</option>)}
+            <select value={ticket.stato} onChange={e=>aggiornaCampo("stato",e.target.value)} disabled={salvandoCampo} style={S.sel}>
+              {STATI_TICKET_SELEZIONABILI.map(s=><option key={s} value={s}>{s}</option>)}
+              {/* Un ticket storico può trovarsi in uno stato non più selezionabile
+                  a mano (es. "Risolto" da prima di questa modifica, o "Chiuso"
+                  raggiunto dal flusso guidato): lo mostriamo comunque come
+                  opzione corrente, senza reintrodurlo tra le scelte normali. */}
+              {!STATI_TICKET_SELEZIONABILI.includes(ticket.stato) && <option value={ticket.stato}>{ticket.stato}</option>}
             </select>
             <select value={ticket.priorita} onChange={e=>aggiornaCampo("priorita",e.target.value)} disabled={salvandoCampo} style={S.sel}>
               {PRIORITA_TICKET.map(p=><option key={p} value={p}>{p}</option>)}
@@ -15946,22 +16024,36 @@ function DettaglioTicket({ ticket, sessione, ruolo, utenti, catalog, clienteInfo
         )}
       </div>
 
-      {chiusuraInCorso && (
-        <div style={{...S.card,cursor:"default",border:`1px solid ${C.ink}`,marginBottom:14}}>
-          <div style={{fontWeight:600,fontSize:13,marginBottom:6}}>Esito di chiusura</div>
-          <div style={{fontSize:12,color:C.steel,marginBottom:8}}>Obbligatorio: resta in archivio insieme al ticket.</div>
-          <textarea value={esitoChiusura} onChange={e=>setEsitoChiusura(e.target.value)} rows={3} placeholder="Come è stato risolto / motivo della chiusura…" style={{...S.inp,marginBottom:10,resize:"vertical",fontFamily:F_BODY}} autoFocus/>
-          <div style={{display:"flex",gap:8}}>
-            <button onClick={confermaChiusura} disabled={salvandoCampo||!esitoChiusura.trim()} style={{...S.btnAccent,opacity:(salvandoCampo||!esitoChiusura.trim())?0.5:1}}>Conferma chiusura</button>
-            <button onClick={()=>setChiusuraInCorso(false)} style={S.btnS}>Annulla</button>
-          </div>
+      {!soloLettura && ticket.stato==="In lavorazione" && !ticket.intervento_collegato_id && (
+        <div style={{marginBottom:14}}>
+          {chiediEsitoTipo ? (
+            <div style={{...S.card,cursor:"default",border:`1px solid ${C.ink}`}}>
+              <div style={{fontWeight:600,fontSize:13,marginBottom:6}}>
+                Spiegazione tecnica — {chiediEsitoTipo==="risolto"?"Risolto":"Non risolto"}
+              </div>
+              <div style={{fontSize:12,color:C.steel,marginBottom:8}}>Obbligatoria: resta in archivio insieme al ticket, e chiude il ticket.</div>
+              <textarea value={spiegazioneEsito} onChange={e=>setSpiegazioneEsito(e.target.value)} rows={3} placeholder="Cosa è stato verificato/fatto e perché…" style={{...S.inp,marginBottom:10,resize:"vertical",fontFamily:F_BODY}} autoFocus/>
+              <div style={{display:"flex",gap:8}}>
+                <button onClick={()=>setChiediEsitoTipo(null)} disabled={salvandoCampo} style={{...S.btnS,flex:1}}>Annulla</button>
+                <button onClick={confermaEsitoChat} disabled={salvandoCampo||!spiegazioneEsito.trim()} style={{...S.btnAccent,flex:2,opacity:(salvandoCampo||!spiegazioneEsito.trim())?0.5:1}}>Conferma chiusura</button>
+              </div>
+            </div>
+          ) : (
+            <div style={{display:"flex",gap:8}}>
+              <button onClick={()=>chiediEsitoChat("risolto")} style={{...S.btnAccent,flex:1}}>✓ Risolto</button>
+              <button onClick={()=>chiediEsitoChat("non_risolto")} style={{...S.btnS,flex:1}}>✕ Non risolto</button>
+            </div>
+          )}
         </div>
       )}
 
       {ticket.stato==="Chiuso" && ticket.esito_chiusura && (
         <div style={{...S.card,cursor:"default",background:"#F3F6FB",marginBottom:14}}>
-          <div style={{fontSize:11,color:C.steel,fontFamily:F_MONO,textTransform:"uppercase",letterSpacing:"0.05em",marginBottom:4}}>Esito di chiusura</div>
+          <div style={{fontSize:11,color:C.steel,fontFamily:F_MONO,textTransform:"uppercase",letterSpacing:"0.05em",marginBottom:4}}>
+            Esito di chiusura{ticket.esito_tipo?` — ${ticket.esito_tipo==="risolto"?"Risolto":"Non risolto"}`:""}
+          </div>
           <div style={{fontSize:13,whiteSpace:"pre-line"}}>{ticket.esito_chiusura}</div>
+          {ticket.gestito_da_nome && <div style={{fontSize:11.5,color:"#9AA3AB",marginTop:6}}>Gestito da {ticket.gestito_da_nome}</div>}
         </div>
       )}
 
@@ -16029,56 +16121,84 @@ function DettaglioTicket({ ticket, sessione, ruolo, utenti, catalog, clienteInfo
         </div>
 
         <div style={{flex:1,minWidth:240}}>
-          <div style={S.eyebrow}>Assegnato a</div>
-          {soloLettura ? (
-            <div style={{...S.card,cursor:"default",marginBottom:14,padding:"9px 12px"}}>
-              <span style={{fontSize:13,fontWeight:600}}>{nomeUtente(ticket.assegnato_a) || "— non ancora assegnato —"}</span>
-            </div>
-          ) : (
-            <select value={ticket.assegnato_a||""} onChange={e=>aggiornaCampo("assegnato_a", e.target.value||null)} disabled={salvandoCampo} style={{...S.sel,width:"100%",marginBottom:14}}>
-              <option value="">— non assegnato —</option>
-              {(utenti||[]).map(u=><option key={u.id} value={u.id}>{u.nome} {u.cognome||""}</option>)}
-            </select>
-          )}
-
-          {!soloLettura && suggeriti.length>0 && <>
-            <div style={S.eyebrow}>Tecnici suggeriti</div>
-            {suggeriti.map(s=>(
-              <div key={s.id} onClick={()=>aggiornaCampo("assegnato_a",s.id)} style={{...S.card,padding:"8px 10px",marginBottom:6,display:"flex",justifyContent:"space-between",alignItems:"center",gap:8}}>
-                <span style={{fontSize:12.5,fontWeight:600}}>{s.nome}</span>
-                <Tag tone={s.matchProvincia?"ok":"steel"}>{s.matchProvincia?"competenza + zona":"competenza"}</Tag>
-              </div>
-            ))}
-          </>}
-
-          <div style={{height:8}}/>
           {ticket.intervento_collegato_id ? (
-            <div style={{...S.card,cursor:"default",background:"#F3F6FB"}}>
-              <div style={{fontSize:12,color:C.steel}}>Intervento collegato</div>
-              <div style={{fontSize:12.5,fontWeight:600,marginTop:2}}>già generato</div>
-            </div>
-          ) : !soloLettura && (
-            generazioneInCorso ? (
-              <div style={{...S.card,cursor:"default"}}>
-                <div style={{fontSize:12,fontWeight:600,marginBottom:6}}>Report per il tecnico</div>
-                <div style={{fontSize:11.5,color:C.steel,marginBottom:8}}>
-                  Cosa è stato fatto/provato finora e perché serve un intervento sul posto — arriva al tecnico insieme al resto.
+            <>
+              <div style={S.eyebrow}>Assegnato a</div>
+              <div style={{...S.card,cursor:"default",marginBottom:14,padding:"9px 12px"}}>
+                <span style={{fontSize:13,fontWeight:600}}>{nomeUtente(ticket.assegnato_a) || "— non ancora assegnato —"}</span>
+              </div>
+              <div style={{...S.card,cursor:"default",background:"#F3F6FB"}}>
+                <div style={{fontSize:12,color:C.steel}}>Intervento collegato</div>
+                <div style={{fontSize:12.5,fontWeight:600,marginTop:2}}>già generato</div>
+              </div>
+            </>
+          ) : ticket.stato!=="In lavorazione" ? (
+            <>
+              <div style={S.eyebrow}>Assegnato a</div>
+              <div style={{...S.card,cursor:"default",padding:"9px 12px"}}>
+                <span style={{fontSize:13,fontWeight:600}}>{nomeUtente(ticket.assegnato_a) || "— non ancora assegnato —"}</span>
+              </div>
+            </>
+          ) : soloLettura ? (
+            <>
+              <div style={S.eyebrow}>Assegnato a</div>
+              <div style={{...S.card,cursor:"default",marginBottom:14,padding:"9px 12px"}}>
+                <span style={{fontSize:13,fontWeight:600}}>{nomeUtente(ticket.assegnato_a) || "— non ancora assegnato —"}</span>
+              </div>
+            </>
+          ) : !modalitaInvioCollega ? (
+            // Stato di default mentre il ticket è "In lavorazione": qui non
+            // compare altro. La selezione del tecnico (tendina + suggeriti)
+            // si apre solo toccando questo pulsante, così non compete
+            // visivamente con "Risolto"/"Non risolto" qui sopra, che resta
+            // l'azione principale.
+            <button onClick={()=>setModalitaInvioCollega(true)} style={{...S.btnS,width:"100%"}}>
+              📨 Invio a collega
+            </button>
+          ) : (
+            <>
+              <div style={S.eyebrow}>Assegnato a</div>
+              <select value={ticket.assegnato_a||""} onChange={e=>aggiornaCampo("assegnato_a", e.target.value||null)} disabled={salvandoCampo} style={{...S.sel,width:"100%",marginBottom:14}}>
+                <option value="">— non assegnato —</option>
+                {(utenti||[]).map(u=><option key={u.id} value={u.id}>{u.nome} {u.cognome||""}</option>)}
+              </select>
+
+              {suggeriti.length>0 && <>
+                <div style={S.eyebrow}>Tecnici suggeriti</div>
+                {suggeriti.map(s=>(
+                  <div key={s.id} onClick={()=>aggiornaCampo("assegnato_a",s.id)} style={{...S.card,padding:"8px 10px",marginBottom:6,display:"flex",justifyContent:"space-between",alignItems:"center",gap:8}}>
+                    <span style={{fontSize:12.5,fontWeight:600}}>{s.nome}</span>
+                    <Tag tone={s.matchProvincia?"ok":"steel"}>{s.matchProvincia?"competenza + zona":"competenza"}</Tag>
+                  </div>
+                ))}
+              </>}
+
+              <div style={{height:8}}/>
+              {generazioneInCorso ? (
+                <div style={{...S.card,cursor:"default"}}>
+                  <div style={{fontSize:12,fontWeight:600,marginBottom:6}}>Report per il tecnico</div>
+                  <div style={{fontSize:11.5,color:C.steel,marginBottom:8}}>
+                    Cosa è stato fatto/provato finora e perché serve un intervento sul posto — arriva al tecnico insieme al resto.
+                  </div>
+                  <textarea value={reportFinale} onChange={e=>setReportFinale(e.target.value)} rows={4}
+                    placeholder="Es. Provato da remoto XYZ senza esito, sospetto guasto hardware sulla scheda…"
+                    style={{...S.inp,marginBottom:8,resize:"vertical",fontFamily:F_BODY}}/>
+                  <div style={{display:"flex",gap:8}}>
+                    <button onClick={()=>setGenerazioneInCorso(false)} disabled={generandoIntervento} style={{...S.btnS,flex:1}}>Annulla</button>
+                    <button onClick={confermaGenerazioneIntervento} disabled={generandoIntervento||!reportFinale.trim()} style={{...S.btnP,flex:2,opacity:(generandoIntervento||!reportFinale.trim())?0.5:1}}>
+                      {generandoIntervento?"Generazione…":"✓ Invia a un collega"}
+                    </button>
+                  </div>
                 </div>
-                <textarea value={reportFinale} onChange={e=>setReportFinale(e.target.value)} rows={4}
-                  placeholder="Es. Provato da remoto XYZ senza esito, sospetto guasto hardware sulla scheda…"
-                  style={{...S.inp,marginBottom:8,resize:"vertical",fontFamily:F_BODY}}/>
+              ) : (
                 <div style={{display:"flex",gap:8}}>
-                  <button onClick={()=>setGenerazioneInCorso(false)} disabled={generandoIntervento} style={{...S.btnS,flex:1}}>Annulla</button>
-                  <button onClick={confermaGenerazioneIntervento} disabled={generandoIntervento||!reportFinale.trim()} style={{...S.btnP,flex:2,opacity:(generandoIntervento||!reportFinale.trim())?0.5:1}}>
-                    {generandoIntervento?"Generazione…":"✓ Genera intervento"}
+                  <button onClick={()=>setModalitaInvioCollega(false)} style={{...S.btnS,flex:1}}>Annulla</button>
+                  <button onClick={chiediGenerazioneIntervento} style={{...S.btnP,flex:2}}>
+                    📨 Invia a un collega
                   </button>
                 </div>
-              </div>
-            ) : (
-              <button onClick={chiediGenerazioneIntervento} style={{...S.btnP,width:"100%"}}>
-                🔧 Genera intervento
-              </button>
-            )
+              )}
+            </>
           )}
         </div>
       </div>
@@ -16527,11 +16647,23 @@ function DettaglioTicketCliente({ ticket, sessione, onIndietro, onAggiornato }){
       <div style={{fontFamily:F_DISPLAY,fontSize:20,fontWeight:600,marginTop:2}}>{ticket.titolo}</div>
       <div style={{fontSize:14,fontWeight:700,color:STATO_TICKET_COLORE[ticket.stato]||C.steel,marginBottom:16}}>{ticket.stato}</div>
 
-      {ticket.stato==="Chiuso" && ticket.esito_chiusura && (
-        <div style={{...S.card,cursor:"default",background:"#F3F6FB",marginBottom:14}}>
-          <div style={{fontSize:12.5,color:C.steel,fontFamily:F_MONO,textTransform:"uppercase",letterSpacing:"0.05em",marginBottom:5}}>Esito</div>
-          <div style={{fontSize:15,whiteSpace:"pre-line"}}>{ticket.esito_chiusura}</div>
-        </div>
+      {ticket.stato==="Chiuso" && (
+        ticket.esito_tipo ? (
+          // Flusso nuovo: la spiegazione tecnica (ticket.esito_chiusura) resta
+          // interna — al cliente arriva solo l'esito in forma semplice, come
+          // nel messaggio di chiusura in chat.
+          <div style={{...S.card,cursor:"default",background:"#F3F6FB",marginBottom:14}}>
+            <div style={{fontSize:12.5,color:C.steel,fontFamily:F_MONO,textTransform:"uppercase",letterSpacing:"0.05em",marginBottom:5}}>Esito</div>
+            <div style={{fontSize:15}}>{ticket.esito_tipo==="risolto" ? "Risolto e chiuso." : "Chiuso."}</div>
+          </div>
+        ) : ticket.esito_chiusura && (
+          // Ticket chiusi prima di questa modifica: esito_chiusura era già
+          // pensato per il cliente, si continua a mostrarlo com'era.
+          <div style={{...S.card,cursor:"default",background:"#F3F6FB",marginBottom:14}}>
+            <div style={{fontSize:12.5,color:C.steel,fontFamily:F_MONO,textTransform:"uppercase",letterSpacing:"0.05em",marginBottom:5}}>Esito</div>
+            <div style={{fontSize:15,whiteSpace:"pre-line"}}>{ticket.esito_chiusura}</div>
+          </div>
+        )
       )}
 
       <div style={{border:`1px solid ${C.paperLine}`,borderRadius:8,padding:13,minHeight:160,marginBottom:14,background:"#fff"}}>
