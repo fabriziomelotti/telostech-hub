@@ -942,6 +942,8 @@ export function EditaProdotto({ ruolo, p, categorieEsistenti, tipologieEsistenti
     listino: p.listino ?? "", sconto: p.sconto ?? "", netto: p.netto ?? "",
     tipo_prezzo: p.tipo_prezzo||"listino", note: p.note||"", img: p.img||"", video: p.video||"",
     margine_minimo_override: p.margine_minimo_override ?? "",
+    costo_acquisto_override: p.costo_acquisto_override ?? "",
+    costo_acquisto_override_note: p.costo_acquisto_override_note ?? "",
   });
   const [settori, setSettori] = useState(settoriIniziali);
   const [stato, setStato] = useState("idle"); // idle | salvo | fatto | errore
@@ -1052,6 +1054,8 @@ export function EditaProdotto({ ruolo, p, categorieEsistenti, tipologieEsistenti
       schede_tecniche: schede,
       attivo: true,
       margine_minimo_override: f.margine_minimo_override!=="" ? parseFloat(f.margine_minimo_override) : null,
+      costo_acquisto_override: f.costo_acquisto_override!=="" ? parseFloat(f.costo_acquisto_override) : null,
+      costo_acquisto_override_note: f.costo_acquisto_override!=="" ? (f.costo_acquisto_override_note.trim() || null) : null,
     };
 
     try{
@@ -1145,6 +1149,9 @@ export function EditaProdotto({ ruolo, p, categorieEsistenti, tipologieEsistenti
           )}
 
           {campo("Margine minimo override % (vuoto = usa categoria/marchio/default)", <input type="number" step="0.5" min="0" max="100" value={f.margine_minimo_override} onChange={e=>set("margine_minimo_override",e.target.value)} placeholder="Default" style={S.inp}/>)}
+
+          {campo("Costo acquisto esclusivo € (vuoto = usa la condizione del marchio)", <input type="number" step="0.01" min="0" value={f.costo_acquisto_override} onChange={e=>set("costo_acquisto_override",e.target.value)} placeholder="Condizione marchio" className="tnum" style={{...S.inp,fontFamily:F_MONO}}/>)}
+          {f.costo_acquisto_override!=="" && campo("Nota sul costo esclusivo (es. \"accordo speciale scad. 31/12/2026\")", <input value={f.costo_acquisto_override_note} onChange={e=>set("costo_acquisto_override_note",e.target.value)} placeholder="Opzionale" style={S.inp}/>)}
 
           {campo("Tipo prezzo",
             <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>

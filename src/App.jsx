@@ -190,7 +190,7 @@ async function caricaCatalogo(catalogoDemo) {
   try {
     const PAGE = 1000;
     let tutti = [], offset = 0;
-    const cols = "cod,nome,descrizione,desc_prev,categoria,marchio,tipologia,um,listino,sconto,netto,tipo_prezzo,note,img,settori,schede_tecniche,video_url,margine_minimo_override";
+    const cols = "cod,nome,descrizione,desc_prev,categoria,marchio,tipologia,um,listino,sconto,netto,tipo_prezzo,note,img,settori,schede_tecniche,video_url,margine_minimo_override,costo_acquisto_override,costo_acquisto_override_note";
     while (true) {
       const dati = await sbGet("prodotti",
         `select=${cols}&attivo=eq.true&order=categoria&limit=${PAGE}&offset=${offset}`);
@@ -209,6 +209,8 @@ async function caricaCatalogo(catalogoDemo) {
       schede: p.schede_tecniche || [],
       video: p.video_url || "",
       margine_minimo_override: p.margine_minimo_override ?? null,
+      costo_acquisto_override: p.costo_acquisto_override ?? null,
+      costo_acquisto_override_note: p.costo_acquisto_override_note ?? "",
     }));
   } catch (err) {
     console.warn("Supabase non raggiungibile, uso catalogo demo:", err.message);
@@ -641,6 +643,13 @@ export default function App(){
   // Scorciatoia dalla dashboard di un tecnico: "porta subito al planning
   // settimanale", stesso principio del booleano sopra per il carrello.
   const [apriPlanningTecnico, setApriPlanningTecnico] = useState(false);
+  // Passa da Preventivi (dopo "Converti in ordine") a Ordini: apre subito il
+  // dettaglio del nuovo ordine invece di lasciarlo raggiungibile solo dalla
+  // sua card home — appena creato è "Inserito", e "Inserito" non compare in
+  // nessuna delle tile filtrate per stato (Cerca ordini = Inviato, In
+  // gestione, Evasi), quindi senza questo sarebbe irraggiungibile finché
+  // qualcuno non compila il modulo logistico e lo segna come inviato.
+  const [apriOrdineId, setApriOrdineId] = useState(null);
   const [preventivi, setPreventivi] = useState([]);
   const [ordini, setOrdini] = useState([]);
   const [attrezzature, setAttrezzature] = useState([]);
@@ -953,8 +962,8 @@ export default function App(){
           {area==="prodotti" && <Prodotti cart={cart} setCart={setCart} catalog={catalog} catalogLoading={catalogLoading} sessione={sessione} ruolo={role} setCatalog={setCatalog} setArea={setArea} precodici={precodici}/>}
           {area==="clienti" && <Clienti sessione={sessione} preventivi={preventivi} ordini={ordini} attrezzature={attrezzature} setAttrezzature={setAttrezzature} interventi={interventi} setInterventi={setInterventi} catalog={catalog} ruolo={role}/>}
           {area==="promemoria" && <Promemoria sessione={sessione} ruolo={role} preventivi={preventivi} interventi={interventi} ordini={ordini} promemoria={promemoria} setPromemoria={setPromemoria} setArea={setArea}/>}
-          {area==="preventivi" && <Preventivi cart={cart} setCart={setCart} preventivi={preventivi} setPreventivi={setPreventivi} setOrdini={setOrdini} setArea={setArea} setAvviaOrdineDaCart={setAvviaOrdineDaCart} ruolo={role} catalog={catalog} sessione={sessione} precodici={precodici} isMobile={isMobile}/>}
-          {area==="ordini" && <Ordini ordini={ordini} setOrdini={setOrdini} preventivi={preventivi} setPreventivi={setPreventivi} setInterventi={setInterventi} catalog={catalog} sessione={sessione} ruolo={role} precodici={precodici} isMobile={isMobile} cart={cart} setCart={setCart} avviaOrdineDaCart={avviaOrdineDaCart} setAvviaOrdineDaCart={setAvviaOrdineDaCart}/>}
+          {area==="preventivi" && <Preventivi cart={cart} setCart={setCart} preventivi={preventivi} setPreventivi={setPreventivi} setOrdini={setOrdini} setArea={setArea} setAvviaOrdineDaCart={setAvviaOrdineDaCart} setApriOrdineId={setApriOrdineId} ruolo={role} catalog={catalog} sessione={sessione} precodici={precodici} isMobile={isMobile}/>}
+          {area==="ordini" && <Ordini ordini={ordini} setOrdini={setOrdini} preventivi={preventivi} setPreventivi={setPreventivi} setInterventi={setInterventi} catalog={catalog} sessione={sessione} ruolo={role} precodici={precodici} isMobile={isMobile} cart={cart} setCart={setCart} avviaOrdineDaCart={avviaOrdineDaCart} setAvviaOrdineDaCart={setAvviaOrdineDaCart} apriOrdineId={apriOrdineId} setApriOrdineId={setApriOrdineId}/>}
           {area==="statistiche" && <Statistiche preventivi={preventivi} ordini={ordini} catalog={catalog} sessione={sessione} ruolo={role}/>}
           {area==="interventi" && <Interventi interventi={interventi} setInterventi={setInterventi} attrezzature={attrezzature} sessione={sessione} setArea={setArea} interventoDaCompletare={interventoDaCompletare} setInterventoDaCompletare={setInterventoDaCompletare} catalog={catalog} ruolo={role} precodici={precodici} isMobile={isMobile} apriPlanningTecnico={apriPlanningTecnico} setApriPlanningTecnico={setApriPlanningTecnico}/>}
           {area==="ticket" && <TicketAssistenza sessione={sessione} ruolo={role} ticketDaAprire={ticketDaAprire} setTicketDaAprire={setTicketDaAprire} catalog={catalog}/>}
@@ -1308,12 +1317,17 @@ function scontoEffettivo(sconto, extra){
   return 100 * (1 - (1 - sconto/100) * (1 - extra/100));
 }
 
-// Costi esclusivi per singolo articolo (prevalono sulla condizione marchio)
-let COSTI_ESCLUSIVI = {}; // { cod: { costo, note } }
-
 function getCostoAcquisto(p){
-  // 1. Costo esclusivo per articolo (la priorità più alta)
-  if(COSTI_ESCLUSIVI[p.cod]) return { costo: COSTI_ESCLUSIVI[p.cod].costo, tipo:"esclusivo" };
+  // 1. Costo esclusivo per articolo (la priorità più alta) — impostato in modo
+  //    permanente sul prodotto (Catalogo → scheda prodotto → Modifica →
+  //    "Costo acquisto esclusivo"), non più un valore volatile tenuto solo in
+  //    memoria: prima viveva in COSTI_ESCLUSIVI (un oggetto JS scritto dal
+  //    pannello costo durante la selezione prodotto in preventivo/ordine) che
+  //    non veniva mai salvato su Supabase — spariva ad ogni ricarico pagina,
+  //    e nel frattempo era condiviso per tutta la sessione del browser tra
+  //    QUALSIASI preventivo/ordine stesse usando quel prodotto, non solo
+  //    quello in cui veniva impostato.
+  if(p.costo_acquisto_override!=null) return { costo: p.costo_acquisto_override, tipo:"esclusivo" };
   // 2. Condizione standard per marchio con eventuale extra
   const cond = CONDIZIONI_ACQUISTO_MARCHIO[p.mar];
   if(cond != null && p.listino > 0){
@@ -5689,16 +5703,13 @@ function RicercaProdottiInline({onSeleziona, righeEsistenti, ruolo, catalog:catP
 function SchedaProdottoSelezione({p, ruolo, giaPresente, onConferma, onClose}){
   const [qty,setQty]=useState(1);
   const [nettoUnitario,setNettoUnitario]=useState(p.netto);
-  const [costoEsclusivo,setCostoEsclusivo]=useState(COSTI_ESCLUSIVI[p.cod]?.costo ?? null);
-  const [noteCosto,setNoteCosto]=useState(COSTI_ESCLUSIVI[p.cod]?.note ?? "");
-  const [editCosto,setEditCosto]=useState(false);
   const [immagineIngrandita, setImmagineIngrandita] = useState(false);
 
   const puoModificare = puoModificarePrezzoLiberamente(ruolo);
   const vediCosti = puoModificare; // stessa condizione — solo responsabile/admin
 
   const costoInfo = getCostoAcquisto({...p, netto: nettoUnitario});
-  const costoCalcolato = costoEsclusivo ?? costoInfo?.costo;
+  const costoCalcolato = costoInfo?.costo;
   const margine = calcolaMargine(nettoUnitario, costoCalcolato);
   const sogliaMargine = getSogliaMargineMinimo(p);
   const sottoMargine = margine!==null && margine < sogliaMargine;
@@ -5706,12 +5717,6 @@ function SchedaProdottoSelezione({p, ruolo, giaPresente, onConferma, onClose}){
   const totaleRiga = nettoUnitario * qty;
   const totaleRigaCosto = costoCalcolato ? costoCalcolato * qty : null;
   const margineEuro = totaleRigaCosto ? totaleRiga - totaleRigaCosto : null;
-
-  function salvaCostoEsclusivo(){
-    if(costoEsclusivo!=null) COSTI_ESCLUSIVI[p.cod] = { costo: costoEsclusivo, note: noteCosto };
-    else delete COSTI_ESCLUSIVI[p.cod];
-    setEditCosto(false);
-  }
 
   function conferma(){
     onConferma({
@@ -5790,50 +5795,31 @@ function SchedaProdottoSelezione({p, ruolo, giaPresente, onConferma, onClose}){
           {/* ── SEZIONE COSTO — solo responsabile/admin ── */}
           {vediCosti && (
             <div style={{background:C.paper,border:`1px solid ${C.paperLine}`,borderRadius:10,padding:"12px 14px",marginBottom:16}}>
-              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
-                <div style={{fontFamily:F_MONO,fontSize:10.5,fontWeight:600,color:"#6B7280",textTransform:"uppercase",letterSpacing:"0.06em"}}>🔒 Costo acquisto</div>
-                <button onClick={()=>setEditCosto(e=>!e)} style={{fontSize:11,color:C.ink,background:"none",border:`0.5px solid ${C.paperLine}`,borderRadius:5,padding:"3px 8px",cursor:"pointer"}}>{editCosto?"Chiudi":"Modifica"}</button>
-              </div>
+              <div style={{fontFamily:F_MONO,fontSize:10.5,fontWeight:600,color:"#6B7280",textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:10}}>🔒 Costo acquisto</div>
 
-              {!editCosto ? (
-                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
-                  <div>
-                    <div style={{fontSize:10.5,color:"#9AA3AB",marginBottom:2}}>
-                      {costoEsclusivo!=null
-                        ? "Costo esclusivo articolo"
-                        : costoInfo?.tipo==="marchio"
-                          ? `Cond. marchio: −${costoInfo.sconto_pct}%${costoInfo.extra_pct>0?` +${costoInfo.extra_pct}%`:""} (eff. −${costoInfo.effettivo_pct.toFixed(1)}%)`
-                          : "Costo non disponibile"}
-                    </div>
-                    <div className="tnum" style={{fontSize:15,fontWeight:700,fontFamily:F_MONO,color:costoCalcolato?C.charcoal:"#9AA3AB"}}>
-                      {costoCalcolato ? `€${costoCalcolato.toFixed(2)}` : "N/D"}
-                    </div>
-                    {costoEsclusivo!=null && noteCosto && <div style={{fontSize:10.5,color:C.steel,marginTop:3}}>{noteCosto}</div>}
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+                <div>
+                  <div style={{fontSize:10.5,color:"#9AA3AB",marginBottom:2}}>
+                    {costoInfo?.tipo==="esclusivo"
+                      ? "Costo esclusivo articolo"
+                      : costoInfo?.tipo==="marchio"
+                        ? `Cond. marchio: −${costoInfo.sconto_pct}%${costoInfo.extra_pct>0?` +${costoInfo.extra_pct}%`:""} (eff. −${costoInfo.effettivo_pct.toFixed(1)}%)`
+                        : "Costo non disponibile"}
                   </div>
-                  <div>
-                    <div style={{fontSize:10.5,color:"#9AA3AB",marginBottom:2}}>Margine</div>
-                    <div className="tnum" style={{fontSize:15,fontWeight:700,fontFamily:F_MONO,color:sottoMargine?C.danger:C.ok}}>
-                      {margine!=null ? `${margine.toFixed(1)}%` : "N/D"}
-                    </div>
-                    {margineEuro!=null && <div className="tnum" style={{fontSize:10.5,color:"#9AA3AB",marginTop:3}}>€{margineEuro.toFixed(2)} sulla riga</div>}
+                  <div className="tnum" style={{fontSize:15,fontWeight:700,fontFamily:F_MONO,color:costoCalcolato?C.charcoal:"#9AA3AB"}}>
+                    {costoCalcolato ? `€${costoCalcolato.toFixed(2)}` : "N/D"}
                   </div>
+                  {costoInfo?.tipo==="esclusivo" && p.costo_acquisto_override_note && <div style={{fontSize:10.5,color:C.steel,marginTop:3}}>{p.costo_acquisto_override_note}</div>}
                 </div>
-              ) : (
-                <div style={{display:"flex",flexDirection:"column",gap:10}}>
-                  <div>
-                    <div style={{fontSize:11,color:"#6B7280",marginBottom:4}}>Costo esclusivo per questo articolo (lascia vuoto per usare la condizione marchio)</div>
-                    <input type="number" step="0.01" value={costoEsclusivo??""} placeholder={costoInfo?.costo ? `Cond. marchio: €${costoInfo.costo.toFixed(2)}` : "Inserisci costo"} onChange={e=>setCostoEsclusivo(e.target.value?parseFloat(e.target.value):null)} className="tnum" style={{...S.inp,fontFamily:F_MONO,fontWeight:600}}/>
+                <div>
+                  <div style={{fontSize:10.5,color:"#9AA3AB",marginBottom:2}}>Margine</div>
+                  <div className="tnum" style={{fontSize:15,fontWeight:700,fontFamily:F_MONO,color:sottoMargine?C.danger:C.ok}}>
+                    {margine!=null ? `${margine.toFixed(1)}%` : "N/D"}
                   </div>
-                  <div>
-                    <div style={{fontSize:11,color:"#6B7280",marginBottom:4}}>Note (es. "accordo speciale scad. 31/12/2024")</div>
-                    <input value={noteCosto} onChange={e=>setNoteCosto(e.target.value)} placeholder="Opzionale" style={S.inp}/>
-                  </div>
-                  <div style={{display:"flex",gap:8}}>
-                    <button onClick={salvaCostoEsclusivo} style={{...S.btnAccent,flex:1,padding:"9px"}}>Salva</button>
-                    {costoEsclusivo!=null && <button onClick={()=>{setCostoEsclusivo(null);setNoteCosto("");}} style={{...S.btnS,fontSize:11}}>Rimuovi esclusivo</button>}
-                  </div>
+                  {margineEuro!=null && <div className="tnum" style={{fontSize:10.5,color:"#9AA3AB",marginTop:3}}>€{margineEuro.toFixed(2)} sulla riga</div>}
                 </div>
-              )}
+              </div>
+              <div style={{fontSize:10.5,color:"#9AA3AB",marginTop:10}}>Per cambiare il costo esclusivo di questo articolo: Catalogo → scheda prodotto → Modifica prodotto.</div>
             </div>
           )}
 
@@ -6054,7 +6040,7 @@ function BloccoSoluzioneVendita({ soluzione, indice, onCambia, onRimuovi, catalo
   );
 }
 
-function Preventivi({cart,setCart,preventivi,setPreventivi,setOrdini,setArea,setAvviaOrdineDaCart,ruolo,catalog,sessione,precodici,isMobile}){
+function Preventivi({cart,setCart,preventivi,setPreventivi,setOrdini,setArea,setAvviaOrdineDaCart,setApriOrdineId,ruolo,catalog,sessione,precodici,isMobile}){
   const [view,setView]=useState("home"); // home | cerca | da-gestire | in-ordine | bloccate | nuovo | dettaglio
   const [generandoPdf,setGenerandoPdf]=useState(false);
   const [mostraSelezionePacchetto,setMostraSelezionePacchetto]=useState(false);
@@ -6470,6 +6456,7 @@ function Preventivi({cart,setCart,preventivi,setPreventivi,setOrdini,setArea,set
       setOrdini(prev=>[salvato,...prev]);
       aggiorna(p.id, {stato:"Convertito in ordine"});
       setArea("ordini");
+      setApriOrdineId(salvato.id);
     }catch(err){
       setErroreSync("Conversione in ordine non riuscita: "+err.message);
     }
@@ -8404,8 +8391,19 @@ function Statistiche({preventivi, ordini, catalog, sessione, ruolo}){
 }
 
 // ─── ORDINI ───────────────────────────────────────────────────────────────────
-function Ordini({ordini,setOrdini,preventivi,setPreventivi,setInterventi,catalog,sessione,ruolo,precodici,isMobile,cart,setCart,avviaOrdineDaCart,setAvviaOrdineDaCart}){
+function Ordini({ordini,setOrdini,preventivi,setPreventivi,setInterventi,catalog,sessione,ruolo,precodici,isMobile,cart,setCart,avviaOrdineDaCart,setAvviaOrdineDaCart,apriOrdineId,setApriOrdineId}){
   const [selId,setSelId]=useState(null);
+  // Arrivo da "Converti in ordine" su un preventivo: apre subito il
+  // dettaglio del nuovo ordine (stato "Inserito", con il modulo logistico
+  // da compilare) invece di lasciare l'utente sulla home a tile, da cui
+  // "Inserito" non è raggiungibile finché non viene compilato e inviato.
+  // Stessa cautela hook-order dell'effetto avviaOrdineDaCart qui sotto:
+  // deve stare prima di qualunque return anticipato del componente.
+  useEffect(()=>{
+    if(!apriOrdineId) return;
+    setSelId(apriOrdineId);
+    setApriOrdineId(null);
+  },[apriOrdineId]);
   const [vista,setVista]=useState("home");
   const [generandoPdf,setGenerandoPdf]=useState(false);
   const [documentiFinSelezionati,setDocumentiFinSelezionati]=useState([]); // indici selezionati nell'ordine corrente
@@ -9533,6 +9531,7 @@ ${o.firma_cliente ? `
   }
 
   if(vista==="home" && !creandoNuovo){
+    const inseritiN = ordini.filter(o=>o.stato==="Inserito").length;
     const daPrendereInCaricoN = ordini.filter(o=>o.stato==="Inviato").length;
     const inGestioneN = ordini.filter(o=>o.stato==="In gestione").length;
     const evasiN = ordini.filter(o=>o.stato==="Evaso").length;
@@ -9544,8 +9543,9 @@ ${o.firma_cliente ? `
           <Icon name="plus" size={17}/> Nuovo ordine
         </button>
 
-        <div style={isMobile ? {display:"flex",flexDirection:"column",gap:8} : {display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:12}}>
+        <div style={isMobile ? {display:"flex",flexDirection:"column",gap:8} : {display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:12}}>
           {[
+            ["inseriti","clipboard","Da completare",inseritiN,"Appena creati, modulo logistico da compilare","rgba(124,135,158,0.12)",C.steel],
             ["cerca","search","Cerca ordini",daPrendereInCaricoN,"Inviati, ancora da prendere in carico","rgba(200,75,58,0.09)",C.danger],
             ["da-gestire","reply","In gestione",inGestioneN,"Presi in carico, in lavorazione","rgba(217,164,65,0.12)",C.warn],
             ["confermati","checkCircle","Evasi",evasiN,"Evasi, gestiti fino in fondo","rgba(74,157,110,0.1)",C.ok],
@@ -9570,6 +9570,31 @@ ${o.firma_cliente ? `
             )
           ))}
         </div>
+      </div>
+    );
+  }
+
+  if(vista==="inseriti"){
+    const elenco = ordini.filter(o=>o.stato==="Inserito");
+    return (
+      <div>
+        <button onClick={()=>setVista("home")} style={{...S.btnS,marginBottom:14}}>← Ordini</button>
+        <div style={S.eyebrow}>Da completare ({elenco.length})</div>
+        <div style={{fontSize:11.5,color:"#9AA3AB",marginTop:2,marginBottom:12}}>Modulo logistico da compilare, poi "Segna come inviato".</div>
+        {elenco.length===0 && <div style={{fontSize:12.5,color:"#9AA3AB",padding:"8px 0"}}>Nessun ordine qui.</div>}
+        {elenco.map(o=>(
+          <div key={o.id} onClick={()=>setSelId(o.id)} style={{...S.card,cursor:"pointer",display:"flex",justifyContent:"space-between",alignItems:"center",gap:10}}>
+            <div style={{minWidth:0}}>
+              <div className="tnum" style={{fontSize:10.5,color:"#9AA3AB",fontFamily:F_MONO}}>{codiceOrdine(o)}</div>
+              <div style={{fontWeight:600,fontSize:13.5,marginTop:2}}>{o.cliente}</div>
+              <div style={{fontSize:11.5,color:"#8A929A",marginTop:1}}>{o.righe.length} articol{o.righe.length===1?"o":"i"}</div>
+            </div>
+            <div style={{textAlign:"right",flexShrink:0}}>
+              <div className="tnum" style={{fontWeight:700,fontSize:14,fontFamily:F_MONO}}>€{o.val.toLocaleString("it-IT")}</div>
+              <Tag tone={toneOrdine(o.stato)} style={{marginTop:5}}>{o.stato}</Tag>
+            </div>
+          </div>
+        ))}
       </div>
     );
   }
