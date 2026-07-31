@@ -15463,6 +15463,12 @@ async function caricaFotoTicket(foto, prefisso, accessToken){
 }
 
 const STATI_TICKET = ["Aperto","In lavorazione","In attesa cliente","Risolto","Chiuso"];
+// Solo etichetta visiva lato staff: lo stato salvato resta "Aperto" (tutto il
+// flusso automatico Aperto->In lavorazione, i filtri, ecc. restano invariati),
+// cambia solo cosa si legge nella home/dettaglio. Il portale cliente non è
+// toccato: per il cliente resta "Aperto", più naturale per chi è esterno.
+const ETICHETTA_STATO_TICKET_STAFF = { "Aperto": "NUOVI" };
+function etichettaStatoTicket(s){ return ETICHETTA_STATO_TICKET_STAFF[s] || s; }
 // "Risolto" resta qui solo per colorare/filtrare correttamente i ticket
 // storici già chiusi con quel valore prima di questa modifica — non è più
 // uno stato in cui un ticket resta "in sospeso": chiudere via chat porta
@@ -15510,7 +15516,7 @@ function TicketAssistenza({ sessione, ruolo, ticketDaAprire, setTicketDaAprire, 
       setTicket(lista||[]);
       const codici = [...new Set((lista||[]).map(t=>t.cliente_codice).filter(Boolean))];
       if(codici.length){
-        const cl = await sbGetAuth("clienti", `select=codice,ragione_sociale,provincia&codice=in.(${codici.map(c=>encodeURIComponent(c)).join(",")})`, accessToken);
+        const cl = await sbGetAuth("clienti", `select=codice,ragione_sociale,indirizzo,localita,provincia&codice=in.(${codici.map(c=>encodeURIComponent(c)).join(",")})`, accessToken);
         const mappa = {}; (cl||[]).forEach(c=>{ mappa[c.codice]=c; });
         setClientiMap(mappa);
       }
@@ -15578,7 +15584,7 @@ function TicketAssistenza({ sessione, ruolo, ticketDaAprire, setTicketDaAprire, 
               padding:"7px 12px",borderRadius:20,fontSize:12.5,cursor:"pointer",fontWeight:600,
               background: filtroStato===s ? C.ink : "#fff", color: filtroStato===s ? "#fff" : C.charcoal,
               border:`1px solid ${filtroStato===s?C.ink:C.paperLine}`,
-            }}>{s}{n>0 ? ` (${n})` : ""}</div>
+            }}>{etichettaStatoTicket(s)}{n>0 ? ` (${n})` : ""}</div>
           );
         })}
       </div>
@@ -15612,13 +15618,22 @@ function TicketAssistenza({ sessione, ruolo, ticketDaAprire, setTicketDaAprire, 
       {filtrati.map(t=>{
         const cl = clientiMap[t.cliente_codice];
         const inAttesaRisposta = t.ultimo_messaggio_da === "cliente";
+        const indirizzoBreve = [cl?.indirizzo, cl?.localita, cl?.provincia && `(${cl.provincia})`].filter(Boolean).join(" ");
+        // Chi ha aperto: un ticket nato dal portale cliente (creato_da_cliente)
+        // non ha un profilo Telos associato — è il cliente stesso, dal suo
+        // account. Altrimenti è sempre un referente Telos (nome cognome).
+        const apertoDa = t.creato_da_cliente ? "Cliente (da suo account)" : (nomeUtente(t.creato_da_profilo_id) || "—");
         return (
           <div key={t.id} onClick={()=>setAperto(t)} style={{...S.card, borderLeft:`3px solid ${TONO_STATO_TICKET[t.stato]||C.steel}`}}>
             <div style={{display:"flex",justifyContent:"space-between",gap:8}}>
               <div style={{minWidth:0}}>
                 <div style={{fontFamily:F_MONO,fontSize:11,color:"#9AA3AB"}}>{t.numero}</div>
                 <div style={{fontWeight:600,fontSize:13.5,marginTop:2}}>{t.titolo}</div>
-                <div style={{fontSize:12,color:C.steel,marginTop:2}}>{cl?.ragione_sociale || t.cliente_codice}</div>
+                <div style={{fontSize:12,color:C.steel,marginTop:2}}>
+                  {cl?.ragione_sociale || t.cliente_codice}
+                  {t.cliente_codice && <span style={{fontFamily:F_MONO,color:"#9AA3AB"}}> · {t.cliente_codice}</span>}
+                </div>
+                {indirizzoBreve && <div style={{fontSize:11,color:"#9AA3AB",marginTop:1}}>{indirizzoBreve}</div>}
                 {filtroStato==="Chiuso" && t.created_at && <div style={{fontSize:11,color:"#9AA3AB",marginTop:2}}>Aperto il {new Date(t.created_at).toLocaleDateString("it-IT")}</div>}
               </div>
               <div style={{textAlign:"right",flexShrink:0}}>
@@ -15626,7 +15641,11 @@ function TicketAssistenza({ sessione, ruolo, ticketDaAprire, setTicketDaAprire, 
                 {inAttesaRisposta && <div style={{fontSize:10.5,color:C.danger,fontWeight:700,marginTop:6}}>● in attesa di risposta</div>}
               </div>
             </div>
-            {t.assegnato_a && <div style={{fontSize:11.5,color:"#9AA3AB",marginTop:6}}>Assegnato a {nomeUtente(t.assegnato_a) || "—"}</div>}
+            {t.descrizione && <div style={{fontSize:12,color:"#6B7280",marginTop:8,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{t.descrizione}</div>}
+            <div style={{fontSize:11.5,color:"#9AA3AB",marginTop:6}}>
+              Aperto da {apertoDa}
+              {t.assegnato_a && ` · Assegnato a ${nomeUtente(t.assegnato_a) || "—"}`}
+            </div>
           </div>
         );
       })}
@@ -16030,17 +16049,17 @@ function DettaglioTicket({ ticket, sessione, ruolo, utenti, catalog, clienteInfo
         {soloLettura ? (
           <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center"}}>
             <Tag tone={TONO_PRIORITA_TICKET[ticket.priorita]}>{ticket.priorita}</Tag>
-            <span style={{fontSize:12.5,fontWeight:700,color:TONO_STATO_TICKET?.[ticket.stato]||C.ink}}>{ticket.stato}</span>
+            <span style={{fontSize:12.5,fontWeight:700,color:TONO_STATO_TICKET?.[ticket.stato]||C.ink}}>{etichettaStatoTicket(ticket.stato)}</span>
           </div>
         ) : (
           <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
             <select value={ticket.stato} onChange={e=>aggiornaCampo("stato",e.target.value)} disabled={salvandoCampo} style={S.sel}>
-              {STATI_TICKET_SELEZIONABILI.map(s=><option key={s} value={s}>{s}</option>)}
+              {STATI_TICKET_SELEZIONABILI.map(s=><option key={s} value={s}>{etichettaStatoTicket(s)}</option>)}
               {/* Un ticket storico può trovarsi in uno stato non più selezionabile
                   a mano (es. "Risolto" da prima di questa modifica, o "Chiuso"
                   raggiunto dal flusso guidato): lo mostriamo comunque come
                   opzione corrente, senza reintrodurlo tra le scelte normali. */}
-              {!STATI_TICKET_SELEZIONABILI.includes(ticket.stato) && <option value={ticket.stato}>{ticket.stato}</option>}
+              {!STATI_TICKET_SELEZIONABILI.includes(ticket.stato) && <option value={ticket.stato}>{etichettaStatoTicket(ticket.stato)}</option>}
             </select>
             <select value={ticket.priorita} onChange={e=>aggiornaCampo("priorita",e.target.value)} disabled={salvandoCampo} style={S.sel}>
               {PRIORITA_TICKET.map(p=><option key={p} value={p}>{p}</option>)}
