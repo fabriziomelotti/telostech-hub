@@ -13977,6 +13977,189 @@ function GestioneLibreriaDocumentiFinanziaria({ accessToken, onIndietro }){
 // in Interventi). La riga "Telos (interno)" è unica, creata dalla
 // migrazione SQL, e non eliminabile da qui (solo modificabile, per non
 // restare senza l'opzione "Telos interno" nei preventivi intervento).
+// ─── GESTIONE CAMPI TICKET ────────────────────────────────────────────────
+// Amministrazione dei campi configurabili per tipologia di ticket (vedi
+// CampiTicketDinamici) — qui si decide COSA chiedere quando si apre un
+// ticket di un certo tipo: quali tendine, con quali opzioni, ed eventuali
+// dipendenze a cascata (es. "Modello" che dipende da "Marca": le opzioni di
+// modello mostrate cambiano in base alla marca già scelta). Un solo livello
+// di dipendenza — un campo può dipendere solo da un campo indipendente, non
+// incatenare più cascate — copre marca->modello senza aggiungere la
+// complessità di catene più lunghe, che qui non serve.
+function GestioneCampiTicket({ sessione }){
+  const accessToken = trovaAccessToken(sessione);
+  const [tipologia, setTipologia] = useState(TIPI_TICKET[0].valore);
+  const [campi, setCampi] = useState([]);
+  const [opzioni, setOpzioni] = useState([]);
+  const [caricando, setCaricando] = useState(true);
+  const [espanso, setEspanso] = useState(null);
+
+  const [nuovoCampoAperto, setNuovoCampoAperto] = useState(false);
+  const [nuovaEtichetta, setNuovaEtichetta] = useState("");
+  const [nuovoDipendeDa, setNuovoDipendeDa] = useState("");
+  const [nuovoObbligatorio, setNuovoObbligatorio] = useState(true);
+  const [salvandoCampo, setSalvandoCampo] = useState(false);
+  const [erroreCampo, setErroreCampo] = useState("");
+
+  const [nuovoValore, setNuovoValore] = useState("");
+  const [nuovoValorePadre, setNuovoValorePadre] = useState("");
+  const [salvandoOpzione, setSalvandoOpzione] = useState(false);
+
+  async function carica(){
+    setCaricando(true);
+    try{
+      const c = await sbGetAuth("ticket_campi_config", `select=*&tipologia=eq.${encodeURIComponent(tipologia)}&order=ordine.asc`, accessToken);
+      setCampi(c||[]);
+      const ids = (c||[]).map(x=>x.id);
+      if(ids.length){
+        const o = await sbGetAuth("ticket_campi_opzioni", `select=*&campo_id=in.(${ids.join(",")})&order=ordine.asc`, accessToken);
+        setOpzioni(o||[]);
+      } else setOpzioni([]);
+    }catch{ setCampi([]); setOpzioni([]); }
+    setCaricando(false);
+  }
+  useEffect(()=>{ carica(); setEspanso(null); setNuovoCampoAperto(false); setErroreCampo(""); },[tipologia]);
+
+  async function aggiungiCampo(){
+    const etichetta = nuovaEtichetta.trim();
+    if(!etichetta) return;
+    const chiave = slugChiaveCampo(etichetta);
+    if(campi.some(c=>c.chiave===chiave)){ setErroreCampo("Esiste già un campo con questo nome per questa tipologia."); return; }
+    setSalvandoCampo(true); setErroreCampo("");
+    try{
+      const ordine = campi.length ? Math.max(...campi.map(c=>c.ordine||0))+1 : 1;
+      await sbAuth("POST","ticket_campi_config","",{
+        tipologia, chiave, etichetta, dipende_da: nuovoDipendeDa||null, obbligatorio: nuovoObbligatorio, ordine,
+      },accessToken);
+      setNuovaEtichetta(""); setNuovoDipendeDa(""); setNuovoObbligatorio(true); setNuovoCampoAperto(false);
+      carica();
+    }catch(err){ setErroreCampo("Errore: "+err.message); }
+    setSalvandoCampo(false);
+  }
+
+  async function eliminaCampo(campo){
+    if(!window.confirm(`Eliminare il campo "${campo.etichetta}"? Anche le sue opzioni verranno eliminate. Eventuali campi che dipendono da questo perderanno il filtro a cascata (restano, ma senza più genitore).`)) return;
+    try{
+      await sbAuth("DELETE","ticket_campi_config",`id=eq.${campo.id}`,null,accessToken);
+      carica();
+    }catch(err){ alert("Errore: "+err.message); }
+  }
+
+  async function aggiungiOpzione(campo){
+    const valore = nuovoValore.trim();
+    if(!valore || (campo.dipende_da && !nuovoValorePadre)) return;
+    setSalvandoOpzione(true);
+    try{
+      const opzioniCampo = opzioni.filter(o=>o.campo_id===campo.id);
+      const ordine = opzioniCampo.length ? Math.max(...opzioniCampo.map(o=>o.ordine||0))+1 : 1;
+      await sbAuth("POST","ticket_campi_opzioni","",{
+        campo_id: campo.id, valore, valore_padre: campo.dipende_da ? nuovoValorePadre : null, ordine,
+      },accessToken);
+      setNuovoValore(""); setNuovoValorePadre("");
+      carica();
+    }catch(err){ alert("Errore: "+err.message); }
+    setSalvandoOpzione(false);
+  }
+
+  async function eliminaOpzione(opzione){
+    try{
+      await sbAuth("DELETE","ticket_campi_opzioni",`id=eq.${opzione.id}`,null,accessToken);
+      carica();
+    }catch(err){ alert("Errore: "+err.message); }
+  }
+
+  return (
+    <div>
+      <div style={{fontFamily:F_DISPLAY,fontSize:16,fontWeight:600,marginBottom:6}}>CAMPI TICKET</div>
+      <div style={{fontSize:12,color:C.steel,marginBottom:14}}>
+        Cosa si chiede aprendo un ticket, per tipologia — tendine, ed eventuali tendine a cascata (es. Marca → Modello).
+      </div>
+
+      <div style={{display:"flex",gap:6,marginBottom:16,flexWrap:"wrap"}}>
+        {TIPI_TICKET.map(t=>(
+          <div key={t.valore} onClick={()=>setTipologia(t.valore)} style={{
+            padding:"7px 12px",borderRadius:20,fontSize:12.5,cursor:"pointer",fontWeight:600,
+            background: tipologia===t.valore ? C.ink : "#fff", color: tipologia===t.valore ? "#fff" : C.charcoal,
+            border:`1px solid ${tipologia===t.valore?C.ink:C.paperLine}`,
+          }}>{t.valore}</div>
+        ))}
+      </div>
+
+      {caricando && <div style={{color:"#9AA3AB",fontSize:13}}>Caricamento…</div>}
+
+      {!caricando && <>
+        {campi.length===0 && <div style={{fontSize:12.5,color:"#9AA3AB",padding:"10px 0"}}>Nessun campo configurato per questa tipologia — il modulo di apertura ticket non chiederà nulla di specifico, solo la descrizione libera.</div>}
+
+        {campi.map(campo=>{
+          const opzioniCampo = opzioni.filter(o=>o.campo_id===campo.id);
+          const campoPadre = campo.dipende_da ? campi.find(c=>c.chiave===campo.dipende_da) : null;
+          const opzioniPadre = campoPadre ? opzioni.filter(o=>o.campo_id===campoPadre.id) : [];
+          const aperto = espanso===campo.id;
+          return (
+            <div key={campo.id} style={{...S.card,cursor:"default",marginBottom:8}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8}}>
+                <div onClick={()=>setEspanso(aperto?null:campo.id)} style={{cursor:"pointer",flex:1,minWidth:0}}>
+                  <div style={{fontWeight:600,fontSize:13.5}}>{campo.etichetta}{!campo.obbligatorio && <span style={{fontWeight:400,color:"#9AA3AB"}}> (facoltativo)</span>}</div>
+                  <div style={{fontSize:11,color:"#9AA3AB",marginTop:2}}>
+                    {opzioniCampo.length} opzion{opzioniCampo.length===1?"e":"i"}
+                    {campoPadre && ` · dipende da "${campoPadre.etichetta}"`}
+                  </div>
+                </div>
+                <button onClick={()=>eliminaCampo(campo)} style={{...S.btnS,fontSize:11,padding:"5px 9px",color:C.danger}}>Elimina campo</button>
+              </div>
+
+              {aperto && (
+                <div style={{marginTop:12,paddingTop:12,borderTop:`1px solid ${C.paperLine}`}}>
+                  {opzioniCampo.map(o=>(
+                    <div key={o.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"5px 0",fontSize:12.5}}>
+                      <span>{o.valore}{o.valore_padre && <span style={{color:"#9AA3AB"}}> — sotto "{o.valore_padre}"</span>}</span>
+                      <span onClick={()=>eliminaOpzione(o)} style={{color:C.danger,cursor:"pointer",fontSize:11}}>Rimuovi</span>
+                    </div>
+                  ))}
+                  {opzioniCampo.length===0 && <div style={{fontSize:12,color:"#9AA3AB",padding:"4px 0"}}>Nessuna opzione ancora.</div>}
+                  <div style={{display:"flex",gap:6,marginTop:8,flexWrap:"wrap"}}>
+                    {campo.dipende_da && (
+                      <select value={nuovoValorePadre} onChange={e=>setNuovoValorePadre(e.target.value)} style={{...S.sel,flex:"1 1 140px",fontSize:12.5}}>
+                        <option value="">Sotto quale {campoPadre?.etichetta}?</option>
+                        {opzioniPadre.map(o=><option key={o.id} value={o.valore}>{o.valore}</option>)}
+                      </select>
+                    )}
+                    <input value={nuovoValore} onChange={e=>setNuovoValore(e.target.value)} placeholder="Nuova opzione" style={{...S.inp,flex:"1 1 140px",fontSize:12.5}}/>
+                    <button onClick={()=>aggiungiOpzione(campo)} disabled={salvandoOpzione||!nuovoValore.trim()||(!!campo.dipende_da&&!nuovoValorePadre)} style={{...S.btnAccent,fontSize:12,padding:"7px 12px",opacity:(salvandoOpzione||!nuovoValore.trim()||(!!campo.dipende_da&&!nuovoValorePadre))?0.5:1}}>+ Aggiungi</button>
+                  </div>
+                </div>
+              )}
+            </div>
+          );
+        })}
+
+        {!nuovoCampoAperto ? (
+          <button onClick={()=>setNuovoCampoAperto(true)} style={{...S.btnS,width:"100%",marginTop:8}}>+ Nuovo campo</button>
+        ) : (
+          <div style={{...S.card,cursor:"default",marginTop:8}}>
+            <input value={nuovaEtichetta} onChange={e=>setNuovaEtichetta(e.target.value)} placeholder='Nome del campo (es. "Marca attrezzatura")' style={{...S.inp,marginBottom:8}}/>
+            <select value={nuovoDipendeDa} onChange={e=>setNuovoDipendeDa(e.target.value)} style={{...S.sel,width:"100%",marginBottom:8}}>
+              <option value="">Indipendente (nessuna tendina a cascata)</option>
+              {campi.filter(c=>!c.dipende_da).map(c=><option key={c.chiave} value={c.chiave}>Dipende da "{c.etichetta}"</option>)}
+            </select>
+            <label style={{display:"flex",alignItems:"center",gap:6,fontSize:12.5,marginBottom:10,cursor:"pointer"}}>
+              <input type="checkbox" checked={nuovoObbligatorio} onChange={e=>setNuovoObbligatorio(e.target.checked)}/>
+              Obbligatorio
+            </label>
+            {erroreCampo && <div style={{color:C.danger,fontSize:12,marginBottom:8}}>{erroreCampo}</div>}
+            <div style={{display:"flex",gap:8}}>
+              <button onClick={()=>{setNuovoCampoAperto(false);setErroreCampo("");}} style={{...S.btnS,flex:1}}>Annulla</button>
+              <button onClick={aggiungiCampo} disabled={salvandoCampo||!nuovaEtichetta.trim()} style={{...S.btnAccent,flex:2,opacity:(salvandoCampo||!nuovaEtichetta.trim())?0.5:1}}>
+                {salvandoCampo?"Salvo…":"Crea campo"}
+              </button>
+            </div>
+          </div>
+        )}
+      </>}
+    </div>
+  );
+}
+
 function GestioneAssistenze({ sessione, ruolo }){
   const accessToken = trovaAccessToken(sessione);
   const [assistenze, setAssistenze] = useState(null);
@@ -15025,6 +15208,7 @@ function PannelloGestione({ setCatalog, ruolo, sessione, catalog }) {
               ["logistica","flag","Logistica"],
               ["pacchetti","package","Pacchetti"],
               ["assistenze","wrench","Assistenze"],
+              ["campi-ticket","clipboard","Campi ticket"],
             ].map(([id,icona,lbl])=>(
               <div key={id} onClick={()=>setTab(id)} style={{...S.card,cursor:"pointer",aspectRatio:"1",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:8,padding:10,textAlign:"center"}}>
                 <Icon name={icona} size={24} color={C.ink}/>
@@ -15054,6 +15238,8 @@ function PannelloGestione({ setCatalog, ruolo, sessione, catalog }) {
           {tab==="pacchetti" && <GestionePacchetti ruolo={ruolo} sessione={sessione} catalog={catalog}/>}
 
           {tab==="assistenze" && <GestioneAssistenze ruolo={ruolo} sessione={sessione}/>}
+
+          {tab==="campi-ticket" && <GestioneCampiTicket sessione={sessione}/>}
 
       {tab==="import" && (
         <div>
@@ -15415,6 +15601,7 @@ const TIPI_TICKET = [
   { valore: "Teleassistenza", descrizione: "Richiesta di contattare il cliente direttamente." },
   { valore: "Ricambio per attrezzatura", descrizione: "Richiesta di un particolare ricambio/accessorio da identificare (es. caricabatterie per tablet diagnosi)." },
   { valore: "Segnalazione guasto", descrizione: "Richiesta di presa in carico per un guasto su un'attrezzatura." },
+  { valore: "Supporto diagnosi veicolo", descrizione: "Supporto tecnico su una diagnosi in corso: strumento usato e veicolo su cui si sta lavorando." },
 ];
 // "Identificazione prodotto" resta fuori dall'elenco base: non deve
 // comparire al cliente, solo al commerciale quando apre un ticket per
@@ -15422,6 +15609,17 @@ const TIPI_TICKET = [
 // a voce/telefono e serve identificarlo a catalogo.
 const TIPO_IDENTIFICAZIONE_PRODOTTO =
   { valore: "Identificazione prodotto", descrizione: "Richiesta di un cliente per un prodotto complessivo da ricercare a catalogo, che non si riesce a identificare da soli." };
+
+// Trasforma un'etichetta leggibile ("Marca strumento diagnosi") nella chiave
+// interna con cui il valore scelto viene salvato in ticket.campi_extra
+// ("marca_strumento_diagnosi") — così chi configura i campi da GESTIONE
+// scrive solo etichette, mai chiavi tecniche a mano.
+function slugChiaveCampo(etichetta){
+  return (etichetta||"")
+    .trim().toLowerCase()
+    .normalize("NFD").replace(/[\u0300-\u036f]/g,"") // accenti -> lettera semplice
+    .replace(/[^a-z0-9]+/g,"_").replace(/^_+|_+$/g,"") || "campo";
+}
 
 // Selettore foto condiviso tra creazione ticket staff e cliente: anteprime
 // locali (nessun upload finché non si conferma l'invio del ticket), con
@@ -15658,19 +15856,85 @@ function TicketAssistenza({ sessione, ruolo, ticketDaAprire, setTicketDaAprire, 
 // ClientiComponenti.jsx), non l'anagrafica libera: un ticket richiede
 // sempre un cliente_codice valido, quindi qui non ammettiamo il cliente
 // "a mano" come invece fanno preventivi/ordini.
+// Renderizza le tendine configurate da GESTIONE per la tipologia di ticket
+// scelta, con supporto a cascata (es. "modello" che dipende da "marca"):
+// finché il campo padre non ha un valore, il campo figlio resta disabilitato
+// e senza opzioni proprie; cambiare il padre svuota automaticamente ciò che
+// dipende da lui, così non resta mai un "modello" orfano di una marca
+// diversa da quella appena scelta. Condiviso tra NuovoTicketStaff e
+// NuovoTicketCliente: le tipologie con campi noti (Segnalazione guasto,
+// Supporto diagnosi veicolo) si comportano identicamente ovunque il ticket
+// venga aperto.
+function CampiTicketDinamici({ tipologia, valori, onCambia, accessToken }){
+  const [campi, setCampi] = useState([]);
+  const [opzioni, setOpzioni] = useState([]);
+  const [caricando, setCaricando] = useState(false);
+
+  useEffect(()=>{
+    if(!tipologia){ setCampi([]); setOpzioni([]); return; }
+    setCaricando(true);
+    sbGetAuth("ticket_campi_config", `select=*&tipologia=eq.${encodeURIComponent(tipologia)}&order=ordine.asc`, accessToken)
+      .then(async c=>{
+        setCampi(c||[]);
+        const ids = (c||[]).map(x=>x.id);
+        if(ids.length===0){ setOpzioni([]); return; }
+        const o = await sbGetAuth("ticket_campi_opzioni", `select=*&campo_id=in.(${ids.join(",")})&order=ordine.asc`, accessToken);
+        setOpzioni(o||[]);
+      })
+      .catch(()=>{ setCampi([]); setOpzioni([]); })
+      .finally(()=>setCaricando(false));
+  },[tipologia]);
+
+  function gestisciCambio(chiave, valore){
+    onCambia(chiave, valore);
+    campi.filter(c=>c.dipende_da===chiave).forEach(c=>onCambia(c.chiave, ""));
+  }
+
+  if(!tipologia) return null;
+  if(caricando) return <div style={{fontSize:12,color:"#9AA3AB",marginBottom:10}}>Caricamento campi…</div>;
+  if(campi.length===0) return null;
+
+  return (
+    <div style={{marginBottom:8}}>
+      {campi.map(campo=>{
+        const opzioniCampo = opzioni.filter(o=>o.campo_id===campo.id);
+        const valorePadre = campo.dipende_da ? (valori[campo.dipende_da]||"") : null;
+        const disabilitato = !!campo.dipende_da && !valorePadre;
+        const opzioniVisibili = campo.dipende_da ? opzioniCampo.filter(o=>o.valore_padre===valorePadre) : opzioniCampo;
+        const etichettaPadre = campo.dipende_da ? (campi.find(c=>c.chiave===campo.dipende_da)?.etichetta||"") : "";
+        return (
+          <select key={campo.id} value={valori[campo.chiave]||""} disabled={disabilitato}
+            onChange={e=>gestisciCambio(campo.chiave, e.target.value)}
+            style={{...S.sel,width:"100%",marginBottom:8,opacity:disabilitato?0.55:1}}>
+            <option value="">
+              {campo.etichetta}{campo.obbligatorio?" *":" (facoltativo)"}
+              {disabilitato?` — scegli prima ${etichettaPadre}`:""}
+            </option>
+            {opzioniVisibili.map(o=><option key={o.id} value={o.valore}>{o.valore}</option>)}
+          </select>
+        );
+      })}
+    </div>
+  );
+}
+
 function NuovoTicketStaff({ sessione, ruolo, catalog, onAnnulla, onCreato }){
   const accessToken = trovaAccessToken(sessione);
-  const { marchi, categorie } = useMemo(()=>marchiECategorieDaCatalogo(catalog),[catalog]);
   const [clienteScelto, setClienteScelto] = useState(null);
   const [tipo, setTipo] = useState("");
   const [descrizione, setDescrizione] = useState("");
-  const [marchio, setMarchio] = useState("");
-  const [categoria, setCategoria] = useState("");
+  // Risposte ai campi configurati da GESTIONE per la tipologia scelta (vedi
+  // CampiTicketDinamici) — sostituiscono i vecchi marchio/categoria fissi,
+  // uguali per ogni tipologia. Si azzerano cambiando tipologia: un valore
+  // scelto per "Segnalazione guasto" non ha senso se si passa a
+  // "Teleassistenza".
+  const [campiExtra, setCampiExtra] = useState({});
   const [priorita, setPriorita] = useState("Normale");
   const [foto, setFoto] = useState([]);
   const [salvando, setSalvando] = useState(false);
   const [errore, setErrore] = useState("");
 
+  function cambiaTipo(nuovo){ setTipo(nuovo); setCampiExtra({}); }
   function aggiungiFoto(e){
     setFoto(prev=>[...prev, ...Array.from(e.target.files||[])]);
     e.target.value = "";
@@ -15685,8 +15949,14 @@ function NuovoTicketStaff({ sessione, ruolo, catalog, onAnnulla, onCreato }){
         cliente_codice: clienteScelto.codice,
         titolo: tipo,
         descrizione: descrizione.trim() || null,
-        marchio: marchio.trim() || null,
-        categoria: categoria.trim() || null,
+        // La marca scelta nei campi dinamici (chiave "marca" per Segnalazione
+        // guasto, "diagnosi_marca" per Supporto diagnosi veicolo) finisce
+        // anche nel vecchio campo ticket.marchio: è quello che il motore
+        // "tecnici suggeriti" già usa per instradare il ticket giusto a chi
+        // ha la competenza — nessuna modifica lì, solo doppio salvataggio.
+        marchio: campiExtra.marca || campiExtra.diagnosi_marca || null,
+        categoria: null,
+        campi_extra: Object.keys(campiExtra).length ? campiExtra : null,
         priorita,
         canale: "interno",
         creato_da_profilo_id: sessione?.user?.id || null,
@@ -15727,7 +15997,7 @@ function NuovoTicketStaff({ sessione, ruolo, catalog, onAnnulla, onCreato }){
 
       {clienteScelto && <>
         <div style={{height:14}}/>
-        <select value={tipo} onChange={e=>setTipo(e.target.value)} style={{...S.sel,width:"100%",marginBottom:6}}>
+        <select value={tipo} onChange={e=>cambiaTipo(e.target.value)} style={{...S.sel,width:"100%",marginBottom:6}}>
           <option value="">Tipologia del ticket *</option>
           {/* "Identificazione prodotto" è riservata al commerciale — il */}
           {/* cliente non la vede mai (vedi NuovaRichiestaCliente più sotto), */}
@@ -15741,16 +16011,7 @@ function NuovoTicketStaff({ sessione, ruolo, catalog, onAnnulla, onCreato }){
         )}
         <textarea value={descrizione} onChange={e=>setDescrizione(e.target.value)} placeholder="Descrizione (diventa il primo messaggio del thread)" rows={4} style={{...S.inp,marginBottom:8,resize:"vertical",fontFamily:F_BODY}}/>
         <SelettoreFotoTicket foto={foto} onAggiungi={aggiungiFoto} onRimuovi={rimuoviFoto}/>
-        <div style={{display:"flex",gap:8,marginBottom:8}}>
-          <select value={marchio} onChange={e=>setMarchio(e.target.value)} style={{...S.sel,flex:1}}>
-            <option value="">Marchio (facoltativo)</option>
-            {marchi.map(m=><option key={m} value={m}>{m}</option>)}
-          </select>
-          <select value={categoria} onChange={e=>setCategoria(e.target.value)} style={{...S.sel,flex:1}}>
-            <option value="">Categoria (facoltativa)</option>
-            {categorie.map(c=><option key={c} value={c}>{c}</option>)}
-          </select>
-        </div>
+        <CampiTicketDinamici tipologia={tipo} valori={campiExtra} onCambia={(k,v)=>setCampiExtra(prev=>({...prev,[k]:v}))} accessToken={accessToken}/>
         <select value={priorita} onChange={e=>setPriorita(e.target.value)} style={{...S.sel,marginBottom:14}}>
           {PRIORITA_TICKET.map(p=><option key={p} value={p}>{p}</option>)}
         </select>
@@ -15839,8 +16100,16 @@ function DettaglioTicket({ ticket, sessione, ruolo, utenti, catalog, clienteInfo
   },[ticket.id]);
 
   useEffect(()=>{
-    if(!ticket.marchio || !ticket.categoria){ setSuggeriti([]); return; }
-    sbGetAuth("competenze_tecnico", `select=profilo_id&marchio=eq.${encodeURIComponent(ticket.marchio)}&categoria=eq.${encodeURIComponent(ticket.categoria)}`, accessToken)
+    // Con i campi configurabili, i ticket nuovi non hanno più una
+    // "categoria" (si chiede marca/modello invece) — se manca, il match si
+    // allarga alla sola marca invece di azzerare i suggerimenti. Sui ticket
+    // storici che hanno ancora entrambi i campi, resta il match preciso
+    // marchio+categoria come prima.
+    if(!ticket.marchio){ setSuggeriti([]); return; }
+    const filtroCompetenza = ticket.categoria
+      ? `marchio=eq.${encodeURIComponent(ticket.marchio)}&categoria=eq.${encodeURIComponent(ticket.categoria)}`
+      : `marchio=eq.${encodeURIComponent(ticket.marchio)}`;
+    sbGetAuth("competenze_tecnico", `select=profilo_id&${filtroCompetenza}`, accessToken)
       .then(async righe=>{
         const ids = [...new Set((righe||[]).map(r=>r.profilo_id))];
         if(ids.length===0){ setSuggeriti([]); return; }
@@ -15955,7 +16224,21 @@ function DettaglioTicket({ ticket, sessione, ruolo, utenti, catalog, clienteInfo
     try{
       const nomeCliente = clienteInfo?.ragione_sociale || ticket.cliente_codice;
       const nomeTecnico = nomeUtente(ticket.assegnato_a) || "—";
-      const categorizzazione = [ticket.marchio, ticket.categoria].filter(Boolean).join(" / ");
+      // I vecchi marchio/categoria restano per i ticket storici; quelli
+      // nuovi hanno invece le risposte ai campi configurati da GESTIONE
+      // (campi_extra) — qui si recuperano le etichette vere così il tecnico
+      // legge "Marca strumento diagnosi: BOSCH" e non solo "BOSCH".
+      let categorizzazione = [ticket.marchio, ticket.categoria].filter(Boolean).join(" / ");
+      if(ticket.campi_extra && Object.keys(ticket.campi_extra).length){
+        try{
+          const config = await sbGetAuth("ticket_campi_config", `select=chiave,etichetta&tipologia=eq.${encodeURIComponent(ticket.titolo)}`, accessToken);
+          const etichette = {}; (config||[]).forEach(c=>{ etichette[c.chiave]=c.etichetta; });
+          const parti = Object.entries(ticket.campi_extra)
+            .filter(([,v])=>v)
+            .map(([k,v])=>`${etichette[k]||k}: ${v}`);
+          if(parti.length) categorizzazione = parti.join(" — ");
+        }catch{ /* in caso di errore resta la categorizzazione base sopra */ }
+      }
       const payload = {
         titolo: `${ticket.titolo} — ${nomeCliente}`,
         tipo: "intervento_tecnico",
@@ -16557,9 +16840,12 @@ function NuovoTicketCliente({ sessione, attrezzature, onAnnulla, onCreato }){
   const [descrizione, setDescrizione] = useState("");
   const [attrezzaturaId, setAttrezzaturaId] = useState("");
   const [descrizioneLibera, setDescrizioneLibera] = useState("");
+  const [campiExtra, setCampiExtra] = useState({});
   const [foto, setFoto] = useState([]);
   const [salvando, setSalvando] = useState(false);
   const [errore, setErrore] = useState("");
+
+  function cambiaTipo(nuovo){ setTipo(nuovo); setCampiExtra({}); }
 
   function aggiungiFoto(e){
     setFoto(prev=>[...prev, ...Array.from(e.target.files||[])]);
@@ -16578,6 +16864,8 @@ function NuovoTicketCliente({ sessione, attrezzature, onAnnulla, onCreato }){
         descrizione: descrizione.trim() || null,
         attrezzatura_id: attrezzaturaId || null,
         descrizione_libera_prodotto: attrezzaturaId ? null : (descrizioneLibera.trim() || null),
+        marchio: campiExtra.marca || campiExtra.diagnosi_marca || null,
+        campi_extra: Object.keys(campiExtra).length ? campiExtra : null,
         canale: "webapp",
         creato_da_cliente: true,
         priorita: "Normale",
@@ -16605,7 +16893,7 @@ function NuovoTicketCliente({ sessione, attrezzature, onAnnulla, onCreato }){
       <button onClick={onAnnulla} style={{...S.btnS,fontSize:14,padding:"9px 14px",marginBottom:16}}>← Torna ai ticket</button>
       <div style={{fontFamily:F_DISPLAY,fontSize:19,fontWeight:600,marginBottom:16}}>NUOVA RICHIESTA</div>
 
-      <select value={tipo} onChange={e=>setTipo(e.target.value)} style={{...S.sel,fontSize:16,padding:"12px 13px",width:"100%",marginBottom:6}}>
+      <select value={tipo} onChange={e=>cambiaTipo(e.target.value)} style={{...S.sel,fontSize:16,padding:"12px 13px",width:"100%",marginBottom:6}}>
         <option value="">Tipo di richiesta *</option>
         {TIPI_TICKET.map(t=><option key={t.valore} value={t.valore}>{t.valore}</option>)}
       </select>
@@ -16628,6 +16916,8 @@ function NuovoTicketCliente({ sessione, attrezzature, onAnnulla, onCreato }){
       {!attrezzaturaId && (
         <input value={descrizioneLibera} onChange={e=>setDescrizioneLibera(e.target.value)} placeholder="Se non la trovi, descrivi il prodotto (facoltativo)" style={{...S.inp,fontSize:16,padding:"12px 13px",marginBottom:16}}/>
       )}
+
+      <CampiTicketDinamici tipologia={tipo} valori={campiExtra} onCambia={(k,v)=>setCampiExtra(prev=>({...prev,[k]:v}))} accessToken={accessToken}/>
 
       {errore && <div style={{color:C.danger,fontSize:14,marginBottom:12}}>{errore}</div>}
       <button onClick={salva} disabled={salvando||!tipo} style={{...S.btnAccent,width:"100%",fontSize:16,padding:"14px",opacity:(salvando||!tipo)?0.5:1}}>
