@@ -14096,20 +14096,27 @@ function GestioneCampiTicket({ sessione }){
           const opzioniPadre = campoPadre ? opzioni.filter(o=>o.campo_id===campoPadre.id) : [];
           const aperto = espanso===campo.id;
           return (
-            <div key={campo.id} style={{...S.card,cursor:"default",marginBottom:8}}>
+            <div key={campo.id} style={{...S.card,cursor:"pointer",marginBottom:8}} onClick={()=>setEspanso(aperto?null:campo.id)}>
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8}}>
-                <div onClick={()=>setEspanso(aperto?null:campo.id)} style={{cursor:"pointer",flex:1,minWidth:0}}>
-                  <div style={{fontWeight:600,fontSize:13.5}}>{campo.etichetta}{!campo.obbligatorio && <span style={{fontWeight:400,color:"#9AA3AB"}}> (facoltativo)</span>}</div>
-                  <div style={{fontSize:11,color:"#9AA3AB",marginTop:2}}>
-                    {opzioniCampo.length} opzion{opzioniCampo.length===1?"e":"i"}
-                    {campoPadre && ` · dipende da "${campoPadre.etichetta}"`}
+                <div style={{flex:1,minWidth:0,display:"flex",alignItems:"center",gap:8}}>
+                  <span style={{fontSize:11,color:"#9AA3AB",transition:"transform 0.15s",transform:aperto?"rotate(90deg)":"none",display:"inline-block"}}>▸</span>
+                  <div>
+                    <div style={{fontWeight:600,fontSize:13.5}}>{campo.etichetta}{!campo.obbligatorio && <span style={{fontWeight:400,color:"#9AA3AB"}}> (facoltativo)</span>}</div>
+                    <div style={{fontSize:11,color:"#9AA3AB",marginTop:2}}>
+                      {opzioniCampo.length===0 ? "Nessuna opzione — tocca per aggiungerne" : `${opzioniCampo.length} opzion${opzioniCampo.length===1?"e":"i"} · tocca per gestire`}
+                      {campoPadre && ` · dipende da "${campoPadre.etichetta}"`}
+                    </div>
                   </div>
                 </div>
-                <button onClick={()=>eliminaCampo(campo)} style={{...S.btnS,fontSize:11,padding:"5px 9px",color:C.danger}}>Elimina campo</button>
+                <button onClick={(e)=>{ e.stopPropagation(); setEspanso(aperto?null:campo.id); }} style={{...S.btnAccent,fontSize:11,padding:"5px 10px",flexShrink:0}}>
+                  {aperto?"Chiudi":`Opzioni (${opzioniCampo.length})`}
+                </button>
+                <button onClick={(e)=>{ e.stopPropagation(); eliminaCampo(campo); }} style={{...S.btnS,fontSize:11,padding:"5px 9px",color:C.danger,flexShrink:0}}>Elimina campo</button>
               </div>
 
               {aperto && (
-                <div style={{marginTop:12,paddingTop:12,borderTop:`1px solid ${C.paperLine}`}}>
+                <div onClick={(e)=>e.stopPropagation()} style={{marginTop:12,paddingTop:12,borderTop:`1px solid ${C.paperLine}`,cursor:"default"}}>
+                  <div style={{fontSize:11.5,fontWeight:600,color:C.steel,marginBottom:8,textTransform:"uppercase",letterSpacing:"0.04em"}}>Opzioni per "{campo.etichetta}"</div>
                   {opzioniCampo.map(o=>(
                     <div key={o.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"5px 0",fontSize:12.5}}>
                       <span>{o.valore}{o.valore_padre && <span style={{color:"#9AA3AB"}}> — sotto "{o.valore_padre}"</span>}</span>
@@ -14117,16 +14124,23 @@ function GestioneCampiTicket({ sessione }){
                     </div>
                   ))}
                   {opzioniCampo.length===0 && <div style={{fontSize:12,color:"#9AA3AB",padding:"4px 0"}}>Nessuna opzione ancora.</div>}
-                  <div style={{display:"flex",gap:6,marginTop:8,flexWrap:"wrap"}}>
-                    {campo.dipende_da && (
-                      <select value={nuovoValorePadre} onChange={e=>setNuovoValorePadre(e.target.value)} style={{...S.sel,flex:"1 1 140px",fontSize:12.5}}>
-                        <option value="">Sotto quale {campoPadre?.etichetta}?</option>
-                        {opzioniPadre.map(o=><option key={o.id} value={o.valore}>{o.valore}</option>)}
-                      </select>
-                    )}
-                    <input value={nuovoValore} onChange={e=>setNuovoValore(e.target.value)} placeholder="Nuova opzione" style={{...S.inp,flex:"1 1 140px",fontSize:12.5}}/>
-                    <button onClick={()=>aggiungiOpzione(campo)} disabled={salvandoOpzione||!nuovoValore.trim()||(!!campo.dipende_da&&!nuovoValorePadre)} style={{...S.btnAccent,fontSize:12,padding:"7px 12px",opacity:(salvandoOpzione||!nuovoValore.trim()||(!!campo.dipende_da&&!nuovoValorePadre))?0.5:1}}>+ Aggiungi</button>
-                  </div>
+
+                  {campo.dipende_da && opzioniPadre.length===0 ? (
+                    <div style={{fontSize:12,color:C.warn,background:"rgba(217,164,65,0.1)",borderRadius:6,padding:"8px 10px",marginTop:8}}>
+                      ⚠ Aggiungi prima almeno un'opzione a "{campoPadre?.etichetta}" — "{campo.etichetta}" dipende da lui, quindi ogni sua opzione deve appartenere a una marca già esistente.
+                    </div>
+                  ) : (
+                    <div style={{display:"flex",gap:6,marginTop:8,flexWrap:"wrap"}}>
+                      {campo.dipende_da && (
+                        <select value={nuovoValorePadre} onChange={e=>setNuovoValorePadre(e.target.value)} style={{...S.sel,flex:"1 1 140px",fontSize:12.5}}>
+                          <option value="">Sotto quale {campoPadre?.etichetta}?</option>
+                          {opzioniPadre.map(o=><option key={o.id} value={o.valore}>{o.valore}</option>)}
+                        </select>
+                      )}
+                      <input value={nuovoValore} onChange={e=>setNuovoValore(e.target.value)} placeholder="Nuova opzione" style={{...S.inp,flex:"1 1 140px",fontSize:12.5}}/>
+                      <button onClick={()=>aggiungiOpzione(campo)} disabled={salvandoOpzione||!nuovoValore.trim()||(!!campo.dipende_da&&!nuovoValorePadre)} style={{...S.btnAccent,fontSize:12,padding:"7px 12px",opacity:(salvandoOpzione||!nuovoValore.trim()||(!!campo.dipende_da&&!nuovoValorePadre))?0.5:1}}>+ Aggiungi</button>
+                    </div>
+                  )}
                 </div>
               )}
             </div>
